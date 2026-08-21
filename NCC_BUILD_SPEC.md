@@ -4,6 +4,14 @@ Target repository: `github.com/nccfawaz/neelachandrainteriors`
 Target host: Hostinger Business/Cloud (Node.js Web App), domain `neelachandra.com`
 Audience: implementing developer or Claude Code agent
 
+**Binding constraint on the public site: the existing design and the existing page content do not change.** Every public page keeps its current layout, CSS, typography, spacing, imagery, wording, headings, and page order exactly as it renders today. The public work in this document is a rendering-engine swap from PHP includes to `hono/jsx`, not a redesign and not a copy rewrite. Where this document names a change to a public page, it is limited to one of three categories, and nothing else qualifies:
+
+1. **Invalid markup that the browser is already error-correcting** (the `<34` tag, the nested `<style>`, the second `<head>`). Fixing these produces the same rendered result from valid source. If a fix would move a pixel, the invalid markup is ported as is instead and the discrepancy is recorded.
+2. **Non-page infrastructure files** that are not visible page content: `site.webmanifest` icon paths that 404, the wrong domain in `robots.txt`, `security.txt` location.
+3. **Making a dead form work.** The enquiry handler gains a real destination. Its visible fields, labels, order and copy stay as they are in `contact-form.php`.
+
+Copy edits, price changes, new sections, removed sections, restyling, font substitution, image replacement, and reordering are all out of scope. Where I found content that is factually unsupported or legally risky, it is preserved as is and raised in section 8 for your decision rather than altered.
+
 ---
 
 ## 1. Repository findings
@@ -126,18 +134,20 @@ There is no database anywhere in the project. All of the following lives as lite
 - **Contact:** `#193/1c NH-4, Near Harsha Hospital, Byraveshwara Nagara, Nelamangala, Karnataka 562123`. Phone `+91 78292 92929` (also the WhatsApp number), landline `+91 8029652243`, email `nccpmd@gmail.com`, hours Mon to Sat 09:30 to 19:00. Founded 2018 by Chandrashekar T. Claims of 30+ projects, 60+ acres, 8+ years, 4.8 of 5.0 rating.
 - **Social:** Facebook `profile.php?id=61570692116172`, Instagram `neelachandra_construction`, LinkedIn `neelachandra-constructions`, YouTube `@neelachandra_constructions`, X `neelachandra_`, two Google Maps short links.
 
-### 1.8 Defects found that the rebuild should fix rather than port
+### 1.8 Defects found, and which of them may be touched
 
-1. `index.php` line 1022 contains `<34 class="accordion-heading">`, a corrupted opening tag closed by `</h3>`. Live invalid markup.
-2. `header.php` opens a `<style>` block that immediately contains a second nested `<style>`, and emits a full `<head>` even though it is included from inside `<body>` (for example `index.php` line 716). Every page therefore ships two `<head>` blocks.
-3. `site.webmanifest` icon paths are `"/favicon.ico/web-app-manifest-192x192.png"`, treating a file as a directory. Both icons 404.
-4. `og.webp` is 1,091,756 bytes and `Favicon.png` is 675,879 bytes. Both are served on the homepage path.
-5. Duplicate and near-duplicate assets: `maps.webp` and `maps (3).webp` (identical 10672 bytes), `excellence.webp` and `exellence.webp`, `hero (1).webp`, `hero (2).webp`, `hero (4).webp`, `hero (5).webp`, `hero.webp`, `hero1.webp`, `hero-mobile.webp`, `Favicon.png` and `Favicon.webp` and `favicon.svg` and `favicon.ico` and `favicon-96x96.png` and `32_32.png` and `48_48.png` and `180_180.png` and `192_192.png`.
-6. Filenames containing spaces and parentheses, which are fragile behind rewrite rules.
-7. Every page inlines its own multi-thousand-line `<style>` block with a duplicated CSS reset, and each page loads a different Google Fonts family set (compare the font query strings in `index.php`, `construction-packages-in-bengaluru.php` and `contact-us.php`). Font Awesome 6.5.2 is pulled from cdnjs on some pages only.
-8. `about-us.php` and `about.php` are two different About pages for two different brands, both in one directory. Same for `contact-us.php` and `contact.php`.
-9. `header.php` navigation links "Interiors" to the external `https://neelachandrainteriors.com`, while `coming-soon.php` exists locally as an unused placeholder for the same slot.
-10. The `4.8 / 5.0` rating is rendered as visible text and as an image (`rating.webp`, `stars.webp`) with no `aggregateRating` in schema. `README.md` records that `aggregateRating` was deliberately removed and that fabricated testimonials were deleted. There is no source of record for the rating.
+Listed because an implementer needs to know they exist, not because all of them get fixed. The design and content freeze means most are ported as they are. The verdict column at the end of each item is binding.
+
+1. `index.php` line 1022 contains `<34 class="accordion-heading">`, a corrupted opening tag closed by `</h3>`. Live invalid markup. **Fix.** Browsers currently parse this as an unknown element, so it inherits no `h3` styling. Emitting a valid `h3` would therefore change how the accordion heading looks. The port emits the element the browser actually renders today, an unknown inline element carrying `class="accordion-heading"`, which in `hono/jsx` is written as a `<span class="accordion-heading">` only if the computed styles match. Verified against the live page in the parity check of 5, phase 1. If they do not match, the raw string is emitted verbatim through `dangerouslySetInnerHTML`. Visual parity wins over markup validity.
+2. `header.php` opens a `<style>` block that immediately contains a second nested `<style>`, and emits a full `<head>` even though it is included from inside `<body>` (for example `index.php` line 716). Every page therefore ships two `<head>` blocks. **Fix.** The second `<head>` is discarded by the parser and its contents are relocated into `<body>`, so consolidating to one `<head>` is safe. The nested `<style>` terminates the first at the inner tag, meaning some declarations are currently live and some are being parsed as text. Both variants are diffed in the parity check and whichever matches the live computed style is kept.
+3. `site.webmanifest` icon paths are `"/favicon.ico/web-app-manifest-192x192.png"`, treating a file as a directory. Both icons 404. **Fix.** Category 2, not page content.
+4. `og.webp` is 1,091,756 bytes and `Favicon.png` is 675,879 bytes. Both are served on the homepage path. **Port as is.** Re-encoding changes an image the client approved. Raised in 8.12.
+5. Duplicate and near-duplicate assets: `maps.webp` and `maps (3).webp` (identical 10672 bytes), `excellence.webp` and `exellence.webp`, `hero (1).webp`, `hero (2).webp`, `hero (4).webp`, `hero (5).webp`, `hero.webp`, `hero1.webp`, `hero-mobile.webp`, `Favicon.png` and `Favicon.webp` and `favicon.svg` and `favicon.ico` and `favicon-96x96.png` and `32_32.png` and `48_48.png` and `180_180.png` and `192_192.png`. **Port all of them, at their current paths.** An unreferenced file costs disk and nothing else. A file I judged unreferenced but which is hotlinked, cached, or used by a page I have not seen becomes a 404. Deletion is deferred to phase 9 and only for files the access log shows zero hits on over 30 days.
+6. Filenames containing spaces and parentheses, which are fragile behind rewrite rules. **Port as is,** at the same paths, URL-encoded in `src` attributes exactly as the PHP does today. Renaming breaks any external reference and changes the HTML.
+7. Every page inlines its own multi-thousand-line `<style>` block with a duplicated CSS reset, and each page loads a different Google Fonts family set (compare the font query strings in `index.php`, `construction-packages-in-bengaluru.php` and `contact-us.php`). Font Awesome 6.5.2 is pulled from cdnjs on some pages only. **Port as is, per page.** This is the single biggest temptation to consolidate and the single biggest way to break the design. The per-page font sets and per-page CSS are why the pages look the way they do, including where they are inconsistent with each other. Each page's `<style>` block is extracted to its own file, byte for byte, and linked only from that page. See 3.2.
+8. `about-us.php` and `about.php` are two different About pages for two different brands, both in one directory. Same for `contact-us.php` and `contact.php`. **Not a defect to fix, a scoping fact.** The `about.php` and `contact.php` pair belong to the interiors brand and are archived, not ported, because they are not part of this domain's live site.
+9. `header.php` navigation links "Interiors" to the external `https://neelachandrainteriors.com`, while `coming-soon.php` exists locally as an unused placeholder for the same slot. **Port as is.** The nav link keeps its current external target.
+10. The `4.8 / 5.0` rating is rendered as visible text and as an image (`rating.webp`, `stars.webp`) with no `aggregateRating` in schema. `README.md` records that `aggregateRating` was deliberately removed and that fabricated testimonials were deleted. There is no source of record for the rating. **Port as is, unchanged, including the images.** It is existing visible content and removing it is a content edit. The separate question of whether to emit an `aggregateRating` node in JSON-LD is answered no, matching today's behaviour. Raised in 8.5 for your decision, not acted on.
 
 ### 1.9 Hostinger platform constraints verified against vendor documentation
 
@@ -294,7 +304,12 @@ neelachandrainteriors/                     (existing repo, restructured in place
 ├── scripts/
 │   ├── migrate.mjs                        applies pending migrations, tracks schema_migrations
 │   ├── seed-users.mjs                     creates the 10 staff accounts interactively
-│   ├── import-legacy-content.mjs          parses the old PHP into the DB (see section 7)
+│   ├── extract-legacy-content.mjs         parses the old PHP into content/*.ts + seed SQL
+│   ├── capture-golden.mjs                 PHASE 0 ONLY: saves live HTML + screenshots
+│   │                                      to legacy/golden/. Irreplaceable after cutover.
+│   ├── parity-check.mjs                   THE FREEZE GATE: text nodes, class sequence,
+│   │                                      JSON-LD nodes, pixels at 1440/768/390 (see 3.2)
+│   ├── snapshot-urls.mjs                  crawls live site to legacy/url-inventory.json
 │   └── verify-routes.mjs                  asserts all 10 legacy URLs return 200
 │
 ├── src/
@@ -330,7 +345,7 @@ neelachandrainteriors/                     (existing repo, restructured in place
 │   │   ├── legacyRedirects.ts             the .htaccess rules, in code (see 3.1)
 │   │   └── errorHandler.ts                replaces error.php, all 4xx/5xx
 │   │
-│   ├── public/                            THE MARKETING SITE
+│   ├── public/                            THE MARKETING SITE, design frozen, see 3.2
 │   │   ├── routes/
 │   │   │   ├── home.tsx                   /                     from index.php
 │   │   │   ├── projects.tsx               /best-construction-company-in-bengaluru-projects
@@ -342,21 +357,27 @@ neelachandrainteriors/                     (existing repo, restructured in place
 │   │   │   ├── contact.tsx                /contact-us  + POST enquiry
 │   │   │   ├── legal.tsx                  /terms, /privacy-policy
 │   │   │   ├── blog.tsx                   /blog, /blog/:slug   (new, sitemap already globs it)
-│   │   │   ├── sitemap.ts                 /sitemap.xml         from sitemap.php, DB-driven
-│   │   │   ├── robots.ts                  /robots.txt          rewritten for this domain
-│   │   │   └── llms.ts                    /llms.txt, /llms-full.txt  generated
-│   │   ├── layouts/SiteLayout.tsx         replaces header.php + footer.php, ONE <head>
+│   │   │   ├── sitemap.ts                 /sitemap.xml         same 10 paths, same priorities
+│   │   │   ├── robots.ts                  /robots.txt          domain corrected, else identical
+│   │   │   └── llms.ts                    /llms.txt, /llms-full.txt  served as-is from public/
+│   │   ├── layouts/SiteLayout.tsx         header.php + footer.php, ONE <head>, same output
+│   │   ├── content/                       THE FROZEN COPY, one file per page
+│   │   │   ├── home.ts                    every string from index.php, verbatim
+│   │   │   ├── packages.ts                package names, rates, spec lines, verbatim
+│   │   │   ├── projects.ts                the 7 showcase entries, verbatim
+│   │   │   ├── services.ts  bengaluru.ts  tumkur.ts  about.ts  contact.ts
+│   │   │   └── faqs.ts                    question and answer text, verbatim
 │   │   ├── components/
-│   │   │   ├── TopSocialBar.tsx           from top-social.php
-│   │   │   ├── SiteNav.tsx                from header.php nav block
+│   │   │   ├── TopSocialBar.tsx           from top-social.php, same 5 links
+│   │   │   ├── SiteNav.tsx                from header.php nav block, same items and targets
 │   │   │   ├── FloatingButtons.tsx        from floating-buttons.php (WhatsApp, Maps)
-│   │   │   ├── FooterSubscribe.tsx        from footer-sub.php, now with a real handler
+│   │   │   ├── FooterSubscribe.tsx        from footer-sub.php, same markup, real handler
 │   │   │   ├── SiteFooter.tsx
-│   │   │   ├── EnquiryForm.tsx            from contact-form.php, construction field set
-│   │   │   ├── FaqAccordion.tsx           renders faq rows AND emits FAQPage JSON-LD
-│   │   │   ├── PackageCards.tsx           reads packages table
-│   │   │   ├── ProjectCard.tsx            reads projects + project_media
-│   │   │   └── StatStrip.tsx              reads site_stats
+│   │   │   ├── EnquiryForm.tsx            from contact-form.php, SAME fields/labels/order
+│   │   │   ├── FaqAccordion.tsx           same DOM as the current accordion + FAQPage JSON-LD
+│   │   │   ├── PackageCards.tsx           props from content/packages.ts (DB only in phase 8)
+│   │   │   ├── ProjectCard.tsx            props from content/projects.ts
+│   │   │   └── StatStrip.tsx              props from content/home.ts
 │   │   └── seo/
 │   │       ├── jsonld.ts                  builds @graph as objects, JSON.stringify once
 │   │       ├── organization.ts            LocalBusiness/GeneralContractor node, one place
@@ -392,13 +413,20 @@ neelachandrainteriors/                     (existing repo, restructured in place
 │
 ├── public/                                STATIC, served by Apache in front of Node
 │   ├── assets/
-│   │   ├── css/{site.css,packages.css,tumkur.css}      extracted from the inline <style> blocks
-│   │   ├── js/site.js                                  nav toggle, accordion, IntersectionObserver
-│   │   ├── images/{header,home,about,contact,packages,projects,favicon}/
-│   │   └── vendor/{htmx.min.js,alpine.min.js,chart.umd.min.js}
+│   │   ├── css/                           ONE FILE PER PAGE, byte-copied from each
+│   │   │                                  page's inline <style>. No shared reset,
+│   │   │                                  no merging, no dedupe. See 3.2.
+│   │   │   ├── home.css  packages.css  projects.css  services.css
+│   │   │   ├── bengaluru.css  tumkur.css  about.css  contact.css
+│   │   │   └── legal.css
+│   │   ├── js/site.js                     nav toggle, accordion, IntersectionObserver,
+│   │   │                                  lifted from the existing inline <script>s
+│   │   ├── images/                         EVERY image at its EXISTING path and filename,
+│   │   │                                  spaces and parentheses preserved
+│   │   └── vendor/{htmx.min.js,alpine.min.js,chart.umd.min.js}   /app only
 │   ├── favicon.ico  favicon.svg  favicon-96x96.png  apple-touch-icon.png
-│   ├── site.webmanifest                   FIXED icon paths
-│   ├── og.webp                            RE-ENCODED, target under 150 KB
+│   ├── site.webmanifest                   icon paths corrected (category 2)
+│   ├── og.webp                            UNCHANGED, byte-identical
 │   ├── humans.txt
 │   ├── 097ee841c58a4b25b8eb2c348ca67dce.txt   IndexNow key file, must keep exact content
 │   ├── google9706eb5d9d6a7b15.html            Search Console verification, must keep
@@ -406,9 +434,17 @@ neelachandrainteriors/                     (existing repo, restructured in place
 │
 ├── tests/
 │   ├── unit/{permissions,money,numbering}.test.ts
-│   └── e2e/{public-routes,login,expense-approval}.spec.ts
+│   ├── e2e/{public-routes,login,expense-approval}.spec.ts
+│   └── parity-out/                         diff images written on a freeze failure
 │
 └── legacy/                                READ-ONLY ARCHIVE, excluded from the build
+    ├── golden/                            CAPTURED IN PHASE 0, KEPT PERMANENTLY
+    │   ├── <slug>.html                     x9, live rendered HTML before cutover
+    │   └── shots/<slug>-{1440,768,390}.png x27, the design of record
+    ├── url-inventory.json                 assertion set for verify-routes.mjs
+    ├── extraction-report.md               every text node: landed where, or nowhere
+    ├── CONTENT-QUERIES.md                  things that look wrong, NOT silently fixed
+    ├── RECOVERED-FILES.md                  server tree minus git tree
     ├── php-construction/                  index.php, about-us.php, contact-us.php, the 6 others,
     │                                      header.php, footer.php, footer-sub.php, top-social.php,
     │                                      floating-buttons.php, sitemap.php, indexnow-submit.php,
@@ -422,7 +458,7 @@ Rules that keep this honest:
 
 - `legacy/` exists so the content extraction in section 7 has a source and so nothing is lost, but it is in `.vercelignore`-style exclusion from the build and never imported. Delete it once section 7 step 6 is signed off.
 - `src/modules/*` never renders JSX directly. Routes call the service, the service returns data, the route renders a component from `src/dashboard/components`. This is what stops the eight modules from becoming eight private conventions.
-- The interiors files go to `legacy/php-interiors/` and are **not** ported. They belong to a different domain. `README.md` moves there too, and a new `README.md` is written for this project.
+- The interiors files go to `legacy/php-interiors/` and are **not** ported. They belong to a different domain, and archiving them removes nothing from the live `neelachandra.com` site. The existing `README.md` moves there too, and a new `README.md` is written for this project. `enquiry-handler.php` and `contact-form.php` are the exception: they sit in this group by filename but their logic is the basis of 6.5 rule 1, so they are read from the archive rather than deleted.
 
 ### 3.1 Replacing `.htaccess` behaviour in `src/middleware/legacyRedirects.ts`
 
@@ -437,7 +473,26 @@ Because Hostinger regenerates `public_html/.htaccess` on every deploy, these rul
 
 `scripts/verify-routes.mjs` asserts every one of these, run in CI and again after the first production deploy.
 
----
+### 3.2 How the design and content freeze is enforced mechanically
+
+Stating that the design does not change is worthless without a test that fails when it does. The port is treated as a refactor with a golden-master test, which is the only reliable way to move rendering engines without visual drift.
+
+**CSS is copied per page, not consolidated.** Each of the nine construction pages has its inline `<style>` block extracted to exactly one file under `public/assets/css/`, byte for byte including the duplicated resets and any dead rules. `SiteLayout.tsx` takes a `pageCss` prop and emits a single `<link>` to that one file. The duplicated reset across nine files is accepted deliberately. Merging them into `site.css` would change specificity and cascade order, and the current pages depend on their own ordering, including where two pages define the same selector differently. Same rule for the Google Fonts query strings: each page emits the exact font URL it emits today, even where that means loading a family another page does not.
+
+**Copy lives in `src/public/content/*.ts` as string constants extracted from the PHP, and is never edited.** The extraction is mechanical, done by `scripts/extract-legacy-content.mjs`, and the output is reviewed by diffing rendered text against the live page, not by reading it for sense. If a heading has a typo today, it has the same typo after the port. Content correction is a separate task the client can request after cutover, through the phase 8 editor.
+
+**The golden-master check.** `scripts/parity-check.mjs` is the gate for phase 1 and runs on every commit that touches `src/public/`:
+
+1. For each of the nine paths, fetch the live page from `neelachandra.com` once, before cutover, and store the HTML in `legacy/golden/<slug>.html`. This happens in phase 0, while the old site still exists, because after cutover the reference is gone forever.
+2. Fetch the same path from staging.
+3. Normalise both: strip the CSRF token, the `nc_started` timestamp, whitespace between tags, and attribute order. Nothing else.
+4. Compare the **visible text node sequence**. Any addition, removal, or reordering fails the build. This is the copy freeze.
+5. Compare the **element and class sequence**. Any changed or dropped class fails. This is the DOM freeze, and it is what catches a well-intentioned `div` to `section` substitution that changes a descendant selector.
+6. Render both at 1440, 768 and 390 pixels wide in Playwright and compare screenshots with a per-pixel tolerance of 0. Failures write a diff image to `tests/parity-out/`. This is the design freeze.
+
+Step 6 is why the semantic-HTML preference stated elsewhere in this document does **not** apply to `src/public/`. It applies to `src/dashboard/`, which is new code with no existing appearance to preserve. On the public side, the existing tag is the correct tag because it is the one the CSS was written against.
+
+**Known and accepted consequence.** The ported public site inherits the current site's Lighthouse scores, its 1 MB `og.webp`, its per-page font loading and its CSS duplication. Performance work is deliberately not bundled into the port, because bundling it makes every parity failure ambiguous between "the port is wrong" and "the optimisation moved something." It is offered separately in 8.12.
 
 ## 4. Role and permission model
 
@@ -618,7 +673,7 @@ There is no public registration route anywhere in `src/`. `src/modules/auth/rout
 
 The order below is driven by structural dependency, not by which module sounds most useful. Three facts set it:
 
-- The public site is currently earning enquiries and ranking. It cannot be down, and its URLs cannot change. So the rebuild of the marketing site happens first and ships alone, before any dashboard code exists to destabilise it.
+- The public site is currently earning enquiries and ranking. It cannot be down, its URLs cannot change, and by your instruction its design and content cannot change either. So the port of the marketing site happens first and ships alone, before any dashboard code exists to destabilise it, and it ships behind the parity gate in 3.2.
 - Deploying a Node app to `neelachandra.com` on Hostinger requires **removing the existing website first, and that removal is irreversible** (see 1.9). This is a one-way door. It must happen once, deliberately, with a verified backup, and against a codebase that already renders every current page. That forces phase 1 to be feature-complete on the public side before cutover.
 - Six of the eight modules write rows that reference `projects.id`. Inventory issues to a project, expenses hit a project budget, DPRs belong to a project, a won lead becomes a project. Building inventory or finance before the projects table is settled means reworking foreign keys.
 
@@ -629,6 +684,7 @@ So the dependency spine is: **platform, then public site, then auth, then projec
 Not optional and not a formality, because of the irreversible-removal issue.
 
 1. Full download of `public_html` over SSH or File Manager, including `includes/`, `assets/`, `css/`, `js/`, `favicon/`, and the `.htaccess` that git records as `download`. The git repo is a partial flattened dump (see 1.2) and cannot reconstruct the site.
+1a. **Capture the golden masters while the old site is still up.** `scripts/capture-golden.mjs` saves the rendered HTML of all nine construction pages to `legacy/golden/*.html` and Playwright screenshots at 1440, 768 and 390 pixels to `legacy/golden/shots/`. This is the only reference for the design and content freeze, the removal in 7.6 step 5 is irreversible, and there is no way to recreate this afterwards. If this step is skipped the freeze cannot be verified and phase 1 has no gate.
 2. Export `enquiries.log` and archive the Gmail label holding enquiries to `nccpmd@gmail.com`. These are the only records of past leads and section 7 step 5 needs them.
 3. Create the MySQL database and user in hPanel. Record `DB_HOST`, `DB_NAME`, `DB_USER`, `DB_PASSWORD` as hPanel environment variables.
 4. Point `staging.neelachandra.com` at a separate Hostinger Node deployment fed by the `develop` branch. Every phase gate below is verified on staging first. Without staging, the one-way door gets opened to test something.
@@ -638,13 +694,15 @@ Gate: staging serves a Hono "hello" page at `staging.neelachandra.com` and `scri
 
 ### Phase 1. Public marketing site, at parity
 
-Rebuild the nine construction pages as `hono/jsx` routes with shared layout, killing the duplicated inline `<head>` in `header.php` and the `<34` and double-`<style>` defects. Content stays hardcoded in `src/public/content/*.ts` at this stage, **not** in the database. Putting packages in MySQL before the admin UI exists to edit them adds a query and a failure mode for zero benefit.
+Port the nine construction pages to `hono/jsx` routes with a shared layout. **This is a rendering-engine swap, not a rebuild.** The output HTML is intended to be equivalent to what the PHP emits today, and the only permitted deviations are the three categories in the header block: the consolidated single `<head>` (the second one is already discarded by the parser), the `<34` tag, and the nested `<style>`. Each page's CSS is extracted to its own file per 3.2. Copy is extracted verbatim into `src/public/content/*.ts` and not edited. It stays out of the database at this stage; putting packages in MySQL before the admin UI exists to edit them adds a query and a failure mode for zero benefit, and phase 8 moves it.
 
-Also in phase 1: `legacyRedirects.ts` and `errorHandler.ts` per 3.1, `sitemap.xml` as a real route, JSON-LD emitted from `src/public/seo/schema.ts` so the seven `CreativeWork` project nodes have one source, and the asset cleanup (re-encode `og.webp`, fix `site.webmanifest`, fix `robots.txt` domain, drop duplicate images).
+Also in phase 1: `legacyRedirects.ts` and `errorHandler.ts` per 3.1, `sitemap.xml` as a real route with the same 10 paths and the same priority and changefreq values, and JSON-LD emitted from `src/public/seo/schema.ts` so the nine drifted copies have one source. The JSON-LD is generated to match the **union of what the current pages already emit**, node for node, with two exceptions recorded in 6.5: no `aggregateRating` (matching today, where none is emitted) and `BreadcrumbList` derived from the route rather than hand-written.
 
-The enquiry form is wired to **MySQL plus email**, not email alone. This is the one piece of dashboard-shaped work pulled forward, because every day it is not live is a day of leads that exist only as Gmail. It needs one table, `enquiries`, and no auth.
+Not in phase 1, despite being tempting: image re-encoding, duplicate-asset deletion, CSS consolidation, font consolidation, copy corrections, and the unsupported rating. All frozen. The only infrastructure corrections are `site.webmanifest` icon paths, the `robots.txt` domain, and the `security.txt` location.
 
-Gate: `scripts/verify-routes.mjs` returns the expected status for all 10 `$staticPages` paths from `sitemap.php`, all `.php` 301s, and the redirect map. A submitted form appears in `enquiries` and in the inbox. Lighthouse on `/` not below the current score. Then, and only then, the production cutover.
+The enquiry form is wired to **MySQL plus email**, not email alone, keeping its current visible fields, labels, order and copy exactly. This is the one piece of dashboard-shaped work pulled forward, because every day it is not live is a day of leads that exist only as Gmail. It needs one table, `enquiries`, and no auth.
+
+Gate, all four required: (1) `scripts/parity-check.mjs` passes on all nine pages, meaning zero text-node differences, zero class-sequence differences and zero pixel differences at three viewports against the `legacy/golden/` masters from phase 0. (2) `scripts/verify-routes.mjs` returns the expected status for all 10 `$staticPages` paths, all `.php` 301s, and the redirect map. (3) A submitted form appears in `enquiries` and in the inbox. (4) The JSON-LD `@graph` for each page is diffed against the archived original and any missing node is justified in writing. Then, and only then, the production cutover.
 
 ### Phase 2. Auth, users, roles, audit
 
@@ -690,11 +748,13 @@ Gate: one project shows budget versus committed versus actual where committed tr
 
 Genuinely last, and this is a recommendation rather than a constraint. Its only hard dependency is `site_content.manage`, and its highest-value feature, attribution of spend to won revenue, cannot be computed until phases 5 and 7 exist. Building it first produces a campaign list with no ROI column. Ships `campaigns`, `campaign_spend`, `content_items`, `seo_keywords`, the move of packages, gallery, services, and FAQ content from `src/public/content/*.ts` into database tables so marketing can edit the live site, and the GA4 and Search Console read integration.
 
-Gate: a campaign shows cost per qualified lead and cost per won project, both derived, not entered. A package price edited in `/app/marketing/site-content` changes `/construction-packages-in-bengaluru` and its JSON-LD `Offer` node without a deploy.
+Gate, and this one is unusual because it is the second time the freeze is verified: `scripts/parity-check.mjs` passes against the same `legacy/golden/` masters **after** the content moves from `src/public/content/*.ts` into MySQL, proving the database-driven render is byte-equivalent to the hardcoded one and therefore to the original PHP. Only then is the editor unlocked for staff. Then: a campaign shows cost per qualified lead and cost per won project, both derived, not entered. A package price edited in `/app/marketing/site-content` changes `/construction-packages-in-bengaluru` and its JSON-LD `Offer` node without a deploy, and that first intentional edit is the point at which parity stops being asserted, by design.
 
 ### Phase 9. Hardening
 
-Backup verification by restoring the production dump to staging, `tests/e2e` full pass, rate limit and lockout tuning against real logs, the `audit_log` retention job, and deletion of `legacy/` once section 7 sign-off is recorded.
+Backup verification by restoring the production dump to staging, `tests/e2e` full pass, rate limit and lockout tuning against real logs, the `audit_log` retention job, and deletion of `legacy/php-*` once section 7 sign-off is recorded. `legacy/golden/` is kept permanently as the record of what the site looked like at cutover.
+
+The deferred asset work sits here, and only with explicit approval per 8.12: image re-encoding, removal of duplicate assets that show zero access-log hits over 30 days, and any performance work. Each is a separate commit that must re-run `parity-check.mjs`, with any intended visual difference approved in writing before merge. Nothing in this phase is bundled with anything else, so a regression is always attributable.
 
 ### What is explicitly not in any phase
 
@@ -1289,7 +1349,11 @@ Components: `ItemPicker.tsx` (Alpine typeahead hitting `/api/inventory/items/sea
 
 This module is different in kind from the other seven. The rest are internal record keeping. This one **owns the public site**, so it is the only module whose writes are visible to the world and to Google. That single fact sets the whole design: content is versioned, publishing is a deliberate act with a preview, and the JSON-LD that currently sits hand-written in nine PHP files becomes generated output.
 
-The existing SEO surface is substantial and must not be broken by giving a marketing user an edit box. `llms.txt` and `llms-full.txt` exist, the IndexNow key `097ee841c58a4b25b8eb2c348ca67dce` is live, GA4 `G-QX0C128DKX` is installed, and the JSON-LD `@graph` per page carries `LocalBusiness`, `GeneralContractor`, `HomeAndConstructionBusiness`, `WebSite`, `WebPage`, `BreadcrumbList`, `FAQPage`, and an `ItemList` of seven `CreativeWork` nodes. All of that becomes derived from the tables below.
+**How this module relates to the design and content freeze.** The freeze governs the port, not the client's future ability to edit their own site. This module is what makes the freeze sustainable rather than permanent: it gives the owner and marketing a way to change copy and prices deliberately, through a previewed and audited publish, instead of by editing PHP. So the sequence is strict. At phase 1 the content is frozen in `src/public/content/*.ts` and no one can change it. At phase 8 those exact values are migrated into the tables below, and `scripts/parity-check.mjs` is re-run against the same `legacy/golden/` masters to prove the migration to the database rendered the identical page. Only after that gate passes does anyone gain an edit box. Any change made through the editor afterwards is the client's own content decision, which is not what the freeze was protecting against.
+
+The migration is therefore a **transcription, not an authoring exercise**. `site_pages.content_json` for the nine pages is generated by `scripts/extract-legacy-content.mjs` from the frozen content files, and the block types in the closed union exist because the current pages need them, not because a generic CMS would want them. The `parity-check.mjs` pass at the end of phase 8 is what proves no block type quietly dropped a piece of the page.
+
+The existing SEO surface is substantial and must not be broken by giving a marketing user an edit box. `llms.txt` and `llms-full.txt` exist, the IndexNow key `097ee841c58a4b25b8eb2c348ca67dce` is live, GA4 `G-QX0C128DKX` is installed, and the JSON-LD `@graph` per page carries `LocalBusiness`, `GeneralContractor`, `HomeAndConstructionBusiness`, `WebSite`, `WebPage`, `BreadcrumbList`, `FAQPage`, and an `ItemList` of seven `CreativeWork` nodes. All of that becomes derived from the tables below, and per rule 7 the derived graph is diffed node for node against the archived original.
 
 **Tables** (`migrations/006_marketing.sql`)
 
@@ -1456,11 +1520,11 @@ Public routes owned by this module: `GET /sitemap.xml` (generated from `site_pag
 
 4. **Package rate changes are effective-dated, never overwritten.** Changing Gold from 3,099 to 3,299 per sqft closes the current row with `effective_to` and inserts a new one. Projects reference `package_id` at signing, and a client who signed at the old rate must still be billable at it. The public page always renders the row where `CURRENT_DATE BETWEEN effective_from AND COALESCE(effective_to, '9999-12-31')`.
 
-5. **Showcase publication requires recorded consent.** `site_showcase.client_consent_on_file` must be 1 before `is_published` can be set. The live site currently names Honda Cars India, Recipharma, Nambiar Ellegenza, and Mandot Steel. Naming an automotive OEM or a pharmaceutical client as a reference without written permission is a contractual exposure, and several of those sectors have explicit confidentiality clauses. The system should not make it easy to do that by accident. Consent status per existing entry is an open question, 8.5.
+5. **The showcase entries migrate exactly as published, and the consent flag is a warning, not a gate on existing rows.** The live site currently names Honda Cars India, Recipharma, Nambiar Ellegenza, and Mandot Steel. Those four migrate with `is_published = 1` and their current copy and images intact, because unpublishing them is a content change and the freeze forbids it. `client_consent_on_file` defaults to 0 on migrated rows and the admin list shows an unmissable flag against any published row where it is 0. The hard gate, `client_consent_on_file = 1` required before `is_published` can be set, applies **only to rows created after go-live**. Naming an automotive OEM or a pharmaceutical client as a reference without written permission is real contractual exposure and several of those sectors carry explicit confidentiality clauses, so the exposure is surfaced to the owner rather than silently accepted. Whether to act on it is 8.5, and it is your call, not the system's.
 
-6. **Testimonials require a source, and the aggregate rating is computed or absent.** `about-us.php` and the JSON-LD carry a 4.8 out of 5 rating with no visible basis. `AggregateRating` in schema markup with no verifiable review corpus is a Google structured-data violation and a consumer-protection risk. So: the JSON-LD builder emits `aggregateRating` only when `COUNT(site_testimonials WHERE is_published AND rating IS NOT NULL)` is at least 5, and it emits the computed average and the real count. Until then the node is omitted. The existing hardcoded value is not carried forward, which is raised as 8.5.
+6. **The 4.8 rating is ported exactly as it appears today, and no `aggregateRating` node is added.** `about-us.php` renders the rating as visible text plus `rating.webp` and `stars.webp`. All of that migrates unchanged, because it is existing visible content. Critically, the current pages emit **no** `aggregateRating` in their JSON-LD; `README.md` records that it was deliberately removed. So the correct port emits none either, and that is both freeze-compliant and the safer position: an `AggregateRating` node with no verifiable review corpus is a Google structured-data violation and a consumer-protection risk, so adding one would be worse than the status quo, not better. The mechanism for a future honest rating is built but dormant: `buildGraph` emits `aggregateRating` only when `COUNT(site_testimonials WHERE is_published AND rating IS NOT NULL)` is at least 5, using the computed average and the real count. With zero verified testimonials at migration, the condition is false and nothing is emitted. The visible 4.8 and the schema stay exactly as they are today until you decide otherwise in 8.5.
 
-7. **The JSON-LD builder is one function, not nine copies.** `src/public/seo/schema.ts` exports `buildGraph(page, context)`. Organisation-level nodes (`LocalBusiness`, `GeneralContractor`, `HomeAndConstructionBusiness`, address, `areaServed`, `knowsAbout`, `sameAs` from the five social links in `top-social.php`) come from `settings`. Page-level nodes come from `site_pages.schema_types`. `FAQPage` is emitted only when the page has published `site_faqs`. `ItemList` of `CreativeWork` comes from `site_showcase`. `BreadcrumbList` is derived from the route. This is the fix for nine files that can drift apart, which they already have.
+7. **The JSON-LD builder is one function, not nine copies, and its output is diffed against the originals.** `src/public/seo/schema.ts` exports `buildGraph(page, context)`. Organisation-level nodes (`LocalBusiness`, `GeneralContractor`, `HomeAndConstructionBusiness`, address, `areaServed`, `knowsAbout`, `sameAs` from the five social links in `top-social.php`) come from `settings`. Page-level nodes come from `site_pages.schema_types`. `FAQPage` is emitted only when the page has published `site_faqs`, matching the pages that carry one today. `ItemList` of the seven `CreativeWork` nodes comes from `site_showcase`. `BreadcrumbList` is derived from the route instead of being hand-written. Consolidating nine drifting copies into one function is a source-code change with no rendered effect, so it is inside the freeze, but only if the emitted graph is equivalent. `scripts/parity-check.mjs` extracts every `application/ld+json` block from the golden master and from staging, parses both, and compares node sets by `@type` and `@id`. A node present in the original and absent from the port fails the build. This is the only safe way to deduplicate SEO markup on a site that ranks.
 
 **Pages and components**
 
@@ -2114,7 +2178,7 @@ There is no database to migrate. The entire current dataset is content embedded 
 | Images, CSS, JS | server `assets/`, `css/`, `js/`, `favicon/`, **absent from git** | `public/assets/` | See 7.2 |
 | IndexNow history | `indexnow-log.txt` | `indexnow_submissions` or discard | Optional |
 
-Not migrated: the three interiors files (`about.php`, `contact.php`, `process.php`) belong to `neelachandrainteriors.com`; `coming-soon.php` is an orphan; `README.md` documents the interiors site and is replaced.
+Not migrated: the three interiors files (`about.php`, `contact.php`, `process.php`) belong to `neelachandrainteriors.com`; `coming-soon.php` is an orphan not linked from any live page; `README.md` documents the interiors site and is replaced. None of these four are reachable from the live `neelachandra.com` navigation, so archiving them removes nothing a visitor can currently see. If any of them turns out to be linked from an external source, `legacyRedirects.ts` handles it per 3.1 rule 2 rather than the page being resurrected.
 
 ### 7.2 Step 1, recover what git does not have
 
@@ -2136,6 +2200,8 @@ The repository contains 111 files, all at root level, with no `includes/`, `asse
 - **Money is converted to paise at extraction.** 2,299 becomes `229900`. The extractor rejects any rate it cannot parse into an integer rather than defaulting to zero.
 - **Output is reviewed by a human before it is applied.** The generated SQL goes into a pull request. Package specifications and material brands are commercial promises published on a live site, and a mis-parsed specification line becomes a contractual claim. Chandrashekar and Vinay sign off on the packages and brands specifically.
 - **Every extracted row records provenance.** A `source_note` column or a SQL comment naming the file and line it came from, so a disputed value can be traced back.
+- **Transcription only. The extractor is forbidden from normalising.** No trimming beyond leading and trailing whitespace on a value, no smart-quote conversion, no title-casing, no spelling correction, no rewording, no reordering, no unit normalisation in display strings, no removal of what looks like a duplicate. If `index.php` says `exellence` in a filename or a heading carries an inconsistent capitalisation, that is what lands in the database. Review is a diff for **fidelity to the source**, not an editorial pass. Anything that looks wrong gets recorded in `legacy/CONTENT-QUERIES.md` and raised with the client after cutover; it is never silently fixed in the migration, because a silent fix is indistinguishable from a parser bug.
+- **The extractor emits a completeness report.** `legacy/extraction-report.md` lists every text node in each source page and whether it landed in a content file, a database row, or neither. A text node in the "neither" column is either deliberately excluded with a reason or a bug. This is what catches copy silently lost between PHP and JSX, which is the most likely way the freeze gets violated by accident rather than by choice.
 
 ### 7.4 Step 3, the enquiry backlog
 
@@ -2157,7 +2223,9 @@ The highest-risk part of the whole project, because the site ranks and the remov
 3. **The 10 paths in `sitemap.php` `$staticPages` keep their exact priority and changefreq values.** They are copied into `site_pages`, not re-derived.
 4. **The `.php` to extensionless 301s continue to work**, now from `legacyRedirects.ts` rather than `.htaccess`, because Hostinger regenerates that file on every deploy. The verifier asserts each one.
 5. **Files that must survive byte-identical:** `097ee841c58a4b25b8eb2c348ca67dce.txt` (IndexNow key verification fails otherwise), `google9706eb5d9d6a7b15.html` (Search Console loses verification otherwise). Both are asserted by the verifier.
-6. **Files that must survive with corrections:** `robots.txt` (its last line currently points at `https://neelachandrainteriors.com/sitemap.xml`, the wrong domain, and this is fixed at migration), `site.webmanifest` (icon paths are currently `/favicon.ico/web-app-manifest-192x192.png`, treating a file as a directory), `security.txt` (moved to `/.well-known/security.txt` to match its own `Canonical` line), `humans.txt`, `llms.txt`, `llms-full.txt`.
+6. **Files that must survive with corrections.** This list is exhaustive and closed. Nothing else in `public/` changes. `robots.txt` (its last line currently points at `https://neelachandrainteriors.com/sitemap.xml`, the wrong domain, corrected at migration), `site.webmanifest` (icon paths are currently `/favicon.ico/web-app-manifest-192x192.png`, treating a file as a directory, so both icons 404), `security.txt` (also served at `/.well-known/security.txt` to match its own `Canonical` line, with the original path kept as well so nothing that already fetches it breaks). Carried across untouched: `humans.txt`, `llms.txt`, `llms-full.txt`, `og.webp` at its current 1,091,756 bytes, every favicon variant, and every image including the duplicates and the ones with spaces and parentheses in their filenames.
+
+6a. **The golden masters are the acceptance criteria, not a nice-to-have.** `legacy/golden/*.html` and `legacy/golden/shots/` are captured in phase 0 step 1a, before the irreversible removal, and `scripts/parity-check.mjs` compares against them at the phase 1 gate, at the phase 8 gate, and in CI on every commit touching `src/public/`. If the capture was skipped, there is no way to prove the design and content were preserved and no way to recover the reference.
 7. **GA4 `G-QX0C128DKX` is carried across unchanged** so the historical series is unbroken. An annotation is added in GA4 on the cutover date.
 8. **Submit the full URL set to IndexNow immediately after cutover** and monitor Search Console coverage daily for two weeks. Rendering changes, even correct ones, can cost impressions temporarily.
 
@@ -2211,13 +2279,13 @@ The consumption variance report in 6.4 is the main return on the inventory modul
 
 Also: is stock tracked at a central store today, or does material go straight from vendor to site? If it is direct-to-site only, the `central_store` location and the transfer flow are dead weight in phase 4 and can be deferred.
 
-### 8.5 Public content accuracy and consent (blocking, phase 1)
+### 8.5 Public content risks I am preserving, not fixing (not blocking phase 1)
 
-Three things on the live site that I will not carry forward without your confirmation:
+Per your instruction, the design and content are frozen, so **all three items below are ported exactly as they appear today and none of them blocks phase 1.** They are listed because a specification that noticed a legal or commercial exposure and stayed silent about it would be a bad specification. Each needs an answer eventually, but as a content decision you make, not as a prerequisite I impose.
 
-- **The 4.8 out of 5 rating** in the JSON-LD and on `about-us.php` has no visible source. What is it based on? If it is Google reviews, how many? Per 6.5 rule 6 I am omitting `aggregateRating` until there are at least five verifiable published reviews in the system. Confirm that is acceptable, or supply the basis.
-- **Client names in the showcase.** Honda Cars India, Recipharma, Nambiar Ellegenza, Mandot Steel, Excellence Technologies, VRL Automation, and Capstone Life are named publicly with sector and scope detail. Do you hold written consent for each? Several of those sectors normally have confidentiality clauses. 6.5 rule 5 blocks publication without `client_consent_on_file`, so I need to know which of the seven can be flagged consented at migration and which must be unpublished or anonymised.
-- **Are the four package rates (2,299 / 2,699 / 3,099 / 3,499 per sqft) current?** They are being seeded as the live price list and quotes will be generated from them.
+- **The 4.8 out of 5 rating** on `about-us.php` and in `rating.webp` and `stars.webp` has no visible source. It is migrated unchanged. Note that the current pages emit no `aggregateRating` in their JSON-LD, so the port emits none either, which is both the faithful port and the defensible position. If you tell me the basis (Google Business reviews and their count, for instance), the dormant mechanism in 6.5 rule 6 can be switched on and the figure becomes derived and auditable instead of asserted. If there is no basis, the honest move is to remove the visible claim, but that is a content edit and I am not making it unilaterally.
+- **Client names in the showcase.** Honda Cars India, Recipharma, Nambiar Ellegenza, Mandot Steel, Excellence Technologies, VRL Automation, and Capstone Life are named publicly with sector and scope detail. All seven stay published with their current copy. Do you hold written consent for each? Automotive OEM and pharmaceutical contracts commonly carry confidentiality clauses, and naming such a client as a reference without permission is a contractual exposure that already exists today, independent of this project. The admin list will flag each of the seven as consent-unrecorded until you confirm. Rule 5's hard gate applies only to entries created after go-live.
+- **Are the four package rates (2,299 / 2,699 / 3,099 / 3,499 per sqft) current?** The public page keeps whatever it shows today regardless. This matters for a different reason: 6.7 rule 4 generates quotes from these rates, so if the published rates are stale, the CRM will quote stale prices from phase 5 onward. Publishing a corrected rate is a content edit for you to make through the phase 8 editor; what I need before phase 5 is confirmation of the rates the business actually sells at, even if the site is not updated to match.
 
 ### 8.6 HR statutory specifics (phase 6)
 
@@ -2261,3 +2329,12 @@ How far back should the Gmail enquiry archive be imported, and is it worth doing
 - Who holds the hPanel account and the domain registrar login? The cutover in 7.6 needs both available in the same window.
 - Is there an existing MySQL database on the plan, and how much storage does the plan allow? Site photos are the growth driver here: `dpr_photos` at a few images per project per day adds up, and the current `og.webp` alone is 1,091,756 bytes, which suggests image discipline has not been a priority. If plan storage is tight, `files` should move to object storage (Cloudflare R2 or Backblaze B2) behind the same `GET /api/files/:id` route, and that is a phase 0 decision because the storage abstraction in `src/lib/files.ts` has to be written for it from the start.
 - What is the actual mail sending situation? I have specified authenticated SMTP over `smtp.hostinger.com:465`. Confirm the plan includes mailboxes and what the daily send limit is, since enquiry notifications, invite emails, password resets, quote sends, and cron alerts all go through it.
+
+### 8.12 Scope of the design and content freeze, and what it defers (phase 1, then phase 9)
+
+You have instructed that the existing design and page content do not change. I have applied that strictly: 1.8 now marks six of its ten findings as port-as-is, the CSS stays per page rather than consolidated, every image keeps its current path and bytes, and `scripts/parity-check.mjs` fails the build on any pixel, text-node or class-sequence difference. Four questions follow from it.
+
+- **Confirm the three permitted deviation categories in the header block are acceptable.** They are: consolidating the two `<head>` blocks into one (the second is already discarded by the browser, so nothing rendered changes), emitting the corrupted `<34` tag as something valid-but-visually-identical, and correcting `site.webmanifest` and the `robots.txt` domain. If you want even these left alone, say so and the port emits the invalid markup verbatim through `dangerouslySetInnerHTML`. That is technically achievable and I would rather ask than assume.
+- **The port inherits the current performance profile, deliberately.** `og.webp` stays at 1,091,756 bytes, each page keeps loading its own Google Fonts set, and the CSS reset stays duplicated nine times. This will show in Lighthouse and possibly in Core Web Vitals. I judged that bundling optimisation into the port is the wrong trade, because when a parity check fails you cannot tell whether the port is wrong or the optimisation moved something. Confirm you accept that, and confirm you want the deferred work offered as a separate phase 9 task rather than dropped.
+- **Which unreferenced assets may eventually be deleted?** I am porting all of them, including `maps (3).webp`, the five `hero (n).webp` variants, `exellence.webp` and every favicon variant. Phase 9 can remove files that show zero hits in the access log over 30 days, but only with your approval, because a file I believe is unused may be hotlinked from a listing site, an old email, or a social post.
+- **Who signs off the parity result?** The phase 1 gate produces a diff report and, on failure, per-viewport diff images in `tests/parity-out/`. Some differences will be legitimately unavoidable, font rasterisation across a rendering-engine change being the likely one. I need a named person who can look at a 3-pixel text-reflow difference and say whether it ships. Without that, the gate either blocks forever or gets waived informally, and the second outcome is how freezes quietly stop being freezes.
