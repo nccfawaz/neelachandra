@@ -31,3 +31,13 @@ lerna-debug.log*
 
 # misc
 .DS_Store
+
+# Sandbox Cloudflare Pages scaffold, not part of this project.
+# The target is Hostinger Node.js + MariaDB, see NCC_BUILD_SPEC.md section 2.
+wrangler.jsonc
+vite.config.ts
+tsconfig.json
+package.json
+package-lock.json
+src/
+public/

@@ -1,21 +1,65 @@
-```txt
-npm install
-npm run dev
-```
+# Neelachandra Construction and Interiors: Platform
 
-```txt
-npm run deploy
-```
+Repository for the full-stack rebuild of Neelachandra Construction and Interiors: the public marketing site at `neelachandra.com` plus an internal staff platform, in one codebase, one Node process, one domain.
 
-[For generating/synchronizing types based on your Worker configuration run](https://developers.cloudflare.com/workers/wrangler/commands/#types):
+**Status: specification stage. No application code has been written yet.**
 
-```txt
-npm run cf-typegen
-```
+## What is in this repository right now
 
-Pass the `CloudflareBindings` as generics when instantiation `Hono`:
+| File | Purpose |
+|---|---|
+| `NCC_BUILD_SPEC.md` | The complete implementation specification. 2,340 lines. Read this first and read it fully before writing code. |
 
-```ts
-// src/index.ts
-const app = new Hono<{ Bindings: CloudflareBindings }>()
-```
+## Start here
+
+`NCC_BUILD_SPEC.md` is the single source of truth for this build. Its eight sections are:
+
+1. **Repository findings** with what the current PHP site actually is, verified against the live server
+2. **Recommended tech stack** with the reasoning tied to real hosting constraints
+3. **Unified codebase folder and file structure** including the design-freeze enforcement in section 3.2
+4. **Role and permission model** across all eight modules
+5. **Build and phasing plan**, phases 0 through 9, each with an explicit gate
+6. **Per module specifications** with tables, fields, routes and business logic
+7. **Data migration plan** from the current static site
+8. **Open questions** that need answers from the business
+
+## Two constraints that will cost you if you miss them
+
+**The public site design and content are frozen.** The public work is a rendering-engine swap from PHP to `hono/jsx`, not a redesign and not a copy rewrite. Only three narrow categories of change are permitted and they are listed at the top of the specification. Section 3.2 defines the parity gate that enforces this mechanically, and section 1.8 gives a per-defect verdict on what may and may not be touched.
+
+**Phase 0 step 1a is time-critical and irreversible if missed.** Deploying a Node.js app to a domain that already hosts a website on Hostinger requires removing that website first, and the removal destroys files, databases and email permanently. Before that happens, `scripts/capture-golden.mjs` must save the live rendered HTML and screenshots of all nine public pages to `legacy/golden/`. That capture is the only reference for verifying the design and content freeze, and it cannot be recreated afterwards. The full `public_html` archive in section 7.2 is equally mandatory, because the old repository is a partial flattened dump and the site cannot be rebuilt from git alone.
+
+## Target stack
+
+Decided in section 2 of the specification, driven by the Hostinger constraints in section 1.9.
+
+- Node.js 22 LTS, Hono 4, `@hono/node-server`
+- `hono/jsx` server rendering, htmx 2 and Alpine.js 3 self-hosted, Chart.js on dashboard pages only
+- MariaDB via `mysql2/promise` and Kysely 0.27
+- Self-hosted session cookie auth, argon2id, TOTP for privileged roles
+- Hosting: Hostinger Business or Cloud, Node.js Web App, GitHub push-to-deploy
+
+Not Cloudflare Workers, not Postgres, not Prisma. Section 2 gives the reasoning for each, including what was given up.
+
+## Modules
+
+Public marketing site, then eight internal modules under `/app`: authentication, admin, projects tracker, inventory, marketing, HR and recruiting, sales and CRM, budget and expense tracker. Build order and the dependency reasoning behind it are in section 5. It is not the order they are listed in.
+
+## Before implementation starts
+
+Section 8 holds the open questions. These block the phases named against them:
+
+| Question | Blocks |
+|---|---|
+| 8.1 Roles and actual org chart | Phase 2 |
+| 8.2 Approval limits per role and document type | Phase 7 |
+| 8.3 Stage templates and payment milestones | Phase 3 |
+| 8.4 Material consumption norms | Phase 4 |
+| 8.7 Offline capability for site staff | Decide before phase 3 |
+| 8.11 Hosting plan specifics | Phase 0 |
+
+8.7 is the one most easily missed. If site supervisors need to file reports without signal, idempotency keys have to be in the API from the first route rather than retrofitted, so the answer changes phase 3 architecture.
+
+## Note on the sandbox scaffold
+
+A Cloudflare Pages starter (`wrangler.jsonc`, `vite.config.ts`, `src/index.tsx`, `public/static/`) exists in the working directory as an artefact of the environment the specification was authored in. It is deliberately **not tracked in this repository**, because Cloudflare Workers contradicts the Hostinger target in section 2 and a stray `wrangler.jsonc` would send an implementer down the wrong path. Ignore it if you see it locally.
