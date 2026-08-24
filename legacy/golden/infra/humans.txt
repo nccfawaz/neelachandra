@@ -1,0 +1,32 @@
+/* TEAM */
+
+    Founder: Chandrashekar T
+    Site: https://neelachandra.com
+
+    Web Developer & SEO/AEO/GEO: Fawaz BH
+    Twitter: @fawazbhseo
+    Site: https://fawazbhseo.in
+    Location: Bengaluru, Karnataka, India
+
+    Chief Technical Advisor (Construction): Naveen Kumar
+
+    Operations Analyst: Sushma
+
+    Procurement Lead: Vinay
+
+/* THANKS */
+
+    Thanks to the entire Neelachandra Construction and Interiors team
+    for their dedication to quality construction and design.
+
+/* SITE */
+
+    Last update: 2026/07/13
+    Language: English
+    Doctype: HTML5
+    IDE: VS Code
+    Stack: PHP, HTML5, CSS3, JavaScript
+    Technologies: JSON-LD structured data (schema.org), XML sitemap (dynamic), robots.txt, custom error pages
+    Standards: WCAG, Semantic HTML5
+    Components: Custom PHP includes with scoped CSS
+    Software: Google Search Console, Google Analytics

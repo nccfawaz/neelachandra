@@ -1,0 +1,87 @@
+# =============================================================================
+# robots.txt — Neelachandra Interiors
+# https://neelachandrainteriors.com
+# =============================================================================
+
+# --- Standard search crawlers -----------------------------------------------
+User-agent: *
+Allow: /
+
+# Nothing here is secret, but these have no search value and waste crawl budget.
+Disallow: /enquiry-handler.php
+Disallow: /contact-form.php
+Disallow: /header.php
+Disallow: /footer.php
+Disallow: /*?sent=
+Disallow: /*?error=
+Disallow: /*?reveal=
+
+# --- AI / answer-engine crawlers ---------------------------------------------
+# These are allowed deliberately. For an interiors studio competing on
+# "best interior designers in Bengaluru", being cited inside an AI answer is
+# now a primary discovery channel, not a leak. If the business later decides
+# to opt out of model training while staying citable, disallow the trainer
+# agents (GPTBot, ClaudeBot, Google-Extended, CCBot) but KEEP the live
+# retrieval agents (OAI-SearchBot, ChatGPT-User, Perplexity, Claude-User)
+# allowed — blocking those removes you from answers entirely.
+
+User-agent: OAI-SearchBot
+Allow: /
+
+User-agent: ChatGPT-User
+Allow: /
+
+User-agent: GPTBot
+Allow: /
+
+User-agent: PerplexityBot
+Allow: /
+
+User-agent: Perplexity-User
+Allow: /
+
+User-agent: ClaudeBot
+Allow: /
+
+User-agent: Claude-User
+Allow: /
+
+User-agent: Claude-SearchBot
+Allow: /
+
+User-agent: Google-Extended
+Allow: /
+
+User-agent: Applebot
+Allow: /
+
+User-agent: Applebot-Extended
+Allow: /
+
+User-agent: Bingbot
+Allow: /
+
+User-agent: CCBot
+Allow: /
+
+User-agent: meta-externalagent
+Allow: /
+
+User-agent: Amazonbot
+Allow: /
+
+User-agent: DuckAssistBot
+Allow: /
+
+User-agent: MistralAI-User
+Allow: /
+
+# --- Crawlers with no upside for a local studio ------------------------------
+User-agent: AhrefsBot
+Crawl-delay: 10
+
+User-agent: SemrushBot
+Crawl-delay: 10
+
+# --- Sitemap ----------------------------------------------------------------
+Sitemap: https://neelachandrainteriors.com/sitemap.xml

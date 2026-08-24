@@ -1,0 +1,322 @@
+{
+  "capturedAt": "2026-08-24T04:26:06.302Z",
+  "origin": "https://neelachandra.com",
+  "tool": "capture-golden.mjs",
+  "note": "Reference for the design and content freeze. See spec 3.2. Irreplaceable after Hostinger website removal.",
+  "pages": [
+    {
+      "slug": "home",
+      "path": "/",
+      "requestUrl": "https://neelachandra.com/",
+      "finalUrl": "https://neelachandra.com/",
+      "status": 200,
+      "bytes": 133005,
+      "sha256": "a3a9f92c3312687980184828c7dcd1a91d77f72b8a71a9e5d3f2bcba13c8cfc2"
+    },
+    {
+      "slug": "services",
+      "path": "/construction-services-in-bengaluru",
+      "requestUrl": "https://neelachandra.com/construction-services-in-bengaluru",
+      "finalUrl": "https://neelachandra.com/construction-services-in-bengaluru",
+      "status": 200,
+      "bytes": 78377,
+      "sha256": "3adad33107934bc92db01a6de08482ae3bdcb514899ebcb8004036201544d3a9"
+    },
+    {
+      "slug": "packages",
+      "path": "/construction-packages-in-bengaluru",
+      "requestUrl": "https://neelachandra.com/construction-packages-in-bengaluru",
+      "finalUrl": "https://neelachandra.com/construction-packages-in-bengaluru",
+      "status": 200,
+      "bytes": 73068,
+      "sha256": "a4f5c03727623a85c46555c58b584e2be848f4b36ef8dce28169d1e81f5a0389"
+    },
+    {
+      "slug": "projects",
+      "path": "/best-construction-company-in-bengaluru-projects",
+      "requestUrl": "https://neelachandra.com/best-construction-company-in-bengaluru-projects",
+      "finalUrl": "https://neelachandra.com/best-construction-company-in-bengaluru-projects",
+      "status": 200,
+      "bytes": 123819,
+      "sha256": "526fbc336f6f074cc333399a96cefc673eafc05565512eb5b6950cda602c36d1"
+    },
+    {
+      "slug": "bengaluru",
+      "path": "/best-construction-company-in-bengaluru",
+      "requestUrl": "https://neelachandra.com/best-construction-company-in-bengaluru",
+      "finalUrl": "https://neelachandra.com/best-construction-company-in-bengaluru",
+      "status": 200,
+      "bytes": 65365,
+      "sha256": "f679f9a0617b7048df22080d8a2e7841f46da3d41e2d555e5ea52142625b4312"
+    },
+    {
+      "slug": "tumkur",
+      "path": "/construction-company-in-tumkur",
+      "requestUrl": "https://neelachandra.com/construction-company-in-tumkur",
+      "finalUrl": "https://neelachandra.com/construction-company-in-tumkur",
+      "status": 200,
+      "bytes": 75185,
+      "sha256": "ff6164894995c01c453baae7962da3b6e2e7c27dca45bd75af92262c6c2e24d8"
+    },
+    {
+      "slug": "about",
+      "path": "/about-us",
+      "requestUrl": "https://neelachandra.com/about-us",
+      "finalUrl": "https://neelachandra.com/about-us",
+      "status": 200,
+      "bytes": 107565,
+      "sha256": "62d074dcbc14374fd91333b275241fdc10fc1c37041fb1f6e718593e0090a991"
+    },
+    {
+      "slug": "contact",
+      "path": "/contact-us",
+      "requestUrl": "https://neelachandra.com/contact-us",
+      "finalUrl": "https://neelachandra.com/contact-us",
+      "status": 200,
+      "bytes": 34407,
+      "sha256": "12bd904ef8cb270b7af1e00cf268bb6bac4ac49e3d9c6d34c4129a8e5d9fba87"
+    },
+    {
+      "slug": "terms",
+      "path": "/terms",
+      "requestUrl": "https://neelachandra.com/terms",
+      "finalUrl": "https://neelachandra.com/terms",
+      "status": 200,
+      "bytes": 33346,
+      "sha256": "f8b942a1623f542d66be2e59c7e4be8404bbae2f62432ffaf1715b1e8bcb9e84"
+    },
+    {
+      "slug": "privacy",
+      "path": "/privacy-policy",
+      "requestUrl": "https://neelachandra.com/privacy-policy",
+      "finalUrl": "https://neelachandra.com/privacy-policy",
+      "status": 200,
+      "bytes": 32914,
+      "sha256": "74ed844f94afac48505f091f029f457ad6f7f39516bd7288faa84419ff30c190"
+    }
+  ],
+  "infra": [
+    {
+      "path": "/robots.txt",
+      "status": 200,
+      "bytes": 2060,
+      "sha256": "1b6068c60c816b46a9a4e85505e7834beff9f2fd1b8e7345e0ec8f8baf7058af",
+      "contentType": "text/plain"
+    },
+    {
+      "path": "/sitemap.xml",
+      "status": 200,
+      "bytes": 1915,
+      "sha256": "794a1d7ebbb81b213fad91a38734adefc06d732dbd1ad24c94f0adad5ef8ef31",
+      "contentType": "application/xml; charset=utf-8"
+    },
+    {
+      "path": "/site.webmanifest",
+      "status": 200,
+      "bytes": 473,
+      "sha256": "e4835b82267d161cd8fe1c350fb091940e44f04ebe81356aabc125452e0721a2",
+      "contentType": "text/plain"
+    },
+    {
+      "path": "/humans.txt",
+      "status": 200,
+      "bytes": 904,
+      "sha256": "bbcec4445891890304c02b76e313fe43b1e7646b28b152cc0c2892bc2fb810fc",
+      "contentType": "text/plain"
+    },
+    {
+      "path": "/llms.txt",
+      "status": 200,
+      "bytes": 4853,
+      "sha256": "e08b13258f46b176f73c0a15cef96071c6fd3c223c9e21d7d3f4f6a4316ab0be",
+      "contentType": "text/plain"
+    },
+    {
+      "path": "/llms-full.txt",
+      "status": 200,
+      "bytes": 50033,
+      "sha256": "cda445cbeece1cbeacb5cbbeb453148f6af7ae40702b9c99d4705a2b307beb90",
+      "contentType": "text/plain"
+    },
+    {
+      "path": "/security.txt",
+      "status": 404,
+      "bytes": 0,
+      "sha256": null,
+      "contentType": "text/html; charset=UTF-8"
+    },
+    {
+      "path": "/.well-known/security.txt",
+      "status": 200,
+      "bytes": 197,
+      "sha256": "dc7fafd173f759533efe10ffcca6e4f9fea442930290274588a725eafe46a48d",
+      "contentType": "text/plain"
+    },
+    {
+      "path": "/097ee841c58a4b25b8eb2c348ca67dce.txt",
+      "status": 200,
+      "bytes": 32,
+      "sha256": "7a52d445d66ae6de45f0fcb8f729526a84aa9faaafd742d9eb9ca1861a3836bf",
+      "contentType": "text/plain"
+    },
+    {
+      "path": "/google9706eb5d9d6a7b15.html",
+      "status": 200,
+      "bytes": 53,
+      "sha256": "62bada84a7011ed9f99b77898e32638a8a9fb7a6d2b822e81245ea6723b35e4e",
+      "contentType": "text/html"
+    }
+  ],
+  "screenshots": [
+    {
+      "slug": "home",
+      "width": 1440,
+      "file": "shots/home-1440.png"
+    },
+    {
+      "slug": "services",
+      "width": 1440,
+      "file": "shots/services-1440.png"
+    },
+    {
+      "slug": "packages",
+      "width": 1440,
+      "file": "shots/packages-1440.png"
+    },
+    {
+      "slug": "projects",
+      "width": 1440,
+      "file": "shots/projects-1440.png"
+    },
+    {
+      "slug": "bengaluru",
+      "width": 1440,
+      "file": "shots/bengaluru-1440.png"
+    },
+    {
+      "slug": "tumkur",
+      "width": 1440,
+      "file": "shots/tumkur-1440.png"
+    },
+    {
+      "slug": "about",
+      "width": 1440,
+      "file": "shots/about-1440.png"
+    },
+    {
+      "slug": "contact",
+      "width": 1440,
+      "file": "shots/contact-1440.png"
+    },
+    {
+      "slug": "terms",
+      "width": 1440,
+      "file": "shots/terms-1440.png"
+    },
+    {
+      "slug": "privacy",
+      "width": 1440,
+      "file": "shots/privacy-1440.png"
+    },
+    {
+      "slug": "home",
+      "width": 768,
+      "file": "shots/home-768.png"
+    },
+    {
+      "slug": "services",
+      "width": 768,
+      "file": "shots/services-768.png"
+    },
+    {
+      "slug": "packages",
+      "width": 768,
+      "file": "shots/packages-768.png"
+    },
+    {
+      "slug": "projects",
+      "width": 768,
+      "file": "shots/projects-768.png"
+    },
+    {
+      "slug": "bengaluru",
+      "width": 768,
+      "file": "shots/bengaluru-768.png"
+    },
+    {
+      "slug": "tumkur",
+      "width": 768,
+      "file": "shots/tumkur-768.png"
+    },
+    {
+      "slug": "about",
+      "width": 768,
+      "file": "shots/about-768.png"
+    },
+    {
+      "slug": "contact",
+      "width": 768,
+      "file": "shots/contact-768.png"
+    },
+    {
+      "slug": "terms",
+      "width": 768,
+      "file": "shots/terms-768.png"
+    },
+    {
+      "slug": "privacy",
+      "width": 768,
+      "file": "shots/privacy-768.png"
+    },
+    {
+      "slug": "home",
+      "width": 390,
+      "file": "shots/home-390.png"
+    },
+    {
+      "slug": "services",
+      "width": 390,
+      "file": "shots/services-390.png"
+    },
+    {
+      "slug": "packages",
+      "width": 390,
+      "file": "shots/packages-390.png"
+    },
+    {
+      "slug": "projects",
+      "width": 390,
+      "file": "shots/projects-390.png"
+    },
+    {
+      "slug": "bengaluru",
+      "width": 390,
+      "file": "shots/bengaluru-390.png"
+    },
+    {
+      "slug": "tumkur",
+      "width": 390,
+      "file": "shots/tumkur-390.png"
+    },
+    {
+      "slug": "about",
+      "width": 390,
+      "file": "shots/about-390.png"
+    },
+    {
+      "slug": "contact",
+      "width": 390,
+      "file": "shots/contact-390.png"
+    },
+    {
+      "slug": "terms",
+      "width": 390,
+      "file": "shots/terms-390.png"
+    },
+    {
+      "slug": "privacy",
+      "width": 390,
+      "file": "shots/privacy-390.png"
+    }
+  ]
+}

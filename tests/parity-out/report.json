@@ -1,0 +1,607 @@
+{
+  "ranAt": "2026-08-24T04:35:29.602Z",
+  "candidate": "https://neelachandra.com",
+  "tolerance": 0,
+  "results": [
+    {
+      "slug": "home",
+      "path": "/",
+      "checks": [
+        {
+          "label": "text nodes (copy freeze)",
+          "ok": true,
+          "count": 0,
+          "truncated": false,
+          "diffs": [],
+          "lengthExpected": 227,
+          "lengthActual": 227
+        },
+        {
+          "label": "element+class sequence (dom freeze)",
+          "ok": true,
+          "count": 0,
+          "truncated": false,
+          "diffs": [],
+          "lengthExpected": 1354,
+          "lengthActual": 1354
+        },
+        {
+          "label": "json-ld nodes",
+          "ok": true,
+          "count": 0,
+          "truncated": false,
+          "diffs": [],
+          "lengthExpected": 4,
+          "lengthActual": 4
+        },
+        {
+          "label": "json-ld values",
+          "ok": true,
+          "count": 0,
+          "truncated": false,
+          "diffs": [],
+          "lengthExpected": 248,
+          "lengthActual": 248
+        },
+        {
+          "label": "seo head fields",
+          "ok": true,
+          "count": 0,
+          "truncated": false,
+          "diffs": [],
+          "lengthExpected": 7,
+          "lengthActual": 7
+        },
+        {
+          "label": "asset references",
+          "ok": true,
+          "count": 0,
+          "truncated": false,
+          "diffs": [],
+          "lengthExpected": 44,
+          "lengthActual": 44
+        }
+      ]
+    },
+    {
+      "slug": "services",
+      "path": "/construction-services-in-bengaluru",
+      "checks": [
+        {
+          "label": "text nodes (copy freeze)",
+          "ok": true,
+          "count": 0,
+          "truncated": false,
+          "diffs": [],
+          "lengthExpected": 156,
+          "lengthActual": 156
+        },
+        {
+          "label": "element+class sequence (dom freeze)",
+          "ok": true,
+          "count": 0,
+          "truncated": false,
+          "diffs": [],
+          "lengthExpected": 776,
+          "lengthActual": 776
+        },
+        {
+          "label": "json-ld nodes",
+          "ok": true,
+          "count": 0,
+          "truncated": false,
+          "diffs": [],
+          "lengthExpected": 4,
+          "lengthActual": 4
+        },
+        {
+          "label": "json-ld values",
+          "ok": true,
+          "count": 0,
+          "truncated": false,
+          "diffs": [],
+          "lengthExpected": 132,
+          "lengthActual": 132
+        },
+        {
+          "label": "seo head fields",
+          "ok": true,
+          "count": 0,
+          "truncated": false,
+          "diffs": [],
+          "lengthExpected": 7,
+          "lengthActual": 7
+        },
+        {
+          "label": "asset references",
+          "ok": true,
+          "count": 0,
+          "truncated": false,
+          "diffs": [],
+          "lengthExpected": 14,
+          "lengthActual": 14
+        }
+      ]
+    },
+    {
+      "slug": "packages",
+      "path": "/construction-packages-in-bengaluru",
+      "checks": [
+        {
+          "label": "text nodes (copy freeze)",
+          "ok": true,
+          "count": 0,
+          "truncated": false,
+          "diffs": [],
+          "lengthExpected": 122,
+          "lengthActual": 122
+        },
+        {
+          "label": "element+class sequence (dom freeze)",
+          "ok": true,
+          "count": 0,
+          "truncated": false,
+          "diffs": [],
+          "lengthExpected": 767,
+          "lengthActual": 767
+        },
+        {
+          "label": "json-ld nodes",
+          "ok": true,
+          "count": 0,
+          "truncated": false,
+          "diffs": [],
+          "lengthExpected": 3,
+          "lengthActual": 3
+        },
+        {
+          "label": "json-ld values",
+          "ok": true,
+          "count": 0,
+          "truncated": false,
+          "diffs": [],
+          "lengthExpected": 114,
+          "lengthActual": 114
+        },
+        {
+          "label": "seo head fields",
+          "ok": true,
+          "count": 0,
+          "truncated": false,
+          "diffs": [],
+          "lengthExpected": 7,
+          "lengthActual": 7
+        },
+        {
+          "label": "asset references",
+          "ok": true,
+          "count": 0,
+          "truncated": false,
+          "diffs": [],
+          "lengthExpected": 12,
+          "lengthActual": 12
+        }
+      ]
+    },
+    {
+      "slug": "projects",
+      "path": "/best-construction-company-in-bengaluru-projects",
+      "checks": [
+        {
+          "label": "text nodes (copy freeze)",
+          "ok": true,
+          "count": 0,
+          "truncated": false,
+          "diffs": [],
+          "lengthExpected": 270,
+          "lengthActual": 270
+        },
+        {
+          "label": "element+class sequence (dom freeze)",
+          "ok": true,
+          "count": 0,
+          "truncated": false,
+          "diffs": [],
+          "lengthExpected": 1421,
+          "lengthActual": 1421
+        },
+        {
+          "label": "json-ld nodes",
+          "ok": true,
+          "count": 0,
+          "truncated": false,
+          "diffs": [],
+          "lengthExpected": 3,
+          "lengthActual": 3
+        },
+        {
+          "label": "json-ld values",
+          "ok": true,
+          "count": 0,
+          "truncated": false,
+          "diffs": [],
+          "lengthExpected": 356,
+          "lengthActual": 356
+        },
+        {
+          "label": "seo head fields",
+          "ok": true,
+          "count": 0,
+          "truncated": false,
+          "diffs": [],
+          "lengthExpected": 7,
+          "lengthActual": 7
+        },
+        {
+          "label": "asset references",
+          "ok": true,
+          "count": 0,
+          "truncated": false,
+          "diffs": [],
+          "lengthExpected": 31,
+          "lengthActual": 31
+        }
+      ]
+    },
+    {
+      "slug": "bengaluru",
+      "path": "/best-construction-company-in-bengaluru",
+      "checks": [
+        {
+          "label": "text nodes (copy freeze)",
+          "ok": true,
+          "count": 0,
+          "truncated": false,
+          "diffs": [],
+          "lengthExpected": 158,
+          "lengthActual": 158
+        },
+        {
+          "label": "element+class sequence (dom freeze)",
+          "ok": true,
+          "count": 0,
+          "truncated": false,
+          "diffs": [],
+          "lengthExpected": 683,
+          "lengthActual": 683
+        },
+        {
+          "label": "json-ld nodes",
+          "ok": true,
+          "count": 0,
+          "truncated": false,
+          "diffs": [],
+          "lengthExpected": 4,
+          "lengthActual": 4
+        },
+        {
+          "label": "json-ld values",
+          "ok": true,
+          "count": 0,
+          "truncated": false,
+          "diffs": [],
+          "lengthExpected": 84,
+          "lengthActual": 84
+        },
+        {
+          "label": "seo head fields",
+          "ok": true,
+          "count": 0,
+          "truncated": false,
+          "diffs": [],
+          "lengthExpected": 7,
+          "lengthActual": 7
+        },
+        {
+          "label": "asset references",
+          "ok": true,
+          "count": 0,
+          "truncated": false,
+          "diffs": [],
+          "lengthExpected": 9,
+          "lengthActual": 9
+        }
+      ]
+    },
+    {
+      "slug": "tumkur",
+      "path": "/construction-company-in-tumkur",
+      "checks": [
+        {
+          "label": "text nodes (copy freeze)",
+          "ok": true,
+          "count": 0,
+          "truncated": false,
+          "diffs": [],
+          "lengthExpected": 221,
+          "lengthActual": 221
+        },
+        {
+          "label": "element+class sequence (dom freeze)",
+          "ok": true,
+          "count": 0,
+          "truncated": false,
+          "diffs": [],
+          "lengthExpected": 868,
+          "lengthActual": 868
+        },
+        {
+          "label": "json-ld nodes",
+          "ok": true,
+          "count": 0,
+          "truncated": false,
+          "diffs": [],
+          "lengthExpected": 4,
+          "lengthActual": 4
+        },
+        {
+          "label": "json-ld values",
+          "ok": true,
+          "count": 0,
+          "truncated": false,
+          "diffs": [],
+          "lengthExpected": 129,
+          "lengthActual": 129
+        },
+        {
+          "label": "seo head fields",
+          "ok": true,
+          "count": 0,
+          "truncated": false,
+          "diffs": [],
+          "lengthExpected": 7,
+          "lengthActual": 7
+        },
+        {
+          "label": "asset references",
+          "ok": true,
+          "count": 0,
+          "truncated": false,
+          "diffs": [],
+          "lengthExpected": 9,
+          "lengthActual": 9
+        }
+      ]
+    },
+    {
+      "slug": "about",
+      "path": "/about-us",
+      "checks": [
+        {
+          "label": "text nodes (copy freeze)",
+          "ok": true,
+          "count": 0,
+          "truncated": false,
+          "diffs": [],
+          "lengthExpected": 185,
+          "lengthActual": 185
+        },
+        {
+          "label": "element+class sequence (dom freeze)",
+          "ok": true,
+          "count": 0,
+          "truncated": false,
+          "diffs": [],
+          "lengthExpected": 968,
+          "lengthActual": 968
+        },
+        {
+          "label": "json-ld nodes",
+          "ok": true,
+          "count": 0,
+          "truncated": false,
+          "diffs": [],
+          "lengthExpected": 4,
+          "lengthActual": 4
+        },
+        {
+          "label": "json-ld values",
+          "ok": true,
+          "count": 0,
+          "truncated": false,
+          "diffs": [],
+          "lengthExpected": 145,
+          "lengthActual": 145
+        },
+        {
+          "label": "seo head fields",
+          "ok": true,
+          "count": 0,
+          "truncated": false,
+          "diffs": [],
+          "lengthExpected": 7,
+          "lengthActual": 7
+        },
+        {
+          "label": "asset references",
+          "ok": true,
+          "count": 0,
+          "truncated": false,
+          "diffs": [],
+          "lengthExpected": 23,
+          "lengthActual": 23
+        }
+      ]
+    },
+    {
+      "slug": "contact",
+      "path": "/contact-us",
+      "checks": [
+        {
+          "label": "text nodes (copy freeze)",
+          "ok": true,
+          "count": 0,
+          "truncated": false,
+          "diffs": [],
+          "lengthExpected": 37,
+          "lengthActual": 37
+        },
+        {
+          "label": "element+class sequence (dom freeze)",
+          "ok": true,
+          "count": 0,
+          "truncated": false,
+          "diffs": [],
+          "lengthExpected": 300,
+          "lengthActual": 300
+        },
+        {
+          "label": "json-ld nodes",
+          "ok": true,
+          "count": 0,
+          "truncated": false,
+          "diffs": [],
+          "lengthExpected": 1,
+          "lengthActual": 1
+        },
+        {
+          "label": "json-ld values",
+          "ok": true,
+          "count": 0,
+          "truncated": false,
+          "diffs": [],
+          "lengthExpected": 39,
+          "lengthActual": 39
+        },
+        {
+          "label": "seo head fields",
+          "ok": true,
+          "count": 0,
+          "truncated": false,
+          "diffs": [],
+          "lengthExpected": 7,
+          "lengthActual": 7
+        },
+        {
+          "label": "asset references",
+          "ok": true,
+          "count": 0,
+          "truncated": false,
+          "diffs": [],
+          "lengthExpected": 7,
+          "lengthActual": 7
+        }
+      ]
+    },
+    {
+      "slug": "terms",
+      "path": "/terms",
+      "checks": [
+        {
+          "label": "text nodes (copy freeze)",
+          "ok": true,
+          "count": 0,
+          "truncated": false,
+          "diffs": [],
+          "lengthExpected": 78,
+          "lengthActual": 78
+        },
+        {
+          "label": "element+class sequence (dom freeze)",
+          "ok": true,
+          "count": 0,
+          "truncated": false,
+          "diffs": [],
+          "lengthExpected": 353,
+          "lengthActual": 353
+        },
+        {
+          "label": "json-ld nodes",
+          "ok": true,
+          "count": 0,
+          "truncated": false,
+          "diffs": [],
+          "lengthExpected": 0,
+          "lengthActual": 0
+        },
+        {
+          "label": "json-ld values",
+          "ok": true,
+          "count": 0,
+          "truncated": false,
+          "diffs": [],
+          "lengthExpected": 0,
+          "lengthActual": 0
+        },
+        {
+          "label": "seo head fields",
+          "ok": true,
+          "count": 0,
+          "truncated": false,
+          "diffs": [],
+          "lengthExpected": 7,
+          "lengthActual": 7
+        },
+        {
+          "label": "asset references",
+          "ok": true,
+          "count": 0,
+          "truncated": false,
+          "diffs": [],
+          "lengthExpected": 5,
+          "lengthActual": 5
+        }
+      ]
+    },
+    {
+      "slug": "privacy",
+      "path": "/privacy-policy",
+      "checks": [
+        {
+          "label": "text nodes (copy freeze)",
+          "ok": true,
+          "count": 0,
+          "truncated": false,
+          "diffs": [],
+          "lengthExpected": 91,
+          "lengthActual": 91
+        },
+        {
+          "label": "element+class sequence (dom freeze)",
+          "ok": true,
+          "count": 0,
+          "truncated": false,
+          "diffs": [],
+          "lengthExpected": 391,
+          "lengthActual": 391
+        },
+        {
+          "label": "json-ld nodes",
+          "ok": true,
+          "count": 0,
+          "truncated": false,
+          "diffs": [],
+          "lengthExpected": 0,
+          "lengthActual": 0
+        },
+        {
+          "label": "json-ld values",
+          "ok": true,
+          "count": 0,
+          "truncated": false,
+          "diffs": [],
+          "lengthExpected": 0,
+          "lengthActual": 0
+        },
+        {
+          "label": "seo head fields",
+          "ok": true,
+          "count": 0,
+          "truncated": false,
+          "diffs": [],
+          "lengthExpected": 7,
+          "lengthActual": 7
+        },
+        {
+          "label": "asset references",
+          "ok": true,
+          "count": 0,
+          "truncated": false,
+          "diffs": [],
+          "lengthExpected": 5,
+          "lengthActual": 5
+        }
+      ]
+    }
+  ]
+}
