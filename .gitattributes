@@ -1,0 +1,6 @@
+# Golden masters are the design of record. Store them verbatim.
+# No line-ending translation on captured HTML: the live server emits CRLF in
+# places and normalising it would corrupt the parity comparison.
+legacy/golden/*.html   -text
+legacy/golden/infra/*  -text
+*.png                  binary

@@ -1,0 +1,22 @@
+{
+  "name": "neelachandra-platform",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Neelachandra Construction and Interiors: public site and internal staff platform. Specification and phase 0 tooling.",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "capture:golden": "node scripts/capture-golden.mjs",
+    "capture:golden:html": "node scripts/capture-golden.mjs --html-only",
+    "parity": "node scripts/parity-check.mjs",
+    "parity:selftest": "node scripts/selftest-parity.mjs",
+    "test": "node scripts/selftest-parity.mjs"
+  },
+  "devDependencies": {
+    "pixelmatch": "^7.2.0",
+    "playwright": "^1.62.1",
+    "pngjs": "^7.0.0"
+  }
+}

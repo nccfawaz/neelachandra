@@ -1,43 +1,38 @@
-# prod
-dist/
-
-# dev
-.yarn/
-!.yarn/releases
-.vscode/*
-!.vscode/launch.json
-!.vscode/*.code-snippets
-.idea/workspace.xml
-.idea/usage.statistics.xml
-.idea/shelf
-
 # deps
 node_modules/
-.wrangler
 
-# env
+# env: never commit. Values live in hPanel environment variables.
 .env
-.env.production
+.env.*
+!.env.example
 .dev.vars
+
+# build output
+dist/
+.wrangler/
+
+# parity gate output. Regenerated on every run; the GOLDEN masters under
+# legacy/golden/ are committed and must never be ignored.
+tests/parity-out/
 
 # logs
 logs/
 *.log
 npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-pnpm-debug.log*
-lerna-debug.log*
 
-# misc
+# editor / os
+.vscode/*
+!.vscode/launch.json
+.idea/
 .DS_Store
 
-# Sandbox Cloudflare Pages scaffold, not part of this project.
-# The target is Hostinger Node.js + MariaDB, see NCC_BUILD_SPEC.md section 2.
+# ---------------------------------------------------------------------------
+# Sandbox Cloudflare Pages scaffold. NOT part of this project: the target is
+# Hostinger Node.js + MariaDB (see NCC_BUILD_SPEC.md section 2). A stray
+# wrangler.jsonc would send an implementer down the wrong deployment path.
+# ---------------------------------------------------------------------------
 wrangler.jsonc
 vite.config.ts
 tsconfig.json
-package.json
-package-lock.json
 src/
 public/
