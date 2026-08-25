@@ -2,13 +2,30 @@
 
 Repository for the full-stack rebuild of Neelachandra Construction and Interiors: the public marketing site at `neelachandra.com` plus an internal staff platform, in one codebase, one Node process, one domain.
 
-**Status: specification stage. No application code has been written yet.**
+**Status: specification complete, phase 0 tooling built and executed. No application code yet.**
 
 ## What is in this repository right now
 
-| File | Purpose |
+| Path | Purpose |
 |---|---|
-| `NCC_BUILD_SPEC.md` | The complete implementation specification. 2,340 lines. Read this first and read it fully before writing code. |
+| `NCC_BUILD_SPEC.md` | The complete implementation specification. Read this first and read it fully before writing code. |
+| `legacy/golden/` | **The design of record.** Rendered HTML, infrastructure files and screenshots captured from the live site on 2026-08-24, with SHA-256 per file in `manifest.json`. Irreplaceable, see below. |
+| `legacy/CONTENT-QUERIES.md` | Content problems found on the live site, recorded rather than silently fixed. CQ-1 is a live SEO and consumer-protection risk and needs a decision. |
+| `scripts/capture-golden.mjs` | Captures the golden masters. Already run; re-run immediately before cutover. |
+| `scripts/parity-check.mjs` | The freeze gate. Compares a candidate render against the golden masters on six HTML axes plus pixels at three viewports. |
+| `scripts/selftest-parity.mjs` | Proves the gate actually catches violations. 16 mutation cases. |
+| `scripts/lib/` | `pages.mjs` (the canonical page list) and `normalise.mjs` (the comparison logic). |
+
+```bash
+npm install                 # playwright, pngjs, pixelmatch
+npx playwright install chromium
+npm run parity:selftest     # verify the gate works: expect 16 passed, 0 failed
+npm run parity -- --candidate=https://staging.neelachandra.com
+```
+
+The gate is verified working: it passes 10/10 against the live site with no
+false positives, and its self-test passes 16/16. Two real bugs in its own
+first implementation were caught by that self-test, so run it in CI.
 
 ## Start here
 
@@ -27,7 +44,13 @@ Repository for the full-stack rebuild of Neelachandra Construction and Interiors
 
 **The public site design and content are frozen.** The public work is a rendering-engine swap from PHP to `hono/jsx`, not a redesign and not a copy rewrite. Only three narrow categories of change are permitted and they are listed at the top of the specification. Section 3.2 defines the parity gate that enforces this mechanically, and section 1.8 gives a per-defect verdict on what may and may not be touched.
 
-**Phase 0 step 1a is time-critical and irreversible if missed.** Deploying a Node.js app to a domain that already hosts a website on Hostinger requires removing that website first, and the removal destroys files, databases and email permanently. Before that happens, `scripts/capture-golden.mjs` must save the live rendered HTML and screenshots of all nine public pages to `legacy/golden/`. That capture is the only reference for verifying the design and content freeze, and it cannot be recreated afterwards. The full `public_html` archive in section 7.2 is equally mandatory, because the old repository is a partial flattened dump and the site cannot be rebuilt from git alone.
+**Phase 0 step 1a is time-critical and irreversible if missed. The first half is now done.** Deploying a Node.js app to a domain that already hosts a website on Hostinger requires removing that website first, and the removal destroys files, databases and email permanently. The golden-master capture in `legacy/golden/` has been taken and committed, so the design and content reference now exists outside that hosting account. Re-run `npm run capture:golden` immediately before cutover to pick up anything the client changes in the meantime.
+
+Still outstanding and still mandatory: **the full `public_html` archive** in specification section 7.2. The old repository is a partial flattened dump with no `includes/`, `assets/`, `css/` or `js/` directories even though every page references them, so the site cannot be rebuilt from git alone. Nobody should touch the hosting panel until that archive exists and has been verified restorable.
+
+### One live risk found while capturing
+
+`legacy/CONTENT-QUERIES.md` CQ-1: five pages emit an `aggregateRating` claiming **four different review counts for the same business** (2, 4, 4, 30 and 87, all at 4.8 stars). The old repository's README said this markup had been removed, which is what the specification originally recorded; capturing the live pages disproved it. Contradictory self-serving review markup is the pattern Google issues manual actions for, and it is a Consumer Protection Act exposure independently of Google. The freeze means the port reproduces it exactly and the gate asserts that, so **this does not block the build**, but it is live on a site that ranks and it needs a decision. See specification section 8.5.
 
 ## Target stack
 
