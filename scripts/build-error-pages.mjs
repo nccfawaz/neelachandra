@@ -90,9 +90,12 @@ function page ({ code, title, body }) {
     <title>${code} ${title} | Neelachandra Construction</title>
     <meta name="description" content="${body}">
     <meta name="robots" content="noindex, follow">
+    <!-- One favicon convention across the whole site, per the owner's
+         instruction. favicon.ico is the only icon proven to resolve. -->
     <link rel="icon" href="/favicon.ico" sizes="any">
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
-    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
+    <link rel="shortcut icon" href="/favicon.ico">
+    <link rel="apple-touch-icon" href="/favicon.ico">
+    <link rel="manifest" href="/site.webmanifest">
     ${fontLinks}
 ${styleBlocks}
 ${ERROR_CSS}

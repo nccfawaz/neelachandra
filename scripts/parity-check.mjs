@@ -22,6 +22,7 @@
  */
 
 import { readFile, writeFile, mkdir, readdir } from 'node:fs/promises'
+import { applyCorrections } from './lib/corrections.mjs'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { PAGES, VIEWPORTS, urlFor } from './lib/pages.mjs'
@@ -59,8 +60,25 @@ function cmp (label, expected, actual) {
   return { label, ok: d.count === 0 && d.lengthExpected === d.lengthActual, ...d }
 }
 
+// Filename at the web root, matching build-site.mjs, so corrections keyed on
+// the deployed filename resolve to the same page.
+function pageFile (path) {
+  if (path === '/') return 'index.html'
+  return path.replace(/^\/+/, '').replace(/\/+$/, '') + '.html'
+}
+
 async function checkHtml (slug, path) {
-  const golden = await readFile(join(GOLDEN, `${slug}.html`), 'utf8')
+  // The expected baseline is the golden master PLUS the owner-approved
+  // corrections, not the raw golden master. legacy/golden stays pristine as the
+  // audit record of the old site, so the corrections are applied here the same
+  // way build-site.mjs applies them on the way out.
+  //
+  // Comparing against raw golden would report every approved correction as a
+  // freeze violation, and the real signal, unintended drift, would be lost in
+  // the noise. Comparing against golden-plus-corrections keeps the gate sharp:
+  // anything that differs is something nobody approved.
+  const raw = await readFile(join(GOLDEN, `${slug}.html`), 'utf8')
+  const golden = applyCorrections(raw, pageFile(path)).html
   const url = urlFor(path, CANDIDATE)
   const res = await fetch(url, { redirect: 'follow',
     headers: { 'User-Agent': 'NCC-parity-check/1.0' } })

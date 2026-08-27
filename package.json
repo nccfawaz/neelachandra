@@ -18,7 +18,9 @@
     "build:site": "node scripts/build-site.mjs",
     "build:site:check": "node scripts/build-site.mjs --check",
     "build:errors": "node scripts/build-error-pages.mjs",
-    "test:htaccess": "node scripts/test-htaccess.mjs"
+    "test:htaccess": "node scripts/test-htaccess.mjs",
+    "build:login": "node scripts/build-login-page.mjs",
+    "build:all": "node scripts/build-site.mjs && node scripts/build-error-pages.mjs && node scripts/build-login-page.mjs"
   },
   "devDependencies": {
     "pixelmatch": "^7.2.0",

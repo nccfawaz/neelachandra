@@ -28,6 +28,13 @@ async function head (path) {
   return { status: res.status, location: res.headers.get('location'), headers: res.headers }
 }
 
+// Follows redirects and returns the body, for asserting page CONTENT rather
+// than routing. Used by the corrections section.
+async function get (path) {
+  const res = await fetch(BASE + path, { redirect: 'follow', headers: HEADERS })
+  return { status: res.status, body: await res.text() }
+}
+
 function check (label, actual, expected) {
   const ok = actual === expected
   ok ? pass++ : (fail++, failures.push(`${label}\n      expected ${expected}\n      actual   ${actual}`))
@@ -48,7 +55,8 @@ async function main () {
   for (const p of ['/', '/about-us', '/contact-us', '/terms', '/privacy-policy',
     '/construction-services-in-bengaluru', '/construction-packages-in-bengaluru',
     '/best-construction-company-in-bengaluru-projects',
-    '/best-construction-company-in-bengaluru', '/construction-company-in-tumkur']) {
+    '/best-construction-company-in-bengaluru', '/construction-company-in-tumkur',
+    '/login']) {
     const r = await head(p)
     check(`GET ${p}`, r.status, 200)
   }
@@ -58,6 +66,7 @@ async function main () {
     ['/about-us.html', '/about-us'],
     ['/about-us.php', '/about-us'],
     ['/terms.html', '/terms'],
+    ['/login.html', '/login'],
     ['/index.html', '/'],
     ['/index.php', '/']
   ]
@@ -149,6 +158,33 @@ async function main () {
     const r = await head('/')
     const tag = r.headers.get('x-robots-tag') || ''
     check('X-Robots-Tag contains noindex', tag.includes('noindex'), true)
+  }
+
+  // The corrections from section 3 of the build are asserted here because a
+  // silent regression in corrections.mjs would otherwise only be visible by
+  // reading the HTML by hand.
+  console.log('\n13. Approved content corrections are live')
+  {
+    const home = await get('/')
+    check('one canonical on /', (home.body.match(/rel="canonical"/g) || []).length, 1)
+    check('no empty canonical on /', /rel="canonical"\s+href="\s*"/.test(home.body), false)
+    check('no fake 4.8 rating on /', /4\.8\s*(?:★|\/\s*5)/.test(home.body), false)
+    check('genuine 4.0 rating on /', home.body.includes('4.0★'), true)
+    check('favicon.ico is the only icon on /',
+      (home.body.match(/rel="(?:icon|shortcut icon|apple-touch-icon)"[^>]*href="(?!\/favicon\.ico)/g) || []).length, 0)
+    check('login link in header on /', home.body.includes('nav-link-login'), true)
+
+    // Tests for a 4.8 next to rating wording, not for the bare string: the
+    // pages contain unrelated 4.8 values in CSS and SVG path data, and one
+    // CSS comment that quotes "4.8" while describing heading markup.
+    const bng = await get('/best-construction-company-in-bengaluru')
+    const fakeClaim = /4\.8\s*(?:\u2605|star|\/\s*5|<\/strong>)/i.test(bng.body)
+    check('no fake rating claim on bengaluru', fakeClaim, false)
+    check('genuine rating on bengaluru', bng.body.includes('4.0\u2605'), true)
+
+    const login = await get('/login')
+    check('login page is noindex', /name="robots"\s+content="noindex/.test(login.body), true)
+    check('login form has no live action', /<form[^>]*action=""/.test(login.body), true)
   }
 
   console.log(`\n  ${pass} passed, ${fail} failed`)

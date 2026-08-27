@@ -9,10 +9,14 @@
 // everything that is not part of the site.
 //
 // FREEZE
-// Pages are copied byte-for-byte from legacy/golden. No markup, copy, CSS or
-// asset is rewritten here. The only page-level transform is the filename:
-// home.html becomes index.html so the server resolves "/". Anything that
-// changes bytes must go through a content query, not this script.
+// Pages start byte-for-byte from legacy/golden. No markup, copy, CSS or asset
+// is rewritten here casually. Two transforms are permitted:
+//   1. the filename: home.html becomes index.html so the server resolves "/"
+//   2. the explicit, owner-approved corrections in scripts/lib/corrections.mjs
+// legacy/golden stays pristine: it is the audit record of what the old site
+// actually served, so corrections are applied on the way out rather than
+// written back into it. --check verifies the deployed file equals
+// golden-plus-corrections, so any OTHER drift still fails the freeze.
 //
 // Usage:
 //   node scripts/build-site.mjs
@@ -22,6 +26,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import crypto from 'node:crypto'
 import { PAGES } from './lib/pages.mjs'
+import { applyCorrections } from './lib/corrections.mjs'
 
 const checkOnly = process.argv.includes('--check')
 const GOLDEN = path.resolve('legacy/golden')
@@ -53,12 +58,29 @@ function copy (from, to, label, results) {
   results.ok.push(label)
 }
 
-const results = { ok: [], differs: [], missing: [], skipped: [] }
+const results = { ok: [], differs: [], missing: [], skipped: [], corrected: [] }
 
-// 1. Pages, verbatim from the golden masters.
+// 1. Pages, from the golden masters, with the approved corrections applied.
 for (const p of PAGES) {
-  copy(path.join(GOLDEN, `${p.slug}.html`), path.join(ROOT, pageFile(p)),
-    `page ${p.slug} -> ${pageFile(p)}`, results)
+  const from = path.join(GOLDEN, `${p.slug}.html`)
+  const file = pageFile(p)
+  const to = path.join(ROOT, file)
+  const label = `page ${p.slug} -> ${file}`
+
+  if (!fs.existsSync(from)) { results.missing.push(label); continue }
+
+  const golden = fs.readFileSync(from, 'utf8')
+  const { html, applied } = applyCorrections(golden, file)
+  const buf = Buffer.from(html, 'utf8')
+  if (applied.length) results.corrected.push(`${file}: ${applied.join(', ')}`)
+
+  if (checkOnly) {
+    if (!fs.existsSync(to)) { results.missing.push(label); continue }
+    sha(fs.readFileSync(to)) === sha(buf) ? results.ok.push(label) : results.differs.push(label)
+    continue
+  }
+  fs.writeFileSync(to, buf)
+  results.ok.push(label)
 }
 
 // 2. Mirrored same-origin assets, preserving their original URL paths.
@@ -104,6 +126,10 @@ console.log(`ok: ${results.ok.length}  differs: ${results.differs.length}  missi
 for (const d of results.differs) console.log(`  DIFFERS  ${d}`)
 for (const m of results.missing) console.log(`  MISSING  ${m}`)
 for (const s of results.skipped) console.log(`  skipped  ${s}`)
+if (results.corrected.length) {
+  console.log('\nApproved corrections applied on top of golden:')
+  for (const c of results.corrected) console.log(`  ${c}`)
+}
 
 if (results.differs.length || results.missing.length) {
   console.log(checkOnly
@@ -112,5 +138,5 @@ if (results.differs.length || results.missing.length) {
   process.exit(1)
 }
 console.log(checkOnly
-  ? '\nEvery deployed page and asset is byte-identical to the golden master.'
+  ? '\nEvery deployed page and asset matches golden plus the approved corrections.'
   : '\nSite assembled at the repository root.')

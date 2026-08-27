@@ -16,11 +16,11 @@
 </script>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>502 Bad gateway | Neelachandra Construction</title>
-    <meta name="description" content="A server upstream returned an invalid response. Please try again shortly.">
-    <meta name="robots" content="noindex, follow">
-    <!-- One favicon convention across the whole site, per the owner's
-         instruction. favicon.ico is the only icon proven to resolve. -->
+    <title>Staff Login | Neelachandra Construction and Interiors</title>
+    <meta name="description" content="Sign-in for Neelachandra Construction and Interiors staff. Internal use only.">
+    <!-- Internal page: never indexed, and no link equity passed. -->
+    <meta name="robots" content="noindex, nofollow">
+    <link rel="canonical" href="https://neelachandra.com/login">
     <link rel="icon" href="/favicon.ico" sizes="any">
     <link rel="shortcut icon" href="/favicon.ico">
     <link rel="apple-touch-icon" href="/favicon.ico">
@@ -277,23 +277,28 @@ p{margin-top:0;margin-bottom:10px}
   .footer-copyright-center{font-size:12.5px;padding:0 10px}
 }
 </style>
-<style>
-    .ncc-error{max-width:820px;margin:0 auto;padding:96px 24px 120px;text-align:center;
-      font-family:'Outfit',system-ui,-apple-system,'Segoe UI',sans-serif}
-    .ncc-error__code{display:block;font-size:clamp(72px,14vw,148px);line-height:1;
-      font-weight:800;letter-spacing:-.04em;color:#0b3a67;margin:0 0 8px}
-    .ncc-error__title{font-size:clamp(22px,4vw,34px);font-weight:700;color:#12263f;margin:0 0 14px}
-    .ncc-error__body{font-size:17px;line-height:1.65;color:#4a5768;margin:0 auto 34px;max-width:56ch}
-    .ncc-error__links{display:flex;flex-wrap:wrap;gap:10px 14px;justify-content:center;
-      list-style:none;padding:0;margin:0 0 36px}
-    .ncc-error__links a{display:inline-block;padding:9px 18px;border:1px solid #d7dee8;
-      border-radius:999px;text-decoration:none;color:#0b3a67;font-size:15px;font-weight:500;
-      transition:background-color .15s ease,border-color .15s ease}
-    .ncc-error__links a:hover,.ncc-error__links a:focus{background:#0b3a67;border-color:#0b3a67;color:#fff}
-    .ncc-error__cta{display:inline-block;padding:14px 30px;border-radius:8px;background:#e8a33d;
-      color:#12263f;font-weight:700;font-size:16px;text-decoration:none}
-    .ncc-error__cta:hover,.ncc-error__cta:focus{background:#d4912f}
-    @media (max-width:520px){.ncc-error{padding:64px 18px 88px}}
+  <style>
+    .ncc-login{max-width:1100px;margin:0 auto;padding:96px 24px 120px;font-family:"DM Sans",sans-serif}
+    .ncc-login__grid{display:grid;grid-template-columns:1fr 1fr;gap:56px;align-items:start}
+    .ncc-login__intro h1{font-size:clamp(28px,3.2vw,44px);line-height:1.15;margin:0 0 18px;color:#111}
+    .ncc-login__intro p{font-size:clamp(15px,1.1vw,17px);line-height:1.7;color:#444;margin:0 0 14px}
+    .ncc-login__note{border-left:3px solid #e8650a;padding:14px 18px;background:#fdf6f0;margin-top:26px}
+    .ncc-login__note strong{color:#111}
+    .ncc-login__card{border:1px solid #e6e6e6;border-radius:14px;padding:32px;background:#fff;box-shadow:0 2px 18px rgba(0,0,0,.05)}
+    .ncc-login__card h2{font-size:20px;margin:0 0 22px;color:#111}
+    .ncc-login__field{margin-bottom:18px}
+    .ncc-login__field label{display:block;font-size:14px;color:#333;margin-bottom:7px}
+    .ncc-login__field input{width:100%;box-sizing:border-box;padding:12px 14px;font-size:15px;font-family:inherit;border:1px solid #d6d6d6;border-radius:8px;background:#fff}
+    .ncc-login__field input:focus{outline:none;border-color:#e8650a;box-shadow:0 0 0 3px rgba(232,101,10,.14)}
+    .ncc-login__row{display:flex;justify-content:space-between;align-items:center;gap:12px;margin:22px 0 8px;font-size:14px}
+    .ncc-login__row a{color:#e8650a;text-decoration:none}
+    .ncc-login__row a:hover{text-decoration:underline}
+    .ncc-login__submit{width:100%;padding:14px 18px;font-size:16px;font-family:inherit;font-weight:600;color:#fff;background:#e8650a;border:0;border-radius:9px;cursor:pointer}
+    .ncc-login__submit:hover{background:#cf5808}
+    .ncc-login__submit[disabled]{background:#c9c9c9;cursor:not-allowed}
+    .ncc-login__status{margin-top:16px;font-size:14px;line-height:1.6;color:#8a4b00;background:#fff6ec;border:1px solid #f3d6b8;border-radius:8px;padding:12px 14px}
+    .ncc-login__meta{margin-top:22px;font-size:13px;color:#666;line-height:1.6}
+    @media (max-width:900px){.ncc-login__grid{grid-template-columns:1fr;gap:36px}.ncc-login{padding:64px 18px 88px}}
   </style>
   </head>
   <body>
@@ -329,21 +334,62 @@ p{margin-top:0;margin-bottom:10px}
     </div>
   </div>
 </header>
-    <main class="ncc-error" id="error-502">
-      <span class="ncc-error__code">502</span>
-      <h1 class="ncc-error__title">Bad gateway</h1>
-      <p class="ncc-error__body">A server upstream returned an invalid response. Please try again shortly.</p>
-      <ul class="ncc-error__links">
-        <li><a href="/">Home</a></li>
-        <li><a href="/construction-services-in-bengaluru">Services</a></li>
-        <li><a href="/construction-packages-in-bengaluru">Packages</a></li>
-        <li><a href="/best-construction-company-in-bengaluru-projects">Projects</a></li>
-        <li><a href="/best-construction-company-in-bengaluru">Bengaluru</a></li>
-        <li><a href="/construction-company-in-tumkur">Tumkur</a></li>
-        <li><a href="/about-us">About us</a></li>
-        <li><a href="/contact-us">Contact us</a></li>
-      </ul>
-      <a class="ncc-error__cta" href="/contact-us">Talk to our team</a>
+    <main class="ncc-login" id="login-main">
+      <div class="ncc-login__grid">
+        <section class="ncc-login__intro" aria-labelledby="login-heading">
+          <h1 id="login-heading">Staff sign-in</h1>
+          <p>This is the entry point to the Neelachandra internal workspace: project tracking,
+             inventory, purchase and expense approvals, site reports, recruitment and the
+             sales pipeline.</p>
+          <p>Accounts are created by the owner or an administrator. There is no public
+             registration, and there is no client portal on this address.</p>
+          <div class="ncc-login__note">
+            <p><strong>Access is not enabled yet.</strong> The workspace is being built. This
+               page is the sign-in screen it will use; the accounts and the server that checks
+               them are part of the next phase. Nothing you type here is sent anywhere.</p>
+          </div>
+        </section>
+
+        <section class="ncc-login__card" aria-labelledby="login-form-heading">
+          <h2 id="login-form-heading">Sign in to your account</h2>
+          <!-- Field names, autocomplete hints and the CSRF placeholder match
+               section 2.5 of NCC_BUILD_SPEC.md so the Node phase can wire this
+               form up without redesigning it. The action is intentionally empty
+               and the controls are disabled while there is no server. -->
+          <form id="login-form" method="post" action="" autocomplete="on" novalidate>
+            <input type="hidden" name="_csrf" value="">
+            <input type="hidden" name="next" value="/app">
+            <div class="ncc-login__field">
+              <label for="login-email">Work email</label>
+              <input type="email" id="login-email" name="email" autocomplete="username"
+                     inputmode="email" placeholder="you@neelachandra.com" disabled>
+            </div>
+            <div class="ncc-login__field">
+              <label for="login-password">Password</label>
+              <input type="password" id="login-password" name="password"
+                     autocomplete="current-password" placeholder="Your password" disabled>
+            </div>
+            <div class="ncc-login__row">
+              <label for="login-remember" style="display:flex;align-items:center;gap:8px;margin:0">
+                <input type="checkbox" id="login-remember" name="remember" value="1"
+                       style="width:auto" disabled> Keep me signed in
+              </label>
+              <a href="/contact-us" rel="nofollow">Forgot password?</a>
+            </div>
+            <button type="submit" class="ncc-login__submit" id="login-submit" disabled>
+              Sign in
+            </button>
+            <p class="ncc-login__status" id="login-status" role="status">
+              Sign-in opens once the internal workspace goes live. To get an account, or if you
+              need something from the office in the meantime,
+              <a href="/contact-us">contact us</a>.
+            </p>
+          </form>
+          <p class="ncc-login__meta">
+            Authorised users only. Activity in the workspace is logged.
+          </p>
+        </section>
+      </div>
     </main>
 <footer class="footer-dark">
   <div class="container-21">
