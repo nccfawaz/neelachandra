@@ -14,7 +14,11 @@
     "capture:assets:verify": "node scripts/capture-assets.mjs --verify",
     "parity": "node scripts/parity-check.mjs",
     "parity:selftest": "node scripts/selftest-parity.mjs",
-    "test": "node scripts/selftest-parity.mjs"
+    "test": "node scripts/selftest-parity.mjs",
+    "build:site": "node scripts/build-site.mjs",
+    "build:site:check": "node scripts/build-site.mjs --check",
+    "build:errors": "node scripts/build-error-pages.mjs",
+    "test:htaccess": "node scripts/test-htaccess.mjs"
   },
   "devDependencies": {
     "pixelmatch": "^7.2.0",

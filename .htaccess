@@ -1,0 +1,207 @@
+# =============================================================================
+# Neelachandra Construction and Interiors
+# Apache configuration for the static staging deployment.
+#
+# WHAT THIS FILE IS FOR
+#   1. Serve every page at an extensionless URL. No .html or .php is ever
+#      visible in a live URL, and any request that includes one is redirected
+#      once, permanently, to the clean form.
+#   2. Deny access to the repository files that share this directory. Hostinger
+#      serves the repository root as the web root, so the specification, the
+#      golden masters, the tooling and package.json were all publicly
+#      downloadable until these rules existed.
+#   3. Preserve the legacy URL surface: short paths, trailing slashes, and the
+#      .php endpoints the old site exposed.
+#
+# CANONICAL HOST
+#   Host canonicalisation is deliberately NOT enabled here. The site currently
+#   runs on the temporary domain bisque-porpoise-208310.hostingersite.com and
+#   forcing neelachandra.com would break it. The rules are written at the
+#   bottom, commented, ready for the cutover.
+# =============================================================================
+
+Options -Indexes -MultiViews
+DirectoryIndex index.html
+
+<IfModule mod_rewrite.c>
+RewriteEngine On
+RewriteBase /
+
+# -----------------------------------------------------------------------------
+# 1. HTTPS. Hostinger terminates TLS upstream, so test the forwarded header as
+#    well as HTTPS itself, otherwise this can loop.
+# -----------------------------------------------------------------------------
+RewriteCond %{HTTPS} !=on
+RewriteCond %{HTTP:X-Forwarded-Proto} !=https
+RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [R=301,L,QSA]
+
+# -----------------------------------------------------------------------------
+# 2. Protect repository internals.
+#    Returns 404 rather than 403 so the presence of these paths is not
+#    advertised. This must run before any rewrite that could expose them.
+# -----------------------------------------------------------------------------
+RewriteRule ^(?:\.git|\.github|node_modules|scripts|tests|legacy|migrations|src|public)(?:/|$) - [R=404,END]
+RewriteRule ^(?:package(?:-lock)?\.json|NCC_BUILD_SPEC\.md|README\.md|\.gitignore|\.gitattributes|ecosystem\.config\.cjs|tsconfig\.json|vite\.config\.ts|wrangler\.jsonc|\.env.*|\.dev\.vars)$ - [R=404,END]
+RewriteRule (?:^|/)\.(?!well-known/) - [R=404,END]
+
+# -----------------------------------------------------------------------------
+# 3. Legacy PHP endpoints. These were real files on the old site and are named
+#    in robots.txt. They no longer exist and PHP does not execute on this host.
+#    The include fragments 404; the two form handlers point at the contact page
+#    rather than leaving a dead POST target.
+#
+#    ORDER MATTERS. These must run BEFORE the extension stripper below,
+#    otherwise /header.php is rewritten to /header and 301s instead of 404ing,
+#    and /enquiry-handler.php lands on /enquiry-handler which does not exist.
+#    Verified by scripts/test-htaccess.mjs section 5.
+# -----------------------------------------------------------------------------
+RewriteRule ^(?:header|footer)\.php$                - [R=404,END]
+RewriteRule ^(?:enquiry-handler|contact-form)\.php$ /contact-us [R=301,END]
+
+# -----------------------------------------------------------------------------
+# 4. Strip extensions from incoming requests, permanently.
+#    /page.html -> /page   and   /page.php -> /page
+#    The old site was PHP, so inbound .php links exist in the wild and in
+#    search results. Both are folded onto the same clean URL.
+#    index is special: it must land on "/" and not on "/index".
+# -----------------------------------------------------------------------------
+#    The Google Search Console verification file must keep its .html extension,
+#    otherwise verification breaks. It is excluded explicitly. Same for any
+#    .well-known path. Caught by scripts/test-htaccess.mjs section 7.
+#    REDIRECT_STATUS is empty ONLY on the initial external request. On an
+#    internal ErrorDocument subrequest it is set (e.g. "404"), while
+#    THE_REQUEST still holds the ORIGINAL request line. Without this guard the
+#    stripper re-fires while Apache is building the error page and converts a
+#    correct 404 into a 301. This is what made /legacy/golden/home.html 301.
+RewriteCond %{ENV:REDIRECT_STATUS} ^$
+RewriteCond %{THE_REQUEST} \s/+index\.(?:html?|php)[\s?] [NC]
+RewriteRule ^ /? [R=301,L]
+
+#    The stripper matches on THE_REQUEST, which always holds the ORIGINAL
+#    request line and is unaffected by earlier rules. So paths already handled
+#    above have to be excluded here explicitly, or this rule overrides them:
+#      - the legacy .php endpoints in section 3 (404 / redirect to contact)
+#      - anything under the protected directories in section 2
+#    Both were caught by scripts/test-htaccess.mjs and are asserted there.
+#    CRITICAL GUARD: only strip when the clean URL actually has a page behind
+#    it. Without this the rule fires on every .php and .html request, including
+#    /header.php (no such page) and /legacy/golden/home.html (protected), and
+#    301s them to dead URLs instead of letting the rules above return 404.
+#    The DOCUMENT_ROOT test is what makes this ordering-independent.
+RewriteCond %{ENV:REDIRECT_STATUS} ^$
+RewriteCond %{REQUEST_URI} !^/google[0-9a-f]+\.html$ [NC]
+RewriteCond %{REQUEST_URI} !^/\.well-known/ [NC]
+#    Protected trees are excluded so a real file inside them (the golden masters
+#    are .html) is not 301d to a clean URL instead of 404ing.
+RewriteCond %{REQUEST_URI} !^/(?:\.git|\.github|node_modules|scripts|tests|legacy|migrations|src|public)/ [NC]
+RewriteCond %{THE_REQUEST} \s/+(.+?)\.(?:html?|php)[\s?] [NC]
+RewriteCond %{DOCUMENT_ROOT}/%1.html -f
+RewriteRule ^ /%1 [R=301,L,QSA]
+
+# -----------------------------------------------------------------------------
+# 5. Remove trailing slashes from page URLs so each page has exactly one URL.
+#    Real directories are excluded so asset folders keep working.
+# -----------------------------------------------------------------------------
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule ^(.+?)/+$ /$1 [R=301,L,QSA]
+
+# -----------------------------------------------------------------------------
+# 6. Legacy short paths found in the captured markup.
+#    projects.html links to /about and /contact, which never existed as pages.
+#    security.txt names /contact as a contact URL. Redirect rather than 404.
+# -----------------------------------------------------------------------------
+RewriteRule ^about/?$        /about-us      [R=301,L]
+RewriteRule ^contact/?$      /contact-us    [R=301,L]
+RewriteRule ^privacy/?$      /privacy-policy [R=301,L]
+RewriteRule ^home/?$         /              [R=301,L]
+RewriteRule ^index/?$        /              [R=301,L]
+
+# -----------------------------------------------------------------------------
+# 7. The manifest path that 404s on the live site.
+#    home.html links rel="manifest" to /favicon/site.webmanifest, which has
+#    never existed; the real file is /site.webmanifest. Recorded as CQ-5. The
+#    page markup is frozen, so the URL is made to resolve here instead.
+# -----------------------------------------------------------------------------
+RewriteRule ^favicon/site\.webmanifest$ /site.webmanifest [L]
+
+# -----------------------------------------------------------------------------
+# 8. Serve the extensionless page. This is the rule that makes clean URLs work:
+#    /about-us internally serves about-us.html without changing the URL.
+# -----------------------------------------------------------------------------
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteCond %{DOCUMENT_ROOT}/$1.html -f
+RewriteRule ^(.+?)/?$ /$1.html [L,QSA]
+
+# -----------------------------------------------------------------------------
+# 9. Canonical host. Enable at cutover, after the domain points here.
+# -----------------------------------------------------------------------------
+# RewriteCond %{HTTP_HOST} !^neelachandra\.com$ [NC]
+# RewriteRule ^ https://neelachandra.com%{REQUEST_URI} [R=301,L,QSA]
+</IfModule>
+
+# =============================================================================
+# Error documents. Extensionless so they match the rest of the URL surface.
+# =============================================================================
+ErrorDocument 400 /400
+ErrorDocument 401 /401
+ErrorDocument 403 /403
+ErrorDocument 404 /404
+ErrorDocument 405 /405
+ErrorDocument 408 /408
+ErrorDocument 410 /410
+ErrorDocument 429 /429
+ErrorDocument 500 /500
+ErrorDocument 502 /502
+ErrorDocument 503 /503
+ErrorDocument 504 /504
+
+# =============================================================================
+# Correct MIME types. Without these, .webp and .webmanifest can be served as
+# octet-stream by a default Apache config, which stops images rendering.
+# =============================================================================
+<IfModule mod_mime.c>
+AddType image/webp                       .webp
+AddType image/avif                       .avif
+AddType image/svg+xml                    .svg
+AddType image/x-icon                     .ico
+AddType application/manifest+json        .webmanifest
+AddType text/plain                       .txt
+AddType application/xml                  .xml
+AddCharset UTF-8                         .html .css .js .txt .xml .json .webmanifest
+</IfModule>
+
+# =============================================================================
+# Compression.
+# =============================================================================
+<IfModule mod_deflate.c>
+AddOutputFilterByType DEFLATE text/html text/plain text/css text/xml
+AddOutputFilterByType DEFLATE application/javascript application/json
+AddOutputFilterByType DEFLATE application/xml application/manifest+json
+AddOutputFilterByType DEFLATE image/svg+xml
+</IfModule>
+
+# =============================================================================
+# Caching. Images and icons are immutable in practice; HTML must not be cached
+# hard while the port is in progress or corrections will not appear.
+# =============================================================================
+<IfModule mod_expires.c>
+ExpiresActive On
+ExpiresByType image/webp                 "access plus 1 year"
+ExpiresByType image/png                  "access plus 1 year"
+ExpiresByType image/svg+xml              "access plus 1 year"
+ExpiresByType image/x-icon               "access plus 1 year"
+ExpiresByType text/css                   "access plus 1 month"
+ExpiresByType application/javascript     "access plus 1 month"
+ExpiresByType application/manifest+json  "access plus 1 week"
+ExpiresByType text/html                  "access plus 0 seconds"
+</IfModule>
+
+<IfModule mod_headers.c>
+Header always set X-Content-Type-Options "nosniff"
+Header always set X-Frame-Options "SAMEORIGIN"
+Header always set Referrer-Policy "strict-origin-when-cross-origin"
+Header set Cache-Control "no-cache, must-revalidate" "expr=%{CONTENT_TYPE} =~ m#text/html#"
+# Staging only. Remove at cutover so the real site can be indexed.
+Header always set X-Robots-Tag "noindex, nofollow" "expr=%{HTTP_HOST} =~ /hostingersite\.com/"
+</IfModule>

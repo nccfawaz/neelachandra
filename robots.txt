@@ -1,0 +1,114 @@
+# =============================================================================
+# robots.txt for Neelachandra Construction and Interiors
+# https://neelachandra.com
+#
+# The file previously served here belonged to the interiors site: its header
+# named neelachandrainteriors.com and its Sitemap directive pointed at that
+# domain, so this site advertised a sitemap it does not own and never
+# advertised its own. Recorded as CQ-2. Every crawler directive below is
+# carried across from that file unchanged; only the identity, the commentary
+# and the Sitemap line are corrected.
+#
+# STAGING NOTE: while the site runs on the temporary hostingersite.com domain,
+# indexing is suppressed by an X-Robots-Tag header set in .htaccess, which is
+# scoped to that hostname. This file is already written for the live domain, so
+# nothing here needs changing at cutover.
+# =============================================================================
+
+# --- Standard search crawlers -----------------------------------------------
+User-agent: *
+Allow: /
+
+# Nothing here is secret, but these have no search value and waste crawl budget.
+# The four .php paths were real endpoints on the previous PHP site. They no
+# longer exist; .htaccess 404s the include fragments and redirects the two form
+# handlers to /contact-us. The rules are kept so crawlers holding old URLs do
+# not keep requesting them.
+Disallow: /enquiry-handler.php
+Disallow: /contact-form.php
+Disallow: /header.php
+Disallow: /footer.php
+Disallow: /*?sent=
+Disallow: /*?error=
+Disallow: /*?reveal=
+
+# Repository files share the web root on this host. They are already 404d by
+# .htaccess; these lines stop well behaved crawlers requesting them at all.
+Disallow: /scripts/
+Disallow: /legacy/
+Disallow: /tests/
+Disallow: /node_modules/
+Disallow: /package.json
+Disallow: /package-lock.json
+Disallow: /NCC_BUILD_SPEC.md
+Disallow: /README.md
+
+# --- AI / answer-engine crawlers ---------------------------------------------
+# These are allowed deliberately. For a construction firm competing on
+# "best construction company in Bengaluru", being cited inside an AI answer is
+# now a primary discovery channel, not a leak. If the business later decides
+# to opt out of model training while staying citable, disallow the trainer
+# agents (GPTBot, ClaudeBot, Google-Extended, CCBot) but KEEP the live
+# retrieval agents (OAI-SearchBot, ChatGPT-User, Perplexity, Claude-User)
+# allowed, because blocking those removes the site from answers entirely.
+
+User-agent: OAI-SearchBot
+Allow: /
+
+User-agent: ChatGPT-User
+Allow: /
+
+User-agent: GPTBot
+Allow: /
+
+User-agent: PerplexityBot
+Allow: /
+
+User-agent: Perplexity-User
+Allow: /
+
+User-agent: ClaudeBot
+Allow: /
+
+User-agent: Claude-User
+Allow: /
+
+User-agent: Claude-SearchBot
+Allow: /
+
+User-agent: Google-Extended
+Allow: /
+
+User-agent: Applebot
+Allow: /
+
+User-agent: Applebot-Extended
+Allow: /
+
+User-agent: Bingbot
+Allow: /
+
+User-agent: CCBot
+Allow: /
+
+User-agent: meta-externalagent
+Allow: /
+
+User-agent: Amazonbot
+Allow: /
+
+User-agent: DuckAssistBot
+Allow: /
+
+User-agent: MistralAI-User
+Allow: /
+
+# --- Crawlers with no upside for a local construction firm --------------------
+User-agent: AhrefsBot
+Crawl-delay: 10
+
+User-agent: SemrushBot
+Crawl-delay: 10
+
+# --- Sitemap ----------------------------------------------------------------
+Sitemap: https://neelachandra.com/sitemap.xml
