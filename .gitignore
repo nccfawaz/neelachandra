@@ -27,12 +27,14 @@ npm-debug.log*
 .DS_Store
 
 # ---------------------------------------------------------------------------
-# Sandbox Cloudflare Pages scaffold. NOT part of this project: the target is
-# Hostinger Node.js + MariaDB (see NCC_BUILD_SPEC.md section 2). A stray
-# wrangler.jsonc would send an implementer down the wrong deployment path.
+# NOTE: nothing here ignores src/, public/ or tsconfig.json.
+#
+# An earlier revision ignored those paths to keep the sandbox Cloudflare Pages
+# scaffold out of the repository. That scaffold has now been deleted from the
+# root and archived verbatim under legacy/sandbox-scaffold/ instead, so the
+# ignore rules were removed.
+#
+# This matters for phase 1: the real application creates src/ and public/ and
+# its own tsconfig.json. If those rules were still here, an implementer would
+# write the entire public site and silently commit none of it.
 # ---------------------------------------------------------------------------
-wrangler.jsonc
-vite.config.ts
-tsconfig.json
-src/
-public/

@@ -85,4 +85,15 @@ Section 8 holds the open questions. These block the phases named against them:
 
 ## Note on the sandbox scaffold
 
-A Cloudflare Pages starter (`wrangler.jsonc`, `vite.config.ts`, `src/index.tsx`, `public/static/`) exists in the working directory as an artefact of the environment the specification was authored in. It is deliberately **not tracked in this repository**, because Cloudflare Workers contradicts the Hostinger target in section 2 and a stray `wrangler.jsonc` would send an implementer down the wrong path. Ignore it if you see it locally.
+A Cloudflare Pages starter (`wrangler.jsonc`, `vite.config.ts`, `tsconfig.json`, `src/index.tsx`, `src/renderer.tsx`, `public/static/style.css`) was generated in the working directory by the environment this specification was authored in. All six files are archived byte-identical under **`legacy/sandbox-scaffold/`** and removed from the repository root.
+
+They are archived rather than deleted so the repository contains every file that existed on disk. They are not at the root because Cloudflare Workers contradicts the Hostinger target in section 2: no pooled TCP socket for MariaDB, no raw TCP for Nodemailer, and no native addon loading for `@node-rs/argon2`. Left in place, a stray `wrangler.jsonc` and `vite.config.ts` would be picked up by tooling and send an implementer down a target that cannot run this application. See `legacy/sandbox-scaffold/README.md`.
+
+Two settings in that `tsconfig.json` are worth carrying forward, since the public site is rendered with `hono/jsx`:
+
+```json
+"jsx": "react-jsx",
+"jsxImportSource": "hono/jsx"
+```
+
+Note also that `.gitignore` no longer ignores `src/`, `public/` or `tsconfig.json`. It did while the scaffold sat at the root. Phase 1 creates real files at exactly those paths, so had the rules survived, the entire public site would have been written and never committed.
