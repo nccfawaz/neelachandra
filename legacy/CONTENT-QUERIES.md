@@ -41,7 +41,7 @@ Why this matters, in order of severity:
 
 The file served at `https://neelachandra.com/robots.txt` is the **interiors** site's robots file:
 
-- Header comment reads `robots.txt — Neelachandra Interiors` and `https://neelachandrainteriors.com`
+- Header comment names Neelachandra Interiors and the `neelachandrainteriors.com` domain
 - `Sitemap:` directive points at `https://neelachandrainteriors.com/sitemap.xml`
 - Body comments reason about "an interiors studio competing on best interior designers in Bengaluru"
 
@@ -71,6 +71,35 @@ Also note `Expires: 2027-07-13`. RFC 9116 requires a future expiry; this one is 
 
 ---
 
+## CQ-5. Six referenced assets 404 on the live site (MEDIUM)
+
+Mirroring every same-origin asset (`npm run capture:assets`) downloaded 62 of 68 successfully. Six return 404 from the live host. These are not capture failures; each was re-checked directly with `curl` against `https://neelachandra.com`.
+
+| Path | Referenced by |
+| --- | --- |
+| `/favicon/site.webmanifest` | `home` via `<link rel="manifest">` |
+| `/assets/images/favicon/favicon-32x32.png` | `projects` |
+| `/assets/images/favicon/favicon-192x192.png` | `projects` |
+| `/assets/images/favicon/apple-touch-icon.png` | `projects` |
+| `/favicon.ico/web-app-manifest-192x192.png` | `site.webmanifest` `icons[0]` |
+| `/favicon.ico/web-app-manifest-512x512.png` | `site.webmanifest` `icons[1]` |
+
+Three separate faults are visible here.
+
+1. **The home page's manifest link is broken.** It points at `/favicon/site.webmanifest`, which 404s. The real file is at `/site.webmanifest` and returns 200. Only `about` links to the correct path; the other eight pages emit no manifest link at all.
+
+2. **`site.webmanifest` treats a file as a directory.** Both its icon entries are under `/favicon.ico/`, and `/favicon.ico` is a 15 KB icon file, not a folder. So even when the manifest is reached, both maskable icons fail. The site has no working PWA icons.
+
+3. **`projects` uses a favicon convention no other page uses.** It points into `/assets/images/favicon/`, a directory that does not exist. Across the ten pages there are five different favicon conventions: the full modern block (`home`, `about`), a seven-line all-`favicon.ico` block (`contact`, `packages`, `services`), a single `favicon.ico` line (`bengaluru`, `privacy`, `terms`, `tumkur`), and the broken `assets/images/favicon/` variant (`projects`).
+
+**Action at migration:** these fall under freeze category 1 and category 2, not a redesign. The rendered markup must stay byte-identical per spec 3.2, so the fix is to make the references resolve, not to restyle the head. Concretely: serve the manifest at both `/site.webmanifest` and `/favicon/site.webmanifest`, correct the two `icons[].src` values to real paths, and either generate the three `assets/images/favicon/` files or 301 them to the existing root icons. Consolidating the five favicon conventions into one is a **content change** and is therefore out of scope unless you approve it separately.
+
+Note that nothing here is currently user-visible: every page also emits a working `/favicon.ico`, so browsers fall back successfully. The cost is failed requests and a non-functioning web app manifest.
+
+---
+
 ## Method note
 
-These four were found by capturing the live pages and reading them, not by reading the old repository. CQ-1 and CQ-3 both **contradict** what the repository's own `README.md` and file layout implied, which is the practical argument for the golden capture being a mandatory phase 0 step rather than a formality: the repository is not a reliable description of what is actually being served.
+These five were found by capturing the live pages and their assets and reading them, not by reading the old repository. CQ-1 and CQ-3 both **contradict** what the repository's own `README.md` and file layout implied, which is the practical argument for the golden capture being a mandatory phase 0 step rather than a formality: the repository is not a reliable description of what is actually being served.
+
+CQ-5 makes a second point. The golden HTML captures what the server *says*; only fetching every referenced asset reveals what the server can actually *deliver*. Six broken references were invisible until the assets were mirrored, and would have been indistinguishable from porting mistakes had they first appeared after cutover.

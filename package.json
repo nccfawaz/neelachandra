@@ -10,6 +10,8 @@
   "scripts": {
     "capture:golden": "node scripts/capture-golden.mjs",
     "capture:golden:html": "node scripts/capture-golden.mjs --html-only",
+    "capture:assets": "node scripts/capture-assets.mjs",
+    "capture:assets:verify": "node scripts/capture-assets.mjs --verify",
     "parity": "node scripts/parity-check.mjs",
     "parity:selftest": "node scripts/selftest-parity.mjs",
     "test": "node scripts/selftest-parity.mjs"

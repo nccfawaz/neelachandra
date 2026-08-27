@@ -3,4 +3,13 @@
 # places and normalising it would corrupt the parity comparison.
 legacy/golden/*.html   -text
 legacy/golden/infra/*  -text
+
+# Mirrored site assets are byte-for-byte copies verified against
+# legacy/golden/assets-manifest.json. Several are text-like (.svg,
+# .webmanifest) and would otherwise have their line endings rewritten on
+# checkout, breaking every recorded SHA-256.
+legacy/golden/assets/** -text
+
 *.png                  binary
+*.webp                 binary
+*.ico                  binary
