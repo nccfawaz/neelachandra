@@ -21,6 +21,7 @@
 
 import fs from 'node:fs'
 import path from 'node:path'
+import { applyCorrections } from './lib/corrections.mjs'
 
 const DONOR = 'legacy/golden/terms.html'
 const html = fs.readFileSync(DONOR, 'utf8')
@@ -32,7 +33,11 @@ function extract (re, label) {
 }
 
 const socialBar = extract(/<div class="top-social-bar">[\s\S]*?<\/div>/i, 'top social bar')
-const header = extract(/<header[\s\S]*?<\/header>/i, 'header')
+// The donor chrome was captured before the Login link was added, so the same
+// correction the public pages get is applied here. Without this, the header on
+// the generated pages would silently lack a nav item the rest of the site has.
+const header = applyCorrections(
+  extract(/<header[\s\S]*?<\/header>/i, 'header'), '__chrome__').html
 const footer = extract(/<footer[\s\S]*?<\/footer>/i, 'footer')
 const gaBlock = extract(/<!-- Google tag \(gtag\.js\) -->[\s\S]*?<\/script>\s*<script>[\s\S]*?<\/script>/i, 'GA4 block')
 const styleBlocks = [...html.matchAll(/<style[\s\S]*?<\/style>/gi)].map(m => m[0]).join('\n')
@@ -64,9 +69,20 @@ const LOGIN_CSS = `  <style>
     @media (max-width:900px){.ncc-login__grid{grid-template-columns:1fr;gap:36px}.ncc-login{padding:64px 18px 88px}}
   </style>`
 
-const page = `${socialBar}<head>
-    ${gaBlock}
+// DOCUMENT STRUCTURE
+// The captured pages open with the social bar div BEFORE <head>, with no
+// doctype, which pushes <meta charset> past byte 1024. Browsers stop looking
+// for the charset at that point, so the en dash in the footer address renders
+// as mojibake. The ten real pages keep that fault under the content freeze,
+// but these generated pages are new infrastructure, so they are well formed:
+// doctype first, charset as the first thing in <head>, social bar in <body>
+// where it belongs. This is freeze category 1, markup browsers already error
+// correct, and category 2, non-page infrastructure.
+const page = `<!DOCTYPE html>
+<html lang="en">
+  <head>
     <meta charset="UTF-8">
+    ${gaBlock}
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Staff Login | Neelachandra Construction and Interiors</title>
     <meta name="description" content="Sign-in for Neelachandra Construction and Interiors staff. Internal use only.">
@@ -82,6 +98,7 @@ ${styleBlocks}
 ${LOGIN_CSS}
   </head>
   <body>
+${socialBar}
 ${header}
     <main class="ncc-login" id="login-main">
       <div class="ncc-login__grid">

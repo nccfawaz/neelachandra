@@ -17,6 +17,7 @@
 
 import fs from 'node:fs'
 import path from 'node:path'
+import { applyCorrections } from './lib/corrections.mjs'
 
 const DONOR = 'legacy/golden/terms.html'
 const html = fs.readFileSync(DONOR, 'utf8')
@@ -28,7 +29,11 @@ function extract (re, label) {
 }
 
 const socialBar = extract(/<div class="top-social-bar">[\s\S]*?<\/div>/i, 'top social bar')
-const header = extract(/<header[\s\S]*?<\/header>/i, 'header')
+// The donor chrome was captured before the Login link was added, so the same
+// correction the public pages get is applied here. Without this, the header on
+// the generated pages would silently lack a nav item the rest of the site has.
+const header = applyCorrections(
+  extract(/<header[\s\S]*?<\/header>/i, 'header'), '__chrome__').html
 const footer = extract(/<footer[\s\S]*?<\/footer>/i, 'footer')
 const gaBlock = extract(/<!-- Google tag \(gtag\.js\) -->[\s\S]*?<\/script>\s*<script>[\s\S]*?<\/script>/i, 'GA4 block')
 const styleBlocks = [...html.matchAll(/<style[\s\S]*?<\/style>/gi)].map(m => m[0]).join('\n')
@@ -83,9 +88,16 @@ const ERROR_CSS = `<style>
 
 function page ({ code, title, body }) {
   const links = NAV.map(([href, label]) => `<li><a href="${href}">${label}</a></li>`).join('\n        ')
-  return `${socialBar}<head>
-    ${gaBlock}
+  // Well formed, unlike the captured pages: doctype first and charset as the
+  // first thing in <head>. The originals put the social bar before <head>,
+  // pushing charset past byte 1024, which is where browsers stop looking, so
+  // the en dash in the footer address rendered as mojibake. The ten real pages
+  // keep that fault under the freeze; these generated pages do not inherit it.
+  return `<!DOCTYPE html>
+<html lang="en">
+  <head>
     <meta charset="UTF-8">
+    ${gaBlock}
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>${code} ${title} | Neelachandra Construction</title>
     <meta name="description" content="${body}">
@@ -101,6 +113,7 @@ ${styleBlocks}
 ${ERROR_CSS}
   </head>
   <body>
+${socialBar}
 ${header}
     <main class="ncc-error" id="error-${code}">
       <span class="ncc-error__code">${code}</span>

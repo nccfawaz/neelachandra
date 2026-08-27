@@ -38,3 +38,9 @@ npm-debug.log*
 # its own tsconfig.json. If those rules were still here, an implementer would
 # write the entire public site and silently commit none of it.
 # ---------------------------------------------------------------------------
+
+# Crash dumps. A 248 MB Playwright core dump was swept in by git add -A
+# and rejected by GitHub, which caps files at 100 MB.
+core
+core.*
+*.core
