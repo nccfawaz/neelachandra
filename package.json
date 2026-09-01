@@ -3,26 +3,38 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Neelachandra Construction and Interiors: public site and internal staff platform. Specification and phase 0 tooling.",
+  "description": "Neelachandra Construction and Interiors: public site and internal staff platform.",
   "engines": {
-    "node": ">=22"
+    "node": "22.x"
   },
   "scripts": {
+    "build": "tsc -p tsconfig.json && vite build",
+    "build:server": "tsc -p tsconfig.json",
+    "build:client": "vite build",
+    "dev": "tsx watch src/server.ts",
+    "start": "node dist/server.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "playwright test",
+    "test:parity": "node scripts/selftest-parity.mjs",
+    "db:migrate": "node scripts/migrate.mjs",
+    "seed:owner": "node scripts/seed-users.mjs --owner",
     "capture:golden": "node scripts/capture-golden.mjs",
     "capture:golden:html": "node scripts/capture-golden.mjs --html-only",
     "capture:assets": "node scripts/capture-assets.mjs",
     "capture:assets:verify": "node scripts/capture-assets.mjs --verify",
     "parity": "node scripts/parity-check.mjs",
     "parity:selftest": "node scripts/selftest-parity.mjs",
-    "test": "node scripts/selftest-parity.mjs",
     "build:site": "node scripts/build-site.mjs",
     "build:site:check": "node scripts/build-site.mjs --check",
     "build:errors": "node scripts/build-error-pages.mjs",
-    "test:htaccess": "node scripts/test-htaccess.mjs",
     "build:login": "node scripts/build-login-page.mjs",
-    "build:all": "node scripts/build-site.mjs && node scripts/build-error-pages.mjs && node scripts/build-login-page.mjs"
+    "build:all": "node scripts/build-site.mjs && node scripts/build-error-pages.mjs && node scripts/build-login-page.mjs",
+    "test:htaccess": "node scripts/test-htaccess.mjs"
   },
   "devDependencies": {
+    "@playwright/test": "^1.62.1",
     "@types/node": "^22.20.1",
     "@types/nodemailer": "^7.0.12",
     "@types/qrcode": "^1.5.6",
@@ -31,6 +43,7 @@
     "pngjs": "^7.0.0",
     "tsx": "^4.23.13",
     "typescript": "^5.9.3",
+    "vite": "^6.4.3",
     "vitest": "^3.2.7"
   },
   "dependencies": {
