@@ -105,9 +105,19 @@ lines.push('/**')
 lines.push(' * DATE and DATETIME arrive as strings because the pool sets dateStrings')
 lines.push(' * (src/db/pool.ts). Inserts accept a string or a Date so a caller can hand')
 lines.push(' * over either without a cast.')
+lines.push(' *')
+lines.push(' * There are three variants of each rather than one wrapped in')
+lines.push(' * Generated<>, because Generated<ColumnType<...>> nests two ColumnTypes')
+lines.push(' * and Kysely then reads the outer one only: comparisons against a plain')
+lines.push(' * string stop type checking. Spelling the optional insert out here keeps')
+lines.push(' * eb(col, ">=", "2026-04-01") legal.')
 lines.push(' */')
 lines.push('type SqlDate = ColumnType<string, string | Date, string | Date>')
+lines.push('type SqlDateGen = ColumnType<string, string | Date | undefined, string | Date>')
+lines.push('type SqlDateNull = ColumnType<string | null, string | Date | null | undefined, string | Date | null>')
 lines.push('type SqlJson = ColumnType<unknown, string, string>')
+lines.push('type SqlJsonGen = ColumnType<unknown, string | undefined, string>')
+lines.push('type SqlJsonNull = ColumnType<unknown, string | null | undefined, string | null>')
 lines.push('')
 
 for (const table of tableNames) {
@@ -116,21 +126,22 @@ for (const table of tableNames) {
   lines.push(`export interface ${iface} {`)
   for (const col of byTable.get(table)) {
     const dt = col.data_type.toLowerCase()
-    let t
-    if (['date', 'datetime', 'timestamp'].includes(dt)) {
-      t = 'SqlDate'
-    } else if (dt === 'json') {
-      t = 'SqlJson'
-    } else {
-      t = tsType(col)
-    }
     const nullable = col.is_nullable === 'YES'
     const generated =
       String(col.extra ?? '').includes('auto_increment') ||
       col.column_default !== null ||
       nullable
-    if (nullable) t = `${t} | null`
-    const finalType = generated ? `Generated<${t}>` : t
+
+    let finalType
+    if (['date', 'datetime', 'timestamp'].includes(dt)) {
+      finalType = nullable ? 'SqlDateNull' : generated ? 'SqlDateGen' : 'SqlDate'
+    } else if (dt === 'json') {
+      finalType = nullable ? 'SqlJsonNull' : generated ? 'SqlJsonGen' : 'SqlJson'
+    } else {
+      let t = tsType(col)
+      if (nullable) t = `${t} | null`
+      finalType = generated ? `Generated<${t}>` : t
+    }
     lines.push(`  ${col.column_name}: ${finalType}`)
   }
   lines.push('}')

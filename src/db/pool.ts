@@ -1,4 +1,4 @@
-import { createPool, type Pool } from 'mysql2/promise'
+import { createPool, type Pool, type RowDataPacket } from 'mysql2/promise'
 import { env } from '../env.js'
 
 /**
@@ -49,7 +49,7 @@ export async function closePool(): Promise<void> {
 /** Boot check: fail fast if the database is unreachable or unmigrated. */
 export async function assertDatabaseReady(): Promise<void> {
   const p = getPool()
-  const [rows] = await p.query<Array<{ n: number } & Record<string, unknown>>>(
+  const [rows] = await p.query<Array<RowDataPacket & { n: number }>>(
     'SELECT COUNT(*) AS n FROM schema_migrations'
   )
   const applied = Number(rows[0]?.n ?? 0)

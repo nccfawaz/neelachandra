@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { hash, verify, Algorithm } from '@node-rs/argon2'
+import { hash, verify } from '@node-rs/argon2'
 import { UnprocessableError } from './errors.js'
 
 /**
@@ -16,7 +16,9 @@ import { UnprocessableError } from './errors.js'
  * 64 MiB per verify. A cold process handling a login must not swap.
  */
 const ARGON_OPTIONS = {
-  algorithm: Algorithm.Argon2id,
+  // Algorithm.Argon2id is 2. The enum is an ambient const enum, which
+  // verbatimModuleSyntax refuses to inline, so the value is written out.
+  algorithm: 2 as const,
   memoryCost: 19456,
   timeCost: 2,
   parallelism: 1,

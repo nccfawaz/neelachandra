@@ -8,8 +8,8 @@
     "node": "22.x"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json && vite build",
-    "build:server": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && node scripts/copy-runtime-data.mjs && vite build",
+    "build:server": "tsc -p tsconfig.json && node scripts/copy-runtime-data.mjs",
     "build:client": "vite build",
     "dev": "tsx watch src/server.ts",
     "start": "node dist/server.js",
@@ -19,6 +19,9 @@
     "test:e2e": "playwright test",
     "test:parity": "node scripts/selftest-parity.mjs",
     "db:migrate": "node scripts/migrate.mjs",
+    "db:types": "node scripts/gen-db-types.mjs",
+    "seed:reference": "node scripts/seed-reference.mjs",
+    "reconcile:stock": "node scripts/reconcile-stock.mjs",
     "seed:owner": "node scripts/seed-users.mjs --owner",
     "capture:golden": "node scripts/capture-golden.mjs",
     "capture:golden:html": "node scripts/capture-golden.mjs --html-only",

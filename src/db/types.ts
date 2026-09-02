@@ -11,9 +11,19 @@ import type { ColumnType, Generated } from 'kysely'
  * DATE and DATETIME arrive as strings because the pool sets dateStrings
  * (src/db/pool.ts). Inserts accept a string or a Date so a caller can hand
  * over either without a cast.
+ *
+ * There are three variants of each rather than one wrapped in
+ * Generated<>, because Generated<ColumnType<...>> nests two ColumnTypes
+ * and Kysely then reads the outer one only: comparisons against a plain
+ * string stop type checking. Spelling the optional insert out here keeps
+ * eb(col, ">=", "2026-04-01") legal.
  */
 type SqlDate = ColumnType<string, string | Date, string | Date>
+type SqlDateGen = ColumnType<string, string | Date | undefined, string | Date>
+type SqlDateNull = ColumnType<string | null, string | Date | null | undefined, string | Date | null>
 type SqlJson = ColumnType<unknown, string, string>
+type SqlJsonGen = ColumnType<unknown, string | undefined, string>
+type SqlJsonNull = ColumnType<unknown, string | null | undefined, string | null>
 
 export interface AccountingPeriodsTable {
   id: Generated<number>
@@ -23,9 +33,9 @@ export interface AccountingPeriodsTable {
   period_end: SqlDate
   status: Generated<'open' | 'soft_closed' | 'closed'>
   closed_by: Generated<number | null>
-  closed_at: Generated<SqlDate | null>
-  created_at: Generated<SqlDate>
-  updated_at: Generated<SqlDate>
+  closed_at: SqlDateNull
+  created_at: SqlDateGen
+  updated_at: SqlDateGen
 }
 
 export interface AdjustmentLinesTable {
@@ -36,7 +46,7 @@ export interface AdjustmentLinesTable {
   qty_physical: number
   qty_diff: number
   rate_paise: Generated<number | null>
-  created_at: Generated<SqlDate>
+  created_at: SqlDateGen
 }
 
 export interface ApplicantInterviewsTable {
@@ -49,8 +59,8 @@ export interface ApplicantInterviewsTable {
   outcome: Generated<'pending' | 'pass' | 'fail' | 'no_show'>
   feedback: Generated<string | null>
   score: Generated<number | null>
-  created_at: Generated<SqlDate>
-  updated_at: Generated<SqlDate>
+  created_at: SqlDateGen
+  updated_at: SqlDateGen
 }
 
 export interface ApplicantStageHistoryTable {
@@ -59,7 +69,7 @@ export interface ApplicantStageHistoryTable {
   from_stage: Generated<string | null>
   to_stage: string
   moved_by: number
-  moved_at: Generated<SqlDate>
+  moved_at: SqlDateGen
   note: Generated<string | null>
 }
 
@@ -81,8 +91,8 @@ export interface ApplicantsTable {
   rejection_reason: Generated<string | null>
   rating: Generated<number | null>
   converted_employee_id: Generated<number | null>
-  created_at: Generated<SqlDate>
-  updated_at: Generated<SqlDate>
+  created_at: SqlDateGen
+  updated_at: SqlDateGen
 }
 
 export interface ApprovalLimitsTable {
@@ -92,9 +102,9 @@ export interface ApprovalLimitsTable {
   max_value: number
   requires_second_approval_above: Generated<number | null>
   effective_from: SqlDate
-  effective_to: Generated<SqlDate | null>
-  created_at: Generated<SqlDate>
-  updated_at: Generated<SqlDate>
+  effective_to: SqlDateNull
+  created_at: SqlDateGen
+  updated_at: SqlDateGen
 }
 
 export interface AttendanceTable {
@@ -107,12 +117,12 @@ export interface AttendanceTable {
   out_time: Generated<string | null>
   overtime_hours: Generated<number>
   marked_by: number
-  marked_at: Generated<SqlDate>
+  marked_at: SqlDateGen
   approved_by: Generated<number | null>
-  approved_at: Generated<SqlDate | null>
+  approved_at: SqlDateNull
   remarks: Generated<string | null>
-  created_at: Generated<SqlDate>
-  updated_at: Generated<SqlDate>
+  created_at: SqlDateGen
+  updated_at: SqlDateGen
 }
 
 export interface AuditLogTable {
@@ -124,7 +134,7 @@ export interface AuditLogTable {
   before_json: Generated<string | null>
   after_json: Generated<string | null>
   ip: Generated<Buffer | null>
-  created_at: Generated<SqlDate>
+  created_at: SqlDateGen
 }
 
 export interface BankAccountsTable {
@@ -135,10 +145,10 @@ export interface BankAccountsTable {
   ifsc: Generated<string | null>
   account_type: Generated<'current' | 'savings' | 'od' | 'cc'>
   opening_balance_paise: Generated<number>
-  opening_date: Generated<SqlDate | null>
+  opening_date: SqlDateNull
   is_active: Generated<number>
-  created_at: Generated<SqlDate>
-  updated_at: Generated<SqlDate>
+  created_at: SqlDateGen
+  updated_at: SqlDateGen
 }
 
 export interface BudgetLinesTable {
@@ -151,8 +161,8 @@ export interface BudgetLinesTable {
   unit_id: Generated<number | null>
   rate_paise: Generated<number | null>
   amount_paise: number
-  created_at: Generated<SqlDate>
-  updated_at: Generated<SqlDate>
+  created_at: SqlDateGen
+  updated_at: SqlDateGen
 }
 
 export interface CampaignSpendTable {
@@ -165,8 +175,8 @@ export interface CampaignSpendTable {
   entry_mode: Generated<'manual' | 'api'>
   expense_id: Generated<number | null>
   created_by: Generated<number | null>
-  created_at: Generated<SqlDate>
-  updated_at: Generated<SqlDate>
+  created_at: SqlDateGen
+  updated_at: SqlDateGen
 }
 
 export interface CampaignsTable {
@@ -181,13 +191,13 @@ export interface CampaignsTable {
   utm_medium: Generated<string | null>
   utm_campaign: Generated<string | null>
   budget_paise: Generated<number | null>
-  start_date: Generated<SqlDate | null>
-  end_date: Generated<SqlDate | null>
+  start_date: SqlDateNull
+  end_date: SqlDateNull
   status: Generated<'planned' | 'active' | 'paused' | 'completed' | 'cancelled'>
   owner_user_id: Generated<number | null>
   created_by: Generated<number | null>
-  created_at: Generated<SqlDate>
-  updated_at: Generated<SqlDate>
+  created_at: SqlDateGen
+  updated_at: SqlDateGen
 }
 
 export interface ClientInvoicesTable {
@@ -211,12 +221,12 @@ export interface ClientInvoicesTable {
   net_receivable_paise: Generated<number>
   received_paise: Generated<number>
   status: Generated<'draft' | 'sent' | 'part_paid' | 'paid' | 'overdue' | 'disputed' | 'cancelled'>
-  sent_at: Generated<SqlDate | null>
+  sent_at: SqlDateNull
   narration: Generated<string | null>
   period_id: Generated<number | null>
   created_by: number
-  created_at: Generated<SqlDate>
-  updated_at: Generated<SqlDate>
+  created_at: SqlDateGen
+  updated_at: SqlDateGen
 }
 
 export interface ClientsTable {
@@ -236,8 +246,8 @@ export interface ClientsTable {
   status: Generated<'active' | 'dormant' | 'blacklisted'>
   created_by: Generated<number | null>
   updated_by: Generated<number | null>
-  created_at: Generated<SqlDate>
-  updated_at: Generated<SqlDate>
+  created_at: SqlDateGen
+  updated_at: SqlDateGen
 }
 
 export interface CompetitorsTable {
@@ -245,8 +255,8 @@ export interface CompetitorsTable {
   name: string
   notes: Generated<string | null>
   typical_rate_per_sqft_paise: Generated<number | null>
-  created_at: Generated<SqlDate>
-  updated_at: Generated<SqlDate>
+  created_at: SqlDateGen
+  updated_at: SqlDateGen
 }
 
 export interface ConsumptionNormsTable {
@@ -256,8 +266,8 @@ export interface ConsumptionNormsTable {
   qty_per_sqft: number
   note: Generated<string | null>
   set_by: Generated<number | null>
-  created_at: Generated<SqlDate>
-  updated_at: Generated<SqlDate>
+  created_at: SqlDateGen
+  updated_at: SqlDateGen
 }
 
 export interface ContractorAttendanceTable {
@@ -272,10 +282,10 @@ export interface ContractorAttendanceTable {
   amount_paise: number
   recorded_by: number
   approved_by: Generated<number | null>
-  approved_at: Generated<SqlDate | null>
+  approved_at: SqlDateNull
   bill_id: Generated<number | null>
-  created_at: Generated<SqlDate>
-  updated_at: Generated<SqlDate>
+  created_at: SqlDateGen
+  updated_at: SqlDateGen
 }
 
 export interface ContractorBillsTable {
@@ -294,11 +304,11 @@ export interface ContractorBillsTable {
   status: Generated<'draft' | 'submitted' | 'verified' | 'approved' | 'paid' | 'disputed'>
   verified_by: Generated<number | null>
   approved_by: Generated<number | null>
-  approved_at: Generated<SqlDate | null>
+  approved_at: SqlDateNull
   expense_id: Generated<number | null>
   created_by: number
-  created_at: Generated<SqlDate>
-  updated_at: Generated<SqlDate>
+  created_at: SqlDateGen
+  updated_at: SqlDateGen
 }
 
 export interface ContractorRatesTable {
@@ -310,10 +320,10 @@ export interface ContractorRatesTable {
   skill_level: Generated<'skilled' | 'semi_skilled' | 'unskilled' | 'mason' | 'carpenter' | 'barbender' | 'plumber' | 'electrician' | 'painter' | 'helper' | null>
   rate_paise: number
   effective_from: SqlDate
-  effective_to: Generated<SqlDate | null>
+  effective_to: SqlDateNull
   created_by: Generated<number | null>
-  created_at: Generated<SqlDate>
-  updated_at: Generated<SqlDate>
+  created_at: SqlDateGen
+  updated_at: SqlDateGen
 }
 
 export interface CostHeadsTable {
@@ -325,8 +335,8 @@ export interface CostHeadsTable {
   is_direct_cost: Generated<number>
   sort_order: Generated<number>
   is_active: Generated<number>
-  created_at: Generated<SqlDate>
-  updated_at: Generated<SqlDate>
+  created_at: SqlDateGen
+  updated_at: SqlDateGen
 }
 
 export interface DailyProgressReportsTable {
@@ -343,11 +353,11 @@ export interface DailyProgressReportsTable {
   issues: Generated<string | null>
   instructions_received: Generated<string | null>
   submitted_by: number
-  submitted_at: Generated<SqlDate>
+  submitted_at: SqlDateGen
   reviewed_by: Generated<number | null>
-  reviewed_at: Generated<SqlDate | null>
-  created_at: Generated<SqlDate>
-  updated_at: Generated<SqlDate>
+  reviewed_at: SqlDateNull
+  created_at: SqlDateGen
+  updated_at: SqlDateGen
 }
 
 export interface DashboardDailySnapshotTable {
@@ -357,7 +367,7 @@ export interface DashboardDailySnapshotTable {
   metric_value_paise: Generated<number | null>
   metric_value_count: Generated<number | null>
   detail_json: Generated<string | null>
-  created_at: Generated<SqlDate>
+  created_at: SqlDateGen
 }
 
 export interface DepartmentsTable {
@@ -365,8 +375,8 @@ export interface DepartmentsTable {
   code: string
   name: string
   is_active: Generated<number>
-  created_at: Generated<SqlDate>
-  updated_at: Generated<SqlDate>
+  created_at: SqlDateGen
+  updated_at: SqlDateGen
 }
 
 export interface DesignationsTable {
@@ -375,8 +385,8 @@ export interface DesignationsTable {
   name: string
   department_id: Generated<number | null>
   is_active: Generated<number>
-  created_at: Generated<SqlDate>
-  updated_at: Generated<SqlDate>
+  created_at: SqlDateGen
+  updated_at: SqlDateGen
 }
 
 export interface DocumentNumberingTable {
@@ -386,8 +396,8 @@ export interface DocumentNumberingTable {
   fy_reset: Generated<number>
   financial_year: string
   last_number: Generated<number>
-  created_at: Generated<SqlDate>
-  updated_at: Generated<SqlDate>
+  created_at: SqlDateGen
+  updated_at: SqlDateGen
 }
 
 export interface DprPhotosTable {
@@ -395,8 +405,8 @@ export interface DprPhotosTable {
   dpr_id: number
   file_id: number
   caption: Generated<string | null>
-  taken_at: Generated<SqlDate | null>
-  created_at: Generated<SqlDate>
+  taken_at: SqlDateNull
+  created_at: SqlDateGen
 }
 
 export interface DprStageProgressTable {
@@ -404,7 +414,7 @@ export interface DprStageProgressTable {
   dpr_id: number
   project_stage_id: number
   progress_pct_at_eod: number
-  created_at: Generated<SqlDate>
+  created_at: SqlDateGen
 }
 
 export interface EmailLogTable {
@@ -416,14 +426,14 @@ export interface EmailLogTable {
   status: 'sent' | 'failed'
   response_json: Generated<string | null>
   error_message: Generated<string | null>
-  created_at: Generated<SqlDate>
+  created_at: SqlDateGen
 }
 
 export interface EmployeeCompensationTable {
   id: Generated<number>
   employee_id: number
   effective_from: SqlDate
-  effective_to: Generated<SqlDate | null>
+  effective_to: SqlDateNull
   ctc_annual_paise: number
   basic_paise: Generated<number | null>
   hra_paise: Generated<number | null>
@@ -435,8 +445,8 @@ export interface EmployeeCompensationTable {
   revision_reason: Generated<string | null>
   approved_by: Generated<number | null>
   created_by: Generated<number | null>
-  created_at: Generated<SqlDate>
-  updated_at: Generated<SqlDate>
+  created_at: SqlDateGen
+  updated_at: SqlDateGen
 }
 
 export interface EmployeeDocumentsTable {
@@ -444,13 +454,13 @@ export interface EmployeeDocumentsTable {
   employee_id: number
   doc_type: 'aadhaar' | 'pan' | 'passport' | 'driving_licence' | 'educational' | 'experience' | 'offer_letter' | 'appointment_letter' | 'police_verification' | 'medical_fitness' | 'safety_training' | 'trade_certificate' | 'other'
   document_no: Generated<string | null>
-  issued_on: Generated<SqlDate | null>
-  expires_on: Generated<SqlDate | null>
+  issued_on: SqlDateNull
+  expires_on: SqlDateNull
   file_id: number
   verified_by: Generated<number | null>
-  verified_on: Generated<SqlDate | null>
-  created_at: Generated<SqlDate>
-  updated_at: Generated<SqlDate>
+  verified_on: SqlDateNull
+  created_at: SqlDateGen
+  updated_at: SqlDateGen
 }
 
 export interface EmployeesTable {
@@ -459,7 +469,7 @@ export interface EmployeesTable {
   user_id: Generated<number | null>
   full_name: string
   father_or_spouse_name: Generated<string | null>
-  date_of_birth: Generated<SqlDate | null>
+  date_of_birth: SqlDateNull
   gender: Generated<'male' | 'female' | 'other' | null>
   blood_group: Generated<string | null>
   personal_phone: Generated<string | null>
@@ -473,8 +483,8 @@ export interface EmployeesTable {
   reporting_to_employee_id: Generated<number | null>
   employment_type: Generated<'permanent' | 'probation' | 'contract' | 'intern' | 'consultant'>
   date_of_joining: SqlDate
-  probation_until: Generated<SqlDate | null>
-  date_of_exit: Generated<SqlDate | null>
+  probation_until: SqlDateNull
+  date_of_exit: SqlDateNull
   exit_type: Generated<'resigned' | 'terminated' | 'retired' | 'contract_ended' | 'absconded' | null>
   exit_reason: Generated<string | null>
   base_location_id: Generated<number | null>
@@ -489,8 +499,8 @@ export interface EmployeesTable {
   status: Generated<'active' | 'on_notice' | 'on_leave' | 'suspended' | 'exited'>
   created_by: Generated<number | null>
   updated_by: Generated<number | null>
-  created_at: Generated<SqlDate>
-  updated_at: Generated<SqlDate>
+  created_at: SqlDateGen
+  updated_at: SqlDateGen
 }
 
 export interface EnquiriesTable {
@@ -509,8 +519,8 @@ export interface EnquiriesTable {
   user_agent: Generated<string | null>
   status: Generated<'new' | 'contacted' | 'promoted' | 'spam' | 'closed'>
   handled_by: Generated<number | null>
-  created_at: Generated<SqlDate>
-  updated_at: Generated<SqlDate>
+  created_at: SqlDateGen
+  updated_at: SqlDateGen
 }
 
 export interface EquipmentTable {
@@ -523,11 +533,11 @@ export interface EquipmentTable {
   current_project_id: Generated<number | null>
   hire_rate_per_day_paise: Generated<number | null>
   hire_vendor_id: Generated<number | null>
-  next_service_due: Generated<SqlDate | null>
-  insurance_valid_until: Generated<SqlDate | null>
+  next_service_due: SqlDateNull
+  insurance_valid_until: SqlDateNull
   status: Generated<'available' | 'deployed' | 'under_repair' | 'retired'>
-  created_at: Generated<SqlDate>
-  updated_at: Generated<SqlDate>
+  created_at: SqlDateGen
+  updated_at: SqlDateGen
 }
 
 export interface EquipmentDeploymentsTable {
@@ -535,14 +545,14 @@ export interface EquipmentDeploymentsTable {
   equipment_id: number
   project_id: number
   from_date: SqlDate
-  to_date: Generated<SqlDate | null>
+  to_date: SqlDateNull
   meter_start: Generated<number | null>
   meter_end: Generated<number | null>
   operator_name: Generated<string | null>
   expense_id: Generated<number | null>
   created_by: Generated<number | null>
-  created_at: Generated<SqlDate>
-  updated_at: Generated<SqlDate>
+  created_at: SqlDateGen
+  updated_at: SqlDateGen
 }
 
 export interface ExpenseAttachmentsTable {
@@ -550,7 +560,7 @@ export interface ExpenseAttachmentsTable {
   expense_id: number
   file_id: number
   kind: Generated<'bill' | 'receipt' | 'measurement_sheet' | 'photo' | 'approval_mail' | 'other'>
-  created_at: Generated<SqlDate>
+  created_at: SqlDateGen
 }
 
 export interface ExpenseLinesTable {
@@ -563,8 +573,8 @@ export interface ExpenseLinesTable {
   qty: Generated<number | null>
   rate_paise: Generated<number | null>
   amount_paise: number
-  created_at: Generated<SqlDate>
-  updated_at: Generated<SqlDate>
+  created_at: SqlDateGen
+  updated_at: SqlDateGen
 }
 
 export interface ExpensesTable {
@@ -582,7 +592,7 @@ export interface ExpensesTable {
   source_table: Generated<string | null>
   source_id: Generated<number | null>
   bill_no: Generated<string | null>
-  bill_date: Generated<SqlDate | null>
+  bill_date: SqlDateNull
   taxable_paise: Generated<number>
   cgst_paise: Generated<number>
   sgst_paise: Generated<number>
@@ -597,18 +607,18 @@ export interface ExpensesTable {
   advance_settlement_of: Generated<number | null>
   status: Generated<'draft' | 'pending_approval' | 'approved' | 'rejected' | 'part_paid' | 'paid' | 'void'>
   approved_by: Generated<number | null>
-  approved_at: Generated<SqlDate | null>
+  approved_at: SqlDateNull
   second_approved_by: Generated<number | null>
-  second_approved_at: Generated<SqlDate | null>
+  second_approved_at: SqlDateNull
   rejected_reason: Generated<string | null>
-  voided_at: Generated<SqlDate | null>
+  voided_at: SqlDateNull
   voided_by: Generated<number | null>
   void_reason: Generated<string | null>
   period_id: Generated<number | null>
   narration: Generated<string | null>
   created_by: number
-  created_at: Generated<SqlDate>
-  updated_at: Generated<SqlDate>
+  created_at: SqlDateGen
+  updated_at: SqlDateGen
 }
 
 export interface FilesTable {
@@ -620,8 +630,8 @@ export interface FilesTable {
   sha256: string
   visibility: Generated<'private' | 'public'>
   uploaded_by: Generated<number | null>
-  created_at: Generated<SqlDate>
-  updated_at: Generated<SqlDate>
+  created_at: SqlDateGen
+  updated_at: SqlDateGen
 }
 
 export interface GoodsReceiptsTable {
@@ -634,7 +644,7 @@ export interface GoodsReceiptsTable {
   received_on: SqlDate
   vehicle_no: Generated<string | null>
   invoice_no: Generated<string | null>
-  invoice_date: Generated<SqlDate | null>
+  invoice_date: SqlDateNull
   invoice_amount_paise: Generated<number | null>
   weighbridge_slip_no: Generated<string | null>
   gate_entry_no: Generated<string | null>
@@ -642,9 +652,9 @@ export interface GoodsReceiptsTable {
   received_by: number
   inspected_by: Generated<number | null>
   expense_id: Generated<number | null>
-  posted_at: Generated<SqlDate | null>
-  created_at: Generated<SqlDate>
-  updated_at: Generated<SqlDate>
+  posted_at: SqlDateNull
+  created_at: SqlDateGen
+  updated_at: SqlDateGen
 }
 
 export interface GrnLinesTable {
@@ -659,12 +669,12 @@ export interface GrnLinesTable {
   qty_rejected: Generated<number>
   rejection_reason: Generated<string | null>
   batch_no: Generated<string | null>
-  manufacture_date: Generated<SqlDate | null>
-  expiry_date: Generated<SqlDate | null>
+  manufacture_date: SqlDateNull
+  expiry_date: SqlDateNull
   rate_paise: number
   test_certificate_file_id: Generated<number | null>
-  created_at: Generated<SqlDate>
-  updated_at: Generated<SqlDate>
+  created_at: SqlDateGen
+  updated_at: SqlDateGen
 }
 
 export interface InvoiceLinesTable {
@@ -676,8 +686,8 @@ export interface InvoiceLinesTable {
   rate_paise: Generated<number | null>
   amount_paise: number
   sort_order: Generated<number>
-  created_at: Generated<SqlDate>
-  updated_at: Generated<SqlDate>
+  created_at: SqlDateGen
+  updated_at: SqlDateGen
 }
 
 export interface IssueLinesTable {
@@ -689,8 +699,8 @@ export interface IssueLinesTable {
   rate_paise: Generated<number | null>
   cost_head_id: Generated<number | null>
   batch_no: Generated<string | null>
-  created_at: Generated<SqlDate>
-  updated_at: Generated<SqlDate>
+  created_at: SqlDateGen
+  updated_at: SqlDateGen
 }
 
 export interface ItemBrandsTable {
@@ -700,8 +710,8 @@ export interface ItemBrandsTable {
   is_approved: Generated<number>
   approved_by: Generated<number | null>
   note: Generated<string | null>
-  created_at: Generated<SqlDate>
-  updated_at: Generated<SqlDate>
+  created_at: SqlDateGen
+  updated_at: SqlDateGen
 }
 
 export interface ItemCategoriesTable {
@@ -710,8 +720,8 @@ export interface ItemCategoriesTable {
   name: string
   parent_id: Generated<number | null>
   sort_order: Generated<number>
-  created_at: Generated<SqlDate>
-  updated_at: Generated<SqlDate>
+  created_at: SqlDateGen
+  updated_at: SqlDateGen
 }
 
 export interface ItemStockTable {
@@ -720,7 +730,7 @@ export interface ItemStockTable {
   qty_on_hand: Generated<number>
   value_paise: Generated<number>
   last_txn_id: Generated<number | null>
-  updated_at: Generated<SqlDate>
+  updated_at: SqlDateGen
 }
 
 export interface ItemsTable {
@@ -739,8 +749,8 @@ export interface ItemsTable {
   is_batch_tracked: Generated<number>
   is_active: Generated<number>
   created_by: Generated<number | null>
-  created_at: Generated<SqlDate>
-  updated_at: Generated<SqlDate>
+  created_at: SqlDateGen
+  updated_at: SqlDateGen
 }
 
 export interface JobOpeningsTable {
@@ -760,11 +770,11 @@ export interface JobOpeningsTable {
   requirements: Generated<string | null>
   status: Generated<'draft' | 'open' | 'on_hold' | 'filled' | 'cancelled'>
   is_published_on_site: Generated<number>
-  target_close_date: Generated<SqlDate | null>
+  target_close_date: SqlDateNull
   hiring_manager_employee_id: Generated<number | null>
   created_by: Generated<number | null>
-  created_at: Generated<SqlDate>
-  updated_at: Generated<SqlDate>
+  created_at: SqlDateGen
+  updated_at: SqlDateGen
 }
 
 export interface LabourContractorsTable {
@@ -777,31 +787,31 @@ export interface LabourContractorsTable {
   gstin: Generated<string | null>
   trade_specialisation: Generated<string | null>
   licence_no: Generated<string | null>
-  licence_valid_until: Generated<SqlDate | null>
+  licence_valid_until: SqlDateNull
   esi_registered: Generated<number>
   pf_registered: Generated<number>
   wc_policy_no: Generated<string | null>
-  wc_policy_valid_until: Generated<SqlDate | null>
+  wc_policy_valid_until: SqlDateNull
   rating: Generated<number | null>
   status: Generated<'active' | 'on_hold' | 'blacklisted'>
   created_by: Generated<number | null>
-  created_at: Generated<SqlDate>
-  updated_at: Generated<SqlDate>
+  created_at: SqlDateGen
+  updated_at: SqlDateGen
 }
 
 export interface LeadActivitiesTable {
   id: Generated<number>
   lead_id: number
   activity_type: 'call_out' | 'call_in' | 'whatsapp' | 'email' | 'meeting' | 'site_visit' | 'quote_sent' | 'follow_up' | 'note' | 'status_change'
-  occurred_at: Generated<SqlDate>
+  occurred_at: SqlDateGen
   duration_minutes: Generated<number | null>
   outcome: Generated<'connected' | 'no_answer' | 'busy' | 'wrong_number' | 'call_back_later' | 'not_interested' | 'positive' | 'negative' | 'neutral' | null>
   summary: string
   next_action: Generated<string | null>
-  next_action_date: Generated<SqlDate | null>
+  next_action_date: SqlDateNull
   file_id: Generated<number | null>
   created_by: number
-  created_at: Generated<SqlDate>
+  created_at: SqlDateGen
 }
 
 export interface LeadSourcesTable {
@@ -810,8 +820,8 @@ export interface LeadSourcesTable {
   name: string
   channel: 'organic' | 'paid_search' | 'paid_social' | 'referral' | 'direct' | 'walk_in' | 'whatsapp' | 'call' | 'listing_site' | 'other'
   is_active: Generated<number>
-  created_at: Generated<SqlDate>
-  updated_at: Generated<SqlDate>
+  created_at: SqlDateGen
+  updated_at: SqlDateGen
 }
 
 export interface LeadStageHistoryTable {
@@ -820,7 +830,7 @@ export interface LeadStageHistoryTable {
   from_stage: Generated<string | null>
   to_stage: string
   changed_by: number
-  changed_at: Generated<SqlDate>
+  changed_at: SqlDateGen
   days_in_previous_stage: Generated<number | null>
   note: Generated<string | null>
 }
@@ -856,14 +866,14 @@ export interface LeadsTable {
   funding_mode: Generated<'self' | 'home_loan' | 'loan_sanctioned' | 'loan_applied' | 'company_capex' | null>
   expected_start: Generated<'immediate' | 'within_1_month' | '1_to_3_months' | '3_to_6_months' | 'beyond_6_months' | 'exploring' | null>
   stage: Generated<'new' | 'contacted' | 'qualified' | 'site_visit_scheduled' | 'site_visit_done' | 'estimate_shared' | 'quote_sent' | 'negotiation' | 'verbal_agreement' | 'won' | 'lost' | 'dormant' | 'disqualified'>
-  stage_changed_at: Generated<SqlDate>
+  stage_changed_at: SqlDateGen
   score: Generated<number>
   temperature: Generated<'hot' | 'warm' | 'cold'>
   assigned_to: Generated<number | null>
-  assigned_at: Generated<SqlDate | null>
+  assigned_at: SqlDateNull
   next_action: Generated<string | null>
-  next_action_date: Generated<SqlDate | null>
-  first_response_at: Generated<SqlDate | null>
+  next_action_date: SqlDateNull
+  first_response_at: SqlDateNull
   expected_value_paise: Generated<number | null>
   probability_pct: Generated<number | null>
   lost_reason: Generated<'price' | 'timeline' | 'competitor' | 'plot_issue' | 'loan_rejected' | 'postponed' | 'no_response' | 'out_of_scope' | 'duplicate' | 'other' | null>
@@ -872,8 +882,8 @@ export interface LeadsTable {
   converted_project_id: Generated<number | null>
   created_by: Generated<number | null>
   updated_by: Generated<number | null>
-  created_at: Generated<SqlDate>
-  updated_at: Generated<SqlDate>
+  created_at: SqlDateGen
+  updated_at: SqlDateGen
 }
 
 export interface LeaveBalancesTable {
@@ -886,8 +896,8 @@ export interface LeaveBalancesTable {
   availed: Generated<number>
   encashed: Generated<number>
   balance: Generated<number>
-  created_at: Generated<SqlDate>
-  updated_at: Generated<SqlDate>
+  created_at: SqlDateGen
+  updated_at: SqlDateGen
 }
 
 export interface LeaveRequestsTable {
@@ -901,11 +911,11 @@ export interface LeaveRequestsTable {
   handover_to_employee_id: Generated<number | null>
   status: Generated<'pending' | 'approved' | 'rejected' | 'cancelled' | 'withdrawn'>
   approved_by: Generated<number | null>
-  approved_at: Generated<SqlDate | null>
+  approved_at: SqlDateNull
   reject_reason: Generated<string | null>
   file_id: Generated<number | null>
-  created_at: Generated<SqlDate>
-  updated_at: Generated<SqlDate>
+  created_at: SqlDateGen
+  updated_at: SqlDateGen
 }
 
 export interface LeaveTypesTable {
@@ -918,8 +928,8 @@ export interface LeaveTypesTable {
   requires_document: Generated<number>
   min_notice_days: Generated<number>
   is_active: Generated<number>
-  created_at: Generated<SqlDate>
-  updated_at: Generated<SqlDate>
+  created_at: SqlDateGen
+  updated_at: SqlDateGen
 }
 
 export interface LocationsTable {
@@ -931,8 +941,8 @@ export interface LocationsTable {
   address: Generated<string | null>
   city: Generated<string | null>
   is_active: Generated<number>
-  created_at: Generated<SqlDate>
-  updated_at: Generated<SqlDate>
+  created_at: SqlDateGen
+  updated_at: SqlDateGen
 }
 
 export interface LoginAttemptsTable {
@@ -940,7 +950,7 @@ export interface LoginAttemptsTable {
   email: Generated<string | null>
   ip: Generated<Buffer | null>
   succeeded: number
-  attempted_at: Generated<SqlDate>
+  attempted_at: SqlDateGen
 }
 
 export interface MaterialIssuesTable {
@@ -956,8 +966,8 @@ export interface MaterialIssuesTable {
   purpose: Generated<string | null>
   status: Generated<'posted' | 'cancelled'>
   issued_by: number
-  created_at: Generated<SqlDate>
-  updated_at: Generated<SqlDate>
+  created_at: SqlDateGen
+  updated_at: SqlDateGen
 }
 
 export interface MaterialRequisitionsTable {
@@ -966,14 +976,14 @@ export interface MaterialRequisitionsTable {
   project_id: number
   project_stage_id: Generated<number | null>
   requested_by: number
-  required_by_date: Generated<SqlDate | null>
+  required_by_date: SqlDateNull
   status: Generated<'draft' | 'submitted' | 'approved' | 'partially_ordered' | 'ordered' | 'closed' | 'rejected'>
   approved_by: Generated<number | null>
-  approved_at: Generated<SqlDate | null>
+  approved_at: SqlDateNull
   reject_reason: Generated<string | null>
   remarks: Generated<string | null>
-  created_at: Generated<SqlDate>
-  updated_at: Generated<SqlDate>
+  created_at: SqlDateGen
+  updated_at: SqlDateGen
 }
 
 export interface NotificationsTable {
@@ -984,8 +994,8 @@ export interface NotificationsTable {
   body: Generated<string | null>
   link_path: Generated<string | null>
   severity: Generated<'info' | 'warn' | 'critical'>
-  read_at: Generated<SqlDate | null>
-  created_at: Generated<SqlDate>
+  read_at: SqlDateNull
+  created_at: SqlDateGen
 }
 
 export interface PackageSpecGroupsTable {
@@ -993,8 +1003,8 @@ export interface PackageSpecGroupsTable {
   package_id: number
   group_name: string
   sort_order: Generated<number>
-  created_at: Generated<SqlDate>
-  updated_at: Generated<SqlDate>
+  created_at: SqlDateGen
+  updated_at: SqlDateGen
 }
 
 export interface PackageSpecLinesTable {
@@ -1005,8 +1015,8 @@ export interface PackageSpecLinesTable {
   item_id: Generated<number | null>
   brand_options: Generated<string | null>
   sort_order: Generated<number>
-  created_at: Generated<SqlDate>
-  updated_at: Generated<SqlDate>
+  created_at: SqlDateGen
+  updated_at: SqlDateGen
 }
 
 export interface PasswordResetTokensTable {
@@ -1015,10 +1025,10 @@ export interface PasswordResetTokensTable {
   token_hash: string
   purpose: 'invite' | 'reset'
   expires_at: SqlDate
-  used_at: Generated<SqlDate | null>
+  used_at: SqlDateNull
   created_ip: Generated<Buffer | null>
-  created_at: Generated<SqlDate>
-  updated_at: Generated<SqlDate>
+  created_at: SqlDateGen
+  updated_at: SqlDateGen
 }
 
 export interface PaymentAllocationsTable {
@@ -1027,7 +1037,7 @@ export interface PaymentAllocationsTable {
   document_type: 'expense' | 'contractor_bill' | 'client_invoice' | 'advance'
   document_id: number
   allocated_paise: number
-  created_at: Generated<SqlDate>
+  created_at: SqlDateGen
 }
 
 export interface PaymentsTable {
@@ -1046,13 +1056,13 @@ export interface PaymentsTable {
   client_id: Generated<number | null>
   project_id: Generated<number | null>
   status: Generated<'recorded' | 'cleared' | 'bounced' | 'cancelled'>
-  cleared_on: Generated<SqlDate | null>
+  cleared_on: SqlDateNull
   bounce_reason: Generated<string | null>
   narration: Generated<string | null>
   period_id: Generated<number | null>
   created_by: number
-  created_at: Generated<SqlDate>
-  updated_at: Generated<SqlDate>
+  created_at: SqlDateGen
+  updated_at: SqlDateGen
 }
 
 export interface PermissionsTable {
@@ -1060,8 +1070,8 @@ export interface PermissionsTable {
   key: string
   module: string
   label: string
-  created_at: Generated<SqlDate>
-  updated_at: Generated<SqlDate>
+  created_at: SqlDateGen
+  updated_at: SqlDateGen
 }
 
 export interface PoLinesTable {
@@ -1076,8 +1086,8 @@ export interface PoLinesTable {
   line_total_paise: Generated<number>
   cost_head_id: Generated<number | null>
   remarks: Generated<string | null>
-  created_at: Generated<SqlDate>
-  updated_at: Generated<SqlDate>
+  created_at: SqlDateGen
+  updated_at: SqlDateGen
 }
 
 export interface ProjectApprovalsTable {
@@ -1086,16 +1096,16 @@ export interface ProjectApprovalsTable {
   authority: 'BBMP' | 'BMRDA' | 'BDA' | 'Gram Panchayat' | 'TUDA' | 'KIADB' | 'BESCOM' | 'BWSSB' | 'KSPCB' | 'Fire' | 'Lift Inspectorate' | 'Other'
   approval_type: string
   reference_no: Generated<string | null>
-  applied_on: Generated<SqlDate | null>
-  received_on: Generated<SqlDate | null>
-  valid_until: Generated<SqlDate | null>
+  applied_on: SqlDateNull
+  received_on: SqlDateNull
+  valid_until: SqlDateNull
   fee_paise: Generated<number | null>
   status: Generated<'not_started' | 'applied' | 'queried' | 'received' | 'rejected' | 'expired'>
   file_id: Generated<number | null>
   blocks_stage_id: Generated<number | null>
   created_by: Generated<number | null>
-  created_at: Generated<SqlDate>
-  updated_at: Generated<SqlDate>
+  created_at: SqlDateGen
+  updated_at: SqlDateGen
 }
 
 export interface ProjectAssignmentsTable {
@@ -1104,10 +1114,10 @@ export interface ProjectAssignmentsTable {
   user_id: number
   assignment_role: 'pm' | 'supervisor' | 'qs' | 'accounts' | 'observer'
   from_date: SqlDate
-  to_date: Generated<SqlDate | null>
+  to_date: SqlDateNull
   created_by: Generated<number | null>
-  created_at: Generated<SqlDate>
-  updated_at: Generated<SqlDate>
+  created_at: SqlDateGen
+  updated_at: SqlDateGen
 }
 
 export interface ProjectBudgetsTable {
@@ -1120,11 +1130,11 @@ export interface ProjectBudgetsTable {
   target_margin_pct: Generated<number | null>
   prepared_by: number
   approved_by: Generated<number | null>
-  approved_at: Generated<SqlDate | null>
+  approved_at: SqlDateNull
   revision_reason: Generated<string | null>
   status: Generated<'draft' | 'approved' | 'superseded'>
-  created_at: Generated<SqlDate>
-  updated_at: Generated<SqlDate>
+  created_at: SqlDateGen
+  updated_at: SqlDateGen
 }
 
 export interface ProjectDocumentsTable {
@@ -1138,8 +1148,8 @@ export interface ProjectDocumentsTable {
   file_id: number
   visible_to_roles: Generated<string | null>
   created_by: Generated<number | null>
-  created_at: Generated<SqlDate>
-  updated_at: Generated<SqlDate>
+  created_at: SqlDateGen
+  updated_at: SqlDateGen
 }
 
 export interface ProjectMilestonesTable {
@@ -1151,13 +1161,13 @@ export interface ProjectMilestonesTable {
   percent_of_contract: Generated<number | null>
   amount_paise: Generated<number | null>
   due_basis: Generated<'on_stage_complete' | 'on_date' | 'on_certification'>
-  due_date: Generated<SqlDate | null>
+  due_date: SqlDateNull
   status: Generated<'pending' | 'ready_to_certify' | 'certified' | 'invoiced' | 'part_paid' | 'paid' | 'waived'>
   certified_by: Generated<number | null>
-  certified_on: Generated<SqlDate | null>
+  certified_on: SqlDateNull
   invoice_id: Generated<number | null>
-  created_at: Generated<SqlDate>
-  updated_at: Generated<SqlDate>
+  created_at: SqlDateGen
+  updated_at: SqlDateGen
 }
 
 export interface ProjectStagesTable {
@@ -1166,17 +1176,17 @@ export interface ProjectStagesTable {
   seq: number
   name: string
   weightage_pct: number
-  planned_start: Generated<SqlDate | null>
-  planned_end: Generated<SqlDate | null>
-  actual_start: Generated<SqlDate | null>
-  actual_end: Generated<SqlDate | null>
+  planned_start: SqlDateNull
+  planned_end: SqlDateNull
+  actual_start: SqlDateNull
+  actual_end: SqlDateNull
   progress_pct: Generated<number>
   status: Generated<'not_started' | 'in_progress' | 'blocked' | 'complete'>
   blocked_reason: Generated<string | null>
   requires_quality_check: Generated<number>
   predecessor_stage_id: Generated<number | null>
-  created_at: Generated<SqlDate>
-  updated_at: Generated<SqlDate>
+  created_at: SqlDateGen
+  updated_at: SqlDateGen
 }
 
 export interface ProjectsTable {
@@ -1200,24 +1210,24 @@ export interface ProjectsTable {
   scope_of_work: Generated<string | null>
   compliance_standards: Generated<string | null>
   contract_value_paise: Generated<number | null>
-  contract_signed_on: Generated<SqlDate | null>
+  contract_signed_on: SqlDateNull
   rate_per_sqft_paise: Generated<number | null>
   retention_pct: Generated<number>
   gst_pct: Generated<number>
-  planned_start: Generated<SqlDate | null>
-  planned_end: Generated<SqlDate | null>
-  actual_start: Generated<SqlDate | null>
-  actual_end: Generated<SqlDate | null>
+  planned_start: SqlDateNull
+  planned_end: SqlDateNull
+  actual_start: SqlDateNull
+  actual_end: SqlDateNull
   status: Generated<'prospect' | 'mobilising' | 'in_progress' | 'on_hold' | 'snagging' | 'handed_over' | 'defect_liability' | 'closed' | 'cancelled'>
   hold_reason: Generated<string | null>
   physical_progress_pct: Generated<number>
-  warranty_structural_until: Generated<SqlDate | null>
-  warranty_general_until: Generated<SqlDate | null>
+  warranty_structural_until: SqlDateNull
+  warranty_general_until: SqlDateNull
   is_public_showcase: Generated<number>
   created_by: Generated<number | null>
   updated_by: Generated<number | null>
-  created_at: Generated<SqlDate>
-  updated_at: Generated<SqlDate>
+  created_at: SqlDateGen
+  updated_at: SqlDateGen
 }
 
 export interface PurchaseOrdersTable {
@@ -1227,7 +1237,7 @@ export interface PurchaseOrdersTable {
   project_id: Generated<number | null>
   requisition_id: Generated<number | null>
   po_date: SqlDate
-  expected_delivery: Generated<SqlDate | null>
+  expected_delivery: SqlDateNull
   delivery_location_id: number
   subtotal_paise: Generated<number>
   gst_paise: Generated<number>
@@ -1237,14 +1247,14 @@ export interface PurchaseOrdersTable {
   advance_pct: Generated<number>
   status: Generated<'draft' | 'pending_approval' | 'approved' | 'partially_received' | 'received' | 'short_closed' | 'cancelled'>
   approved_by: Generated<number | null>
-  approved_at: Generated<SqlDate | null>
+  approved_at: SqlDateNull
   second_approved_by: Generated<number | null>
-  second_approved_at: Generated<SqlDate | null>
+  second_approved_at: SqlDateNull
   short_close_reason: Generated<string | null>
   terms: Generated<string | null>
   created_by: number
-  created_at: Generated<SqlDate>
-  updated_at: Generated<SqlDate>
+  created_at: SqlDateGen
+  updated_at: SqlDateGen
 }
 
 export interface QualityChecksTable {
@@ -1253,8 +1263,8 @@ export interface QualityChecksTable {
   project_stage_id: Generated<number | null>
   check_type: 'concrete_slump' | 'cube_test_7day' | 'cube_test_28day' | 'steel_test' | 'plumb_level' | 'waterproofing_ponding' | 'electrical_insulation' | 'plumbing_pressure' | 'soil_compaction' | 'other'
   reference_no: Generated<string | null>
-  sample_taken_on: Generated<SqlDate | null>
-  tested_on: Generated<SqlDate | null>
+  sample_taken_on: SqlDateNull
+  tested_on: SqlDateNull
   target_value: Generated<number | null>
   actual_value: Generated<number | null>
   unit: Generated<string | null>
@@ -1262,10 +1272,10 @@ export interface QualityChecksTable {
   lab_name: Generated<string | null>
   file_id: Generated<number | null>
   signed_off_by: Generated<number | null>
-  signed_off_at: Generated<SqlDate | null>
+  signed_off_at: SqlDateNull
   created_by: Generated<number | null>
-  created_at: Generated<SqlDate>
-  updated_at: Generated<SqlDate>
+  created_at: SqlDateGen
+  updated_at: SqlDateGen
 }
 
 export interface QuoteLinesTable {
@@ -1279,8 +1289,8 @@ export interface QuoteLinesTable {
   amount_paise: Generated<number>
   cost_head_id: Generated<number | null>
   sort_order: Generated<number>
-  created_at: Generated<SqlDate>
-  updated_at: Generated<SqlDate>
+  created_at: SqlDateGen
+  updated_at: SqlDateGen
 }
 
 export interface QuotesTable {
@@ -1307,14 +1317,14 @@ export interface QuotesTable {
   payment_schedule_json: Generated<string | null>
   status: Generated<'draft' | 'pending_approval' | 'approved' | 'sent' | 'viewed' | 'accepted' | 'rejected' | 'expired' | 'superseded'>
   approved_by: Generated<number | null>
-  approved_at: Generated<SqlDate | null>
-  sent_at: Generated<SqlDate | null>
-  accepted_at: Generated<SqlDate | null>
+  approved_at: SqlDateNull
+  sent_at: SqlDateNull
+  accepted_at: SqlDateNull
   rejected_reason: Generated<string | null>
   supersedes_quote_id: Generated<number | null>
   created_by: number
-  created_at: Generated<SqlDate>
-  updated_at: Generated<SqlDate>
+  created_at: SqlDateGen
+  updated_at: SqlDateGen
 }
 
 export interface RateLimitHitsTable {
@@ -1322,8 +1332,8 @@ export interface RateLimitHitsTable {
   bucket: string
   window_start: SqlDate
   hit_count: Generated<number>
-  created_at: Generated<SqlDate>
-  updated_at: Generated<SqlDate>
+  created_at: SqlDateGen
+  updated_at: SqlDateGen
 }
 
 export interface RequisitionLinesTable {
@@ -1334,15 +1344,15 @@ export interface RequisitionLinesTable {
   qty_approved: Generated<number | null>
   qty_ordered: Generated<number>
   remarks: Generated<string | null>
-  created_at: Generated<SqlDate>
-  updated_at: Generated<SqlDate>
+  created_at: SqlDateGen
+  updated_at: SqlDateGen
 }
 
 export interface RolePermissionsTable {
   role_id: number
   permission_id: number
-  created_at: Generated<SqlDate>
-  updated_at: Generated<SqlDate>
+  created_at: SqlDateGen
+  updated_at: SqlDateGen
 }
 
 export interface RolesTable {
@@ -1353,8 +1363,8 @@ export interface RolesTable {
   require_2fa: Generated<number>
   scope_to_assigned_projects: Generated<number>
   is_system: Generated<number>
-  created_at: Generated<SqlDate>
-  updated_at: Generated<SqlDate>
+  created_at: SqlDateGen
+  updated_at: SqlDateGen
 }
 
 export interface SafetyIncidentsTable {
@@ -1374,10 +1384,10 @@ export interface SafetyIncidentsTable {
   reported_to_authority: Generated<number>
   authority_reference: Generated<string | null>
   days_lost: Generated<number>
-  closed_on: Generated<SqlDate | null>
+  closed_on: SqlDateNull
   reported_by: number
-  created_at: Generated<SqlDate>
-  updated_at: Generated<SqlDate>
+  created_at: SqlDateGen
+  updated_at: SqlDateGen
 }
 
 export interface SeoKeywordsTable {
@@ -1387,10 +1397,10 @@ export interface SeoKeywordsTable {
   target_city: Generated<string | null>
   search_volume: Generated<number | null>
   current_rank: Generated<number | null>
-  last_checked_on: Generated<SqlDate | null>
+  last_checked_on: SqlDateNull
   is_tracked: Generated<number>
-  created_at: Generated<SqlDate>
-  updated_at: Generated<SqlDate>
+  created_at: SqlDateGen
+  updated_at: SqlDateGen
 }
 
 export interface SettingsTable {
@@ -1401,8 +1411,8 @@ export interface SettingsTable {
   is_secret: Generated<number>
   label: string
   updated_by: Generated<number | null>
-  created_at: Generated<SqlDate>
-  updated_at: Generated<SqlDate>
+  created_at: SqlDateGen
+  updated_at: SqlDateGen
 }
 
 export interface SiteFaqsTable {
@@ -1412,8 +1422,8 @@ export interface SiteFaqsTable {
   answer: string
   sort_order: Generated<number>
   is_published: Generated<number>
-  created_at: Generated<SqlDate>
-  updated_at: Generated<SqlDate>
+  created_at: SqlDateGen
+  updated_at: SqlDateGen
 }
 
 export interface SitePackagesTable {
@@ -1427,9 +1437,9 @@ export interface SitePackagesTable {
   sort_order: Generated<number>
   is_active: Generated<number>
   effective_from: SqlDate
-  effective_to: Generated<SqlDate | null>
-  created_at: Generated<SqlDate>
-  updated_at: Generated<SqlDate>
+  effective_to: SqlDateNull
+  created_at: SqlDateGen
+  updated_at: SqlDateGen
 }
 
 export interface SitePageRevisionsTable {
@@ -1441,7 +1451,7 @@ export interface SitePageRevisionsTable {
   meta_description: Generated<string | null>
   schema_types: Generated<string | null>
   changed_by: number
-  changed_at: Generated<SqlDate>
+  changed_at: SqlDateGen
   change_note: Generated<string | null>
 }
 
@@ -1458,11 +1468,11 @@ export interface SitePagesTable {
   sitemap_changefreq: Generated<'always' | 'hourly' | 'daily' | 'weekly' | 'monthly' | 'yearly' | 'never'>
   noindex: Generated<number>
   status: Generated<'draft' | 'published' | 'archived'>
-  published_at: Generated<SqlDate | null>
+  published_at: SqlDateNull
   published_by: Generated<number | null>
   content_json: string
-  created_at: Generated<SqlDate>
-  updated_at: Generated<SqlDate>
+  created_at: SqlDateGen
+  updated_at: SqlDateGen
 }
 
 export interface SiteServicesTable {
@@ -1474,8 +1484,8 @@ export interface SiteServicesTable {
   icon: Generated<string | null>
   sort_order: Generated<number>
   is_active: Generated<number>
-  created_at: Generated<SqlDate>
-  updated_at: Generated<SqlDate>
+  created_at: SqlDateGen
+  updated_at: SqlDateGen
 }
 
 export interface SiteShowcaseTable {
@@ -1494,8 +1504,8 @@ export interface SiteShowcaseTable {
   sort_order: Generated<number>
   is_published: Generated<number>
   client_consent_on_file: Generated<number>
-  created_at: Generated<SqlDate>
-  updated_at: Generated<SqlDate>
+  created_at: SqlDateGen
+  updated_at: SqlDateGen
 }
 
 export interface SiteShowcaseImagesTable {
@@ -1504,7 +1514,7 @@ export interface SiteShowcaseImagesTable {
   file_id: number
   caption: Generated<string | null>
   sort_order: Generated<number>
-  created_at: Generated<SqlDate>
+  created_at: SqlDateGen
 }
 
 export interface SiteTeamTable {
@@ -1516,8 +1526,8 @@ export interface SiteTeamTable {
   employee_id: Generated<number | null>
   sort_order: Generated<number>
   is_published: Generated<number>
-  created_at: Generated<SqlDate>
-  updated_at: Generated<SqlDate>
+  created_at: SqlDateGen
+  updated_at: SqlDateGen
 }
 
 export interface SiteTestimonialsTable {
@@ -1529,17 +1539,17 @@ export interface SiteTestimonialsTable {
   body: string
   source: 'google' | 'direct' | 'email' | 'whatsapp'
   source_url: Generated<string | null>
-  collected_on: Generated<SqlDate | null>
+  collected_on: SqlDateNull
   is_published: Generated<number>
-  created_at: Generated<SqlDate>
-  updated_at: Generated<SqlDate>
+  created_at: SqlDateGen
+  updated_at: SqlDateGen
 }
 
 export interface SiteVisitsTable {
   id: Generated<number>
   lead_id: number
   scheduled_at: SqlDate
-  visited_at: Generated<SqlDate | null>
+  visited_at: SqlDateNull
   visited_by: Generated<number | null>
   status: Generated<'scheduled' | 'completed' | 'client_no_show' | 'rescheduled' | 'cancelled'>
   soil_type: Generated<string | null>
@@ -1555,8 +1565,8 @@ export interface SiteVisitsTable {
   conditions_notes: Generated<string | null>
   estimated_extra_cost_paise: Generated<number | null>
   created_by: Generated<number | null>
-  created_at: Generated<SqlDate>
-  updated_at: Generated<SqlDate>
+  created_at: SqlDateGen
+  updated_at: SqlDateGen
 }
 
 export interface SnagsTable {
@@ -1570,15 +1580,15 @@ export interface SnagsTable {
   raised_on: SqlDate
   raised_source: Generated<'internal' | 'client' | 'consultant'>
   assigned_to: Generated<number | null>
-  target_date: Generated<SqlDate | null>
+  target_date: SqlDateNull
   status: Generated<'open' | 'in_progress' | 'resolved' | 'verified' | 'rejected' | 'deferred'>
-  resolved_on: Generated<SqlDate | null>
+  resolved_on: SqlDateNull
   verified_by: Generated<number | null>
-  verified_on: Generated<SqlDate | null>
+  verified_on: SqlDateNull
   before_file_id: Generated<number | null>
   after_file_id: Generated<number | null>
-  created_at: Generated<SqlDate>
-  updated_at: Generated<SqlDate>
+  created_at: SqlDateGen
+  updated_at: SqlDateGen
 }
 
 export interface StageTemplateItemsTable {
@@ -1589,8 +1599,8 @@ export interface StageTemplateItemsTable {
   weightage_pct: number
   typical_duration_days: Generated<number | null>
   requires_quality_check: Generated<number>
-  created_at: Generated<SqlDate>
-  updated_at: Generated<SqlDate>
+  created_at: SqlDateGen
+  updated_at: SqlDateGen
 }
 
 export interface StageTemplatesTable {
@@ -1599,8 +1609,8 @@ export interface StageTemplatesTable {
   project_type: Generated<'residential_construction' | 'commercial_construction' | 'industrial_construction' | 'interior_fitout' | 'civil_infrastructure' | 'machine_foundation' | 'renovation' | 'equipment_rental' | null>
   is_default: Generated<number>
   is_active: Generated<number>
-  created_at: Generated<SqlDate>
-  updated_at: Generated<SqlDate>
+  created_at: SqlDateGen
+  updated_at: SqlDateGen
 }
 
 export interface StockAdjustmentsTable {
@@ -1610,10 +1620,10 @@ export interface StockAdjustmentsTable {
   reason: 'physical_count' | 'damage' | 'theft' | 'expiry' | 'wastage' | 'correction'
   narration: string
   approved_by: Generated<number | null>
-  approved_at: Generated<SqlDate | null>
+  approved_at: SqlDateNull
   created_by: number
-  created_at: Generated<SqlDate>
-  updated_at: Generated<SqlDate>
+  created_at: SqlDateGen
+  updated_at: SqlDateGen
 }
 
 export interface StockLedgerTable {
@@ -1632,7 +1642,7 @@ export interface StockLedgerTable {
   project_id: Generated<number | null>
   batch_no: Generated<string | null>
   created_by: number
-  created_at: Generated<SqlDate>
+  created_at: SqlDateGen
 }
 
 export interface StockTransfersTable {
@@ -1641,13 +1651,13 @@ export interface StockTransfersTable {
   from_location_id: number
   to_location_id: number
   dispatched_on: SqlDate
-  received_on: Generated<SqlDate | null>
+  received_on: SqlDateNull
   vehicle_no: Generated<string | null>
   status: Generated<'in_transit' | 'received' | 'cancelled'>
   dispatched_by: number
   received_by: Generated<number | null>
-  created_at: Generated<SqlDate>
-  updated_at: Generated<SqlDate>
+  created_at: SqlDateGen
+  updated_at: SqlDateGen
 }
 
 export interface TransferLinesTable {
@@ -1659,8 +1669,8 @@ export interface TransferLinesTable {
   shortage_qty: Generated<number | null>
   rate_paise: Generated<number | null>
   batch_no: Generated<string | null>
-  created_at: Generated<SqlDate>
-  updated_at: Generated<SqlDate>
+  created_at: SqlDateGen
+  updated_at: SqlDateGen
 }
 
 export interface UnitsTable {
@@ -1668,8 +1678,8 @@ export interface UnitsTable {
   code: string
   name: string
   decimal_places: Generated<number>
-  created_at: Generated<SqlDate>
-  updated_at: Generated<SqlDate>
+  created_at: SqlDateGen
+  updated_at: SqlDateGen
 }
 
 export interface UserPermissionOverridesTable {
@@ -1678,39 +1688,39 @@ export interface UserPermissionOverridesTable {
   permission_id: number
   effect: 'grant' | 'deny'
   granted_by: number
-  granted_at: Generated<SqlDate>
+  granted_at: SqlDateGen
   note: string
-  created_at: Generated<SqlDate>
-  updated_at: Generated<SqlDate>
+  created_at: SqlDateGen
+  updated_at: SqlDateGen
 }
 
 export interface UserRecoveryCodesTable {
   id: Generated<number>
   user_id: number
   code_hash: string
-  used_at: Generated<SqlDate | null>
-  created_at: Generated<SqlDate>
-  updated_at: Generated<SqlDate>
+  used_at: SqlDateNull
+  created_at: SqlDateGen
+  updated_at: SqlDateGen
 }
 
 export interface UserRolesTable {
   user_id: number
   role_id: number
-  created_at: Generated<SqlDate>
-  updated_at: Generated<SqlDate>
+  created_at: SqlDateGen
+  updated_at: SqlDateGen
 }
 
 export interface UserSessionsTable {
   id: string
   user_id: number
-  created_at: Generated<SqlDate>
-  last_seen_at: Generated<SqlDate>
+  created_at: SqlDateGen
+  last_seen_at: SqlDateGen
   expires_at: SqlDate
   ip: Generated<Buffer | null>
   user_agent: Generated<string | null>
   totp_verified: Generated<number>
   csrf_token: string
-  revoked_at: Generated<SqlDate | null>
+  revoked_at: SqlDateNull
 }
 
 export interface UsersTable {
@@ -1721,17 +1731,17 @@ export interface UsersTable {
   password_hash: Generated<string | null>
   password_algo: Generated<'argon2id' | 'bcrypt'>
   must_change_password: Generated<number>
-  password_changed_at: Generated<SqlDate | null>
+  password_changed_at: SqlDateNull
   totp_secret: Generated<Buffer | null>
-  totp_confirmed_at: Generated<SqlDate | null>
+  totp_confirmed_at: SqlDateNull
   status: Generated<'invited' | 'active' | 'suspended' | 'inactive'>
   failed_login_count: Generated<number>
-  locked_until: Generated<SqlDate | null>
-  last_login_at: Generated<SqlDate | null>
+  locked_until: SqlDateNull
+  last_login_at: SqlDateNull
   last_login_ip: Generated<Buffer | null>
   employee_id: Generated<number | null>
-  created_at: Generated<SqlDate>
-  updated_at: Generated<SqlDate>
+  created_at: SqlDateGen
+  updated_at: SqlDateGen
 }
 
 export interface VendorItemRatesTable {
@@ -1740,12 +1750,12 @@ export interface VendorItemRatesTable {
   item_id: number
   rate_paise: number
   valid_from: SqlDate
-  valid_to: Generated<SqlDate | null>
+  valid_to: SqlDateNull
   freight_included: Generated<number>
   min_order_qty: Generated<number | null>
   created_by: Generated<number | null>
-  created_at: Generated<SqlDate>
-  updated_at: Generated<SqlDate>
+  created_at: SqlDateGen
+  updated_at: SqlDateGen
 }
 
 export interface VendorsTable {
@@ -1770,8 +1780,8 @@ export interface VendorsTable {
   status: Generated<'active' | 'on_hold' | 'blacklisted'>
   blacklist_reason: Generated<string | null>
   created_by: Generated<number | null>
-  created_at: Generated<SqlDate>
-  updated_at: Generated<SqlDate>
+  created_at: SqlDateGen
+  updated_at: SqlDateGen
 }
 
 export interface Database {
