@@ -223,3 +223,358 @@ code {
   border: 1px dashed var(--ncc-border);
   border-radius: var(--ncc-radius);
 }
+
+/* App shell: sidebar, topbar, content column */
+
+.ncc-shell {
+  display: grid;
+  grid-template-columns: 232px 1fr;
+  min-height: 100vh;
+}
+
+.ncc-sidebar {
+  background: #1a1f27;
+  color: #d8dce2;
+  padding: 0.9rem 0 2rem;
+  position: sticky;
+  top: 0;
+  align-self: start;
+  height: 100vh;
+  overflow-y: auto;
+}
+
+.ncc-sidebar__brand {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  padding: 0.35rem 1.1rem 1.1rem;
+  color: #fff;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.ncc-sidebar__brand:hover {
+  text-decoration: none;
+}
+
+.ncc-sidebar__mark {
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  background: var(--ncc-accent);
+  display: grid;
+  place-items: center;
+  font-size: 0.8rem;
+  font-weight: 800;
+  color: #fff;
+  flex: none;
+}
+
+.ncc-sidebar__group {
+  padding: 0.75rem 1.1rem 0.3rem;
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: #7b8492;
+}
+
+.ncc-sidebar a.ncc-navlink {
+  display: block;
+  padding: 0.44rem 1.1rem;
+  color: #d8dce2;
+  font-size: 0.9rem;
+  border-left: 3px solid transparent;
+}
+
+.ncc-sidebar a.ncc-navlink:hover {
+  background: #232935;
+  color: #fff;
+  text-decoration: none;
+}
+
+.ncc-sidebar a.ncc-navlink[aria-current='page'] {
+  background: #232935;
+  border-left-color: var(--ncc-accent);
+  color: #fff;
+  font-weight: 600;
+}
+
+.ncc-main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.ncc-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  background: var(--ncc-surface);
+  border-bottom: 1px solid var(--ncc-border);
+  padding: 0.7rem 1.5rem;
+  position: sticky;
+  top: 0;
+  z-index: 20;
+}
+
+.ncc-topbar__title {
+  font-size: 1.05rem;
+  font-weight: 600;
+  margin: 0;
+}
+
+.ncc-topbar__right {
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+  font-size: 0.86rem;
+  color: var(--ncc-text-muted);
+}
+
+.ncc-content {
+  padding: 1.4rem 1.5rem 3rem;
+  max-width: 1320px;
+}
+
+.ncc-page-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1.1rem;
+  flex-wrap: wrap;
+}
+
+.ncc-page-head p {
+  margin: 0.15rem 0 0;
+  color: var(--ncc-text-muted);
+  font-size: 0.9rem;
+}
+
+/* Layout helpers */
+
+.ncc-grid {
+  display: grid;
+  gap: 1rem;
+}
+
+.ncc-grid--kpi {
+  grid-template-columns: repeat(auto-fit, minmax(196px, 1fr));
+}
+
+.ncc-grid--2 {
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+}
+
+.ncc-row {
+  display: flex;
+  gap: 0.6rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.ncc-stack > * + * {
+  margin-top: 1rem;
+}
+
+.ncc-muted {
+  color: var(--ncc-text-muted);
+}
+
+.ncc-num {
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+}
+
+/* KPI card */
+
+.ncc-kpi__label {
+  font-size: 0.76rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--ncc-text-muted);
+  margin: 0 0 0.3rem;
+}
+
+.ncc-kpi__value {
+  font-size: 1.5rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+
+.ncc-kpi__hint {
+  font-size: 0.8rem;
+  color: var(--ncc-text-muted);
+  margin-top: 0.2rem;
+}
+
+/* Alerts and flash */
+
+.ncc-alert {
+  border-radius: var(--ncc-radius);
+  border: 1px solid var(--ncc-border);
+  background: var(--ncc-surface);
+  padding: 0.7rem 0.95rem;
+  font-size: 0.9rem;
+}
+
+.ncc-alert--error {
+  background: var(--ncc-danger-soft);
+  border-color: #f2c7c3;
+  color: #7f1a15;
+}
+
+.ncc-alert--ok {
+  background: var(--ncc-ok-soft);
+  border-color: #bfe0cc;
+  color: #14532b;
+}
+
+.ncc-alert--warn {
+  background: var(--ncc-warn-soft);
+  border-color: #ecd9ae;
+  color: #6d4700;
+}
+
+/* Auth screens reuse the login page look */
+
+.ncc-auth {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 2rem 1rem;
+  background: var(--ncc-bg);
+}
+
+.ncc-auth__card {
+  width: 100%;
+  max-width: 25rem;
+  background: var(--ncc-surface);
+  border: 1px solid var(--ncc-border);
+  border-radius: var(--ncc-radius);
+  padding: 1.75rem;
+}
+
+.ncc-auth__card h1 {
+  margin-bottom: 0.35rem;
+}
+
+.ncc-auth__card .ncc-field input {
+  max-width: none;
+}
+
+.ncc-auth__foot {
+  margin-top: 1.1rem;
+  font-size: 0.85rem;
+  color: var(--ncc-text-muted);
+  display: flex;
+  justify-content: space-between;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+/* Tabs (projects tracker and other detail screens) */
+
+.ncc-tabs {
+  display: flex;
+  gap: 0.15rem;
+  border-bottom: 1px solid var(--ncc-border);
+  margin-bottom: 1.1rem;
+  overflow-x: auto;
+}
+
+.ncc-tabs a {
+  padding: 0.5rem 0.85rem;
+  font-size: 0.88rem;
+  color: var(--ncc-text-muted);
+  border-bottom: 2px solid transparent;
+  white-space: nowrap;
+}
+
+.ncc-tabs a:hover {
+  color: var(--ncc-text);
+  text-decoration: none;
+}
+
+.ncc-tabs a[aria-current='page'] {
+  color: var(--ncc-accent-strong);
+  border-bottom-color: var(--ncc-accent);
+  font-weight: 600;
+}
+
+/* Progress bar */
+
+.ncc-progress {
+  height: 7px;
+  border-radius: 999px;
+  background: var(--ncc-border);
+  overflow: hidden;
+  min-width: 64px;
+}
+
+.ncc-progress > span {
+  display: block;
+  height: 100%;
+  background: var(--ncc-accent);
+}
+
+/* Definition list used on every detail panel */
+
+.ncc-dl {
+  display: grid;
+  grid-template-columns: minmax(9rem, auto) 1fr;
+  gap: 0.4rem 1rem;
+  margin: 0;
+  font-size: 0.9rem;
+}
+
+.ncc-dl dt {
+  color: var(--ncc-text-muted);
+}
+
+.ncc-dl dd {
+  margin: 0;
+}
+
+.ncc-hint {
+  font-size: 0.82rem;
+  color: var(--ncc-text-muted);
+}
+
+.ncc-toolbar {
+  display: flex;
+  gap: 0.5rem;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  margin-bottom: 0.9rem;
+}
+
+.ncc-toolbar .ncc-field {
+  margin-bottom: 0;
+}
+
+.ncc-toolbar .ncc-field input,
+.ncc-toolbar .ncc-field select {
+  max-width: 14rem;
+}
+
+@media (max-width: 900px) {
+  .ncc-shell {
+    grid-template-columns: 1fr;
+  }
+
+  .ncc-sidebar {
+    position: static;
+    height: auto;
+    padding-bottom: 1rem;
+  }
+
+  .ncc-content {
+    padding: 1.1rem 1rem 2.5rem;
+  }
+}
