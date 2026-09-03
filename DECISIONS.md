@@ -6,7 +6,9 @@ spec is the authority and a prompt is not: where the two disagree the conflict i
 recorded here and escalated, not resolved silently.
 
 - **Status:** provisional. Every entry in section 2 is revisited when §8.11 lands.
-- **Last verified:** 2026-09-02, from real runs on the machine described in §7.
+- **Last verified:** 2026-09-03, from real runs on the machine described in §7.
+  Section 6 is the 2026-09-02 record and is left as written; section 10 is the
+  2026-09-03 record and supersedes it where the two differ.
 - **Precedence rule in force:** the more specific spec section governs the more
   general one. §6's per-module tables beat the §6 preamble; the §6 preamble beats
   §2's stack narrative — except where §2 names a platform constraint §6 assumes
@@ -115,6 +117,48 @@ baseline is something nobody approved.
 
 **Reopens if:** §8.12 defines the freeze scope differently. See section 4.4.
 
+### 2.7 Stock valuation: weighted average, with the cache as one writer
+
+§6.4 rule 1 fixes the shape — `stock_ledger` append-only, `item_stock` a rebuildable
+cache — but names no costing method. Weighted average cost was chosen over FIFO:
+
+- Cement, steel and aggregate are fungible. FIFO layers would model a distinction the
+  storekeeper cannot make when the lorry tips a heap onto an existing one.
+- WAC is one row per `(item_id, location_id)`, so an issue is a single locked read.
+  FIFO needs open layers per receipt, and an issue that spans four of them is four
+  writes and a partial-consumption rule for each.
+- A layer table is a second thing that can drift from the ledger. The point of the
+  one-writer rule is to have exactly one.
+
+Consequences, stated so they are not discovered later: an issue is valued at the
+average, never at what that specific batch cost; batch numbers are tracked for
+traceability and expiry, not for costing; and a stock-out drives the balance to zero
+by taking the whole remaining value rather than leaving a rounding tail
+(`postStockMovement`, out-movement branch).
+
+Structural enforcement, since the rule is only as good as what stops a second writer:
+`postStockMovement` in `src/modules/inventory/service.ts` is the only function that
+touches `item_stock`, it takes `SELECT ... FOR UPDATE` on the cache row, and
+`scripts/reconcile-stock.mjs` replays the ledger independently and fails if the cache
+disagrees. That script deliberately has no `--fix` — a repair flag in the one script
+whose job is to prove the single-writer rule would falsify it.
+
+**Reopens if:** the owner needs batch-level costing for a claim or a dispute. The
+ledger keeps `batch_no` on every row, so the history to compute it is not lost.
+
+### 2.8 Blank percentage cells fall back; explicit zero does not
+
+A defect found by `tests/inventory-schemas.test.ts` and fixed in
+`src/modules/inventory/schemas.ts`: `pctAt()` read a purchase-order GST cell with
+`Number(raw)`, and `Number('')` is `0` — finite, and inside the accepted 0..100 range.
+An untouched GST cell therefore booked the line at **0 percent** rather than the
+documented 18, and a purchase order with no tax on it reads as a cheap quote rather
+than as a bug. The empty string is now tested before the conversion. An explicit `'0'`
+still means zero, which nil-rated items need.
+
+Recorded because the same `Number('')` shape is available in every other numeric
+field, and the next module's schemas should be read with it in mind.
+
 ---
 
 ## 3. Fences
@@ -182,6 +226,49 @@ its own list. **Flagged as an intentional deviation from the letter of §3.2.**
 `package.json` pins `22.x` per §2.1. Everything verified in section 6 ran on
 v24.19.0. Nothing observed depends on the difference, but no result in this file is
 evidence about Node 22 behaviour.
+
+### 4.7 The §6.4 route table's read permissions are narrower than the sidebar's
+The spec guards `/app/inventory/items` with `inventory.item_manage` and
+`/app/inventory/po` with `inventory.po_create`. Both are **write** keys, and gating a
+list page on them means a storekeeper with `inventory.view` cannot see the item master
+they issue against. Resolved as `requirePermission` is OR-shaped: the list and detail
+pages take `inventory.view` **or** the write key; `new`, `edit` and every POST take the
+write key alone. `src/dashboard/nav.ts` shows both entries to `inventory.view`, which
+is now true rather than a dead link. **Flagged, not silently resolved:** if the intent
+was that the item master is confidential, the fix is the opposite one and the nav
+entries come out.
+
+### 4.8 No equipment-write permission key exists
+§6.4 gives equipment deploy and return their own routes, and the RBAC seed (§2.5) has
+no `inventory.equipment_*` key of any kind. Deploy and return therefore take
+`inventory.transfer`, on the reasoning that moving a mixer between sites is the same
+authority as moving cement between them. **Flagged:** if equipment needs its own key,
+it is a seed change plus one line per route, not a redesign.
+
+### 4.9 §6.4 line 1353 names files the projects module does not use
+The spec asks for `src/modules/inventory/pages/*.tsx` and named components
+`ItemPicker`, `LineItemGrid`, `StockBadge`, `VarianceBar`, `BatchSelector`. The
+projects module — the pattern the work order says to replicate and not redesign —
+keeps its JSX inline in `routes.tsx` and has no `pages/` directory. The work order's
+"do not redesign the pattern" was taken to win over the spec's file layout, since two
+different layouts across five modules is worse than either one consistently.
+**Flagged:** this is the one place a prompt instruction was allowed to outrank the
+spec, and it was a layout question, not a behaviour one.
+
+### 4.10 `items.tracking_mode` in §6.4 vs `is_batch_tracked` on disk
+§6.4 specifies `items.tracking_mode ENUM('quantity','batch','serial')`. The migration
+and the generated types have `is_batch_tracked TINYINT(1)`, which cannot express
+serial tracking at all. The code follows the migration, per §2.3. **Consequence:**
+serial-numbered assets have no representation in the item master; equipment is tracked
+in its own table, which covers the cases named in the spec's own examples. A migration
+widening the column is a schema decision and was not made unasked.
+
+### 4.11 §6.4 has a purchase-order approve route and no reject route
+The route table lists approve; there is no reject, and no `rejectPo` in the service.
+The approval screen is therefore approve-only, and the way to stop an order that
+should not proceed is short-close with a reason (`poShortCloseSchema`, minimum ten
+characters). **Flagged** because an approver who wants to send a PO back to the raiser
+has no way to do it, and that is a workflow the owner may expect.
 
 ---
 
@@ -280,6 +367,9 @@ This proves the seed is internally consistent. It does not prove the migrations 
 `tests/` holds only `parity-out/report.json`. `vitest` is configured and installed;
 there is nothing for it to run. This is a genuine fail, not an environment limit.
 
+**Superseded 2026-09-03 — see section 10.2.** Five test files now exist and the suite
+passes. The entry above stands as the record of what was true on 2026-09-02.
+
 ### 6.4 `npm run test:htaccess`
 **Exit 1 at the first request: `TypeError: fetch failed`, `ECONNREFUSED`** against
 `http://localhost:8081`. The script asserts real Apache behaviour — 29 assertion
@@ -351,10 +441,23 @@ in the tree or in any parent. Consequences:
 - `.gitignore` and `.gitattributes` exist and are configured, which suggests the tree
   was exported from a repository rather than never having been in one.
 
+**Resolved 2026-09-02, after escalation.** The owner supplied the repository:
+`https://github.com/nccfawaz/neelachandra`, branch `main`, cloned to
+`C:\Users\HP\Downloads\ncc`. That clone is where commits happen; the working tree at
+`C:\Users\HP\Downloads\neelachandra-main\neelachandra-main` is still not a repository
+and files are copied across before each commit. `git remote -v` is checked before every
+push, on standing instruction, and no remote has been added or changed by the
+toolchain. "Commit per module" is now honoured as asked.
+
 ### 8.3 There are no tests
 The handoff implies a working test suite. There are zero test files. `npm test` has
 never passed, because it has never had anything to run. Any statement of the form
 "tests pass" about this repository has been false.
+
+**Closed 2026-09-03.** Five files, 148 tests, exit 0 (section 10.2). The sentence above
+was true when written and is the reason no earlier claim of a green suite should be
+believed. What is still true: nothing in the suite touches a database, so it is
+evidence about pure functions and form contracts only.
 
 ### 8.4 Two `package.json` scripts point at files that do not exist
 `seed:reference` → `scripts/seed-reference.mjs` and `reconcile:stock` →
@@ -363,6 +466,13 @@ reconciliation job; `seed:reference` overlaps `003_reference.sql`, which already
 units, cost heads, locations, departments, designations, leave types, lead sources,
 item categories, brands and accounting periods. Left alone: deleting the scripts or
 writing the files are both decisions beyond the current work order.
+
+**Half closed 2026-09-03.** `scripts/reconcile-stock.mjs` now exists and is written
+(section 10.4); it parses, and its replay logic has never run against data because
+there is no database here. `seed:reference` is still a script entry pointing at
+nothing. It stays that way rather than being deleted: `003_reference.sql` already
+covers the reference data, so the likely correct fix is removing the script line, and
+that is a `package.json` change nobody asked for.
 
 ---
 
@@ -377,4 +487,74 @@ writing the files are both decisions beyond the current work order.
 | 8.7 | Offline capability | phase 3 | assumed yes (2.4) |
 | 8.11 | Hosting plan specifics | phase 0 | MariaDB assumed; collation depends on it (2.1) |
 | 8.12 | Freeze scope, and the sign-off owner | phase 1, 9 | no named owner to sign off a gate failure (4.4) |
+
+---
+
+## 10. Verification record, 2026-09-03 — inventory module
+
+Every number below is from a run in this environment on this date. Nothing is
+inferred from a previous run, and where a gate cannot run here it says so instead of
+reporting a substitute.
+
+### 10.1 `npx tsc --noEmit -p tsconfig.json`
+**Exit 0, zero errors.** Note what this does *not* cover: `tsconfig.json` has
+`exclude: ["tests", "scripts", ...]`, so no test file and no `.mjs` script is
+typechecked by this gate. Three errors were found and fixed on the way to this
+result — two `<Alert tone="info">` uses against a component whose tone union is
+`'error' | 'ok' | 'warn'`, and `openingStockSchema.rate` yielding `number | null`
+into a `postOpeningStock(ratePaise: number)` parameter.
+
+### 10.2 `npm test`
+**Exit 0. 5 files, 148 tests, 148 passed, 0 failed**, 1.02s.
+
+| File | Tests | Covers |
+|---|---|---|
+| `tests/money.test.ts` | 22 | `roundPaise` half-away-from-zero, `rupeesToPaise` exact for every two-decimal input 0..2000 paise, Indian grouping, the CGST/SGST remainder paisa, `computeVoucher` TDS on taxable not gross |
+| `tests/dates.test.ts` | 24 | the +05:30 conversion, midnight as `00` not `24`, `addMonths` clamping, the financial-year boundary and its round trip |
+| `tests/inventory-schemas.test.ts` | 34 | both `parseBody({ all: true })` shapes, rupees→paise exactly once, blank rows skipped, `Line N:` messages, the GST fallback of section 2.8 |
+| `tests/nav.test.ts` | 47 | `visibleNav` OR semantics and empty-group dropping, `activeHref` longest-prefix, and one generated test per sidebar item asserting its href is a registered route path |
+| `tests/csrf.test.ts` | 21 | `verifyToken` throwing on every wrong input rather than returning false, `extractToken` field-then-header order, `constantTimeEquals` not throwing on unequal lengths |
+
+Three of my own assertions were wrong before this was green, and in all three cases the
+code was right: `rupeesToPaise(1.005)` is 100 because `1.005 * 100` is
+`100.49999999999999`; `formatPaiseCompact` needs paise not rupees for a 1.24 Cr figure;
+`18:30Z` is `00:00` IST, not `00:30`. The float case was rewritten as a documented
+boundary plus the exhaustive two-decimal loop.
+
+**What the suite is not.** No test opens a database. `tests/setup-env.ts` fills the
+environment variables `src/env.ts` validates at import — with obvious fakes, using
+`??=` so a developer's real `.env` wins — and no pool is ever created. A suite that
+reached the ledger through a mocked Kysely would assert that Kysely composes strings,
+not that stock balances, so it was not written. `vitest.config.ts` is separate from
+`vite.config.ts` because that file exists only to minify the dashboard stylesheet and
+its build settings mean nothing to a test run.
+
+### 10.3 The two audit scripts
+- `node scripts/selftest-parity.mjs` → **20 of 20 mutations caught, exit 0.**
+- `node scripts/audit-rbac-seed.mjs` → **exit 0, 204 of 204 grants** verified, one
+  owner-only permission (`crm.quote_discount_override`).
+
+### 10.4 `scripts/reconcile-stock.mjs` — written, never executed against data
+`node --check` passes. Running it stops at
+`Missing environment variables: DB_HOST, DB_PORT, DB_USER, DB_PASSWORD, DB_NAME`,
+which is the correct behaviour and also the whole limit: **its replay logic has never
+processed a single ledger row.** It checks six things per `(item_id, location_id)`,
+replaying `stock_ledger` in `id` order with arithmetic copied line-for-line from
+`postStockMovement`: each row's `balance_after`, each row's `value_paise`, that an
+out-movement's `rate_paise` equals the weighted average at that moment,
+`item_stock.qty_on_hand` and `value_paise`, that `last_txn_id` is the newest ledger id,
+and cache rows with no ledger behind them. `QTY_EPSILON = 0.0005`, half of the
+`DECIMAL(14,3)` resolution. The duplicated arithmetic is the point: two independent
+implementations disagreeing is the signal.
+
+### 10.5 Still not runnable here
+`db:migrate`, `db:types`, `seed:owner`, `reconcile:stock`, `test:htaccess` (no Apache),
+`test:e2e` and the pixel axis of `parity` (no Playwright binaries), and the full
+`parity` gate (no candidate origin). Section 7's table is unchanged. **No line of the
+inventory module has been executed against a database.**
+
+### 10.6 CI does not exist
+`.github/workflows` is absent, so `tsc --noEmit` and the suite are green because they
+were run by hand here and reported above, not because anything enforces them on push.
+Outstanding.
 

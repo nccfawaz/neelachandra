@@ -11,6 +11,13 @@ import type { AppEnv } from '../types.js'
  * it a second time. A Request body is a one-shot stream, so a second
  * parseBody in the handler would throw, and the alternative of not parsing
  * here means the guard cannot see the hidden field.
+ *
+ * `{ all: true }` is not optional. Without it Hono keeps only the last value
+ * of a repeated field, so a purchase order typed with eight lines would post
+ * eight itemId fields and reach the service with one. With it a field that
+ * appears once is still a plain string, so nothing that reads a scalar
+ * changes; only repeated fields become arrays, which is what the line-grid
+ * schemas expect.
  */
 
 declare module 'hono' {
@@ -36,7 +43,7 @@ export function csrfProtect(): MiddlewareHandler<AppEnv> {
 
     let body: Record<string, unknown> | null = null
     if (!isMultipart && contentType.includes('form-urlencoded')) {
-      body = (await c.req.parseBody()) as Record<string, unknown>
+      body = (await c.req.parseBody({ all: true })) as Record<string, unknown>
       c.set('parsedBody', body)
     } else if (!isMultipart && contentType.includes('application/json')) {
       try {
@@ -47,6 +54,10 @@ export function csrfProtect(): MiddlewareHandler<AppEnv> {
       c.set('parsedBody', body)
     }
 
+    // A non-string here means the field was sent twice, which no template in
+    // the app does. Falling through to the header (and then failing
+    // verification) is the fail-closed direction, and a Forbidden on submit is
+    // a findable bug in a way a silently accepted duplicate is not.
     const suppliedFromBody = body?.[CSRF_FIELD]
     const supplied =
       typeof suppliedFromBody === 'string' && suppliedFromBody.length > 0
@@ -63,12 +74,16 @@ export function csrfProtect(): MiddlewareHandler<AppEnv> {
 /**
  * Reads the body the guard already consumed, or parses it if the guard did
  * not run for this route. Handlers call this instead of c.req.parseBody().
+ *
+ * The fallback repeats `{ all: true }` so a handler reached without the guard
+ * sees the same shape as one reached through it — otherwise a form would work
+ * or drop its lines depending on which middleware ran.
  */
 export async function readBody(c: {
   get: (k: 'parsedBody') => Record<string, unknown> | null | undefined
-  req: { parseBody: () => Promise<unknown> }
+  req: { parseBody: (options: { all: true }) => Promise<unknown> }
 }): Promise<Record<string, unknown>> {
   const cached = c.get('parsedBody')
   if (cached) return cached
-  return (await c.req.parseBody()) as Record<string, unknown>
+  return (await c.req.parseBody({ all: true })) as Record<string, unknown>
 }

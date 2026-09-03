@@ -4,6 +4,7 @@ import { cronAuth } from '../../middleware/cronAuth.js'
 import { purgeExpiredSessions } from '../../lib/session.js'
 import { purgeExpired as purgeRateLimits } from '../../lib/ratelimit.js'
 import { today } from '../../lib/dates.js'
+import { stockAlerts } from '../../modules/inventory/service.js'
 
 /**
  * Scheduled jobs, invoked by Hostinger cron over HTTP with X-Cron-Key.
@@ -29,29 +30,37 @@ cron.post('/housekeeping', async (c) => {
 })
 
 /**
- * Reorder-level and expiry alerts.
+ * Reorder level, batch expiry, equipment service and insurance — the four
+ * things the spec's route table puts behind this one endpoint.
+ *
+ * It calls inventory's stockAlerts rather than querying here, so the daily
+ * email and the storekeeper's dashboard cannot disagree about what is low. The
+ * scope argument is null: a cron has no user, and an alert that a job silently
+ * narrowed to one project's stores is worse than no alert.
  *
  * The stock cache is authoritative enough for an alert; the ledger is
  * authoritative for a number that gets paid against.
+ *
+ * `negative_balances` should always be zero. Anything else means item_stock has
+ * drifted from stock_ledger or something wrote the cache outside
+ * postStockMovement, so it is returned at the top level where a cron log
+ * scraper will see it rather than buried in the payload.
  */
 cron.post('/stock-alerts', async (c) => {
-  const db = c.get('db')
-  const low = await db
-    .selectFrom('item_stock')
-    .innerJoin('items', 'items.id', 'item_stock.item_id')
-    .innerJoin('locations', 'locations.id', 'item_stock.location_id')
-    .select([
-      'items.code as item_code',
-      'items.name as item_name',
-      'locations.name as location_name',
-      'item_stock.qty_on_hand',
-      'items.reorder_level',
-    ])
-    .where('items.is_active', '=', 1)
-    .whereRef('item_stock.qty_on_hand', '<=', 'items.reorder_level')
-    .execute()
+  const alerts = await stockAlerts(c.get('db'), null)
 
-  return c.json({ ok: true, ran_on: today(), below_reorder: low.length, items: low })
+  return c.json({
+    ok: true,
+    ran_on: today(),
+    below_reorder: alerts.lowStock.length,
+    expiring_batches: alerts.expiring.length,
+    equipment_due: alerts.equipment.length,
+    negative_balances: alerts.negative.length,
+    low_stock: alerts.lowStock,
+    expiring: alerts.expiring,
+    equipment: alerts.equipment,
+    negative: alerts.negative,
+  })
 })
 
 /** Document expiry: contractor licences, WC policies and employee documents. */

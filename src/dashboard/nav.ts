@@ -44,11 +44,18 @@ export const NAV: NavGroup[] = [
     items: [
       { label: 'Stock', href: '/app/inventory', perms: [PERMISSIONS.INVENTORY_VIEW] },
       { label: 'Items', href: '/app/inventory/items', perms: [PERMISSIONS.INVENTORY_VIEW] },
+      { label: 'Requisitions', href: '/app/inventory/requisitions', perms: [PERMISSIONS.INVENTORY_VIEW] },
       { label: 'Goods receipt', href: '/app/inventory/grn', perms: [PERMISSIONS.INVENTORY_GRN_CREATE] },
       { label: 'Issues', href: '/app/inventory/issues', perms: [PERMISSIONS.INVENTORY_ISSUE] },
       { label: 'Transfers', href: '/app/inventory/transfers', perms: [PERMISSIONS.INVENTORY_TRANSFER] },
+      { label: 'Adjustments', href: '/app/inventory/adjustments', perms: [PERMISSIONS.INVENTORY_VIEW] },
       { label: 'Purchase orders', href: '/app/inventory/po', perms: [PERMISSIONS.INVENTORY_PO_CREATE, PERMISSIONS.INVENTORY_APPROVE_PO] },
       { label: 'Vendors', href: '/app/inventory/vendors', perms: [PERMISSIONS.INVENTORY_VENDOR_MANAGE] },
+      { label: 'Equipment', href: '/app/inventory/equipment', perms: [PERMISSIONS.INVENTORY_VIEW] },
+      // The list pages of all three read with inventory.view and gate their own
+      // write actions inside, which is why these are not listed under
+      // stock_adjust or a report permission that does not exist.
+      { label: 'Consumption', href: '/app/inventory/reports/consumption', perms: [PERMISSIONS.INVENTORY_VIEW] },
     ],
   },
   {
