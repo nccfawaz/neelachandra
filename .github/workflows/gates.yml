@@ -3,11 +3,17 @@ name: gates
 # The gates the work order requires green before every commit, run where the
 # owner can see them rather than only in an agent's report.
 #
-# Deliberately narrow: this runs the two things that are true in any
-# environment. It does not run `parity` (needs a candidate origin serving the
-# site), the pixel axis (needs Playwright browser binaries), `test:htaccess`
-# (needs Apache) or anything touching MariaDB. A workflow that faked those
-# would be a green by substitution, which is worse than an absent check.
+# Two jobs. `gates` runs the checks that are true in any environment and need
+# nothing installed. `db-smoke` starts a real MariaDB, migrates it, and runs
+# queries through it, because on 2026-09-03 every Kysely query in the
+# application hung forever while tsc and all 148 unit tests stayed green: the
+# suite is pure functions and nothing in CI opened a connection. A green build
+# meant nothing about the database layer.
+#
+# Still deliberately absent: `parity` (needs a candidate origin serving the
+# site), the pixel axis (needs Playwright browser binaries) and
+# `test:htaccess` (needs Apache). A workflow that faked those would be a green
+# by substitution, which is worse than an absent check.
 
 on:
   push:
@@ -49,3 +55,81 @@ jobs:
       # real permission key, and no key is orphaned.
       - name: rbac seed audit
         run: node scripts/audit-rbac-seed.mjs
+
+  db-smoke:
+    runs-on: ubuntu-latest
+
+    # The failure mode this job exists to catch is a hang, not an exception.
+    # Without a bound, a wedged query burns the runner's six-hour default and
+    # reads as "still running" rather than as broken. vitest.integration.config.ts
+    # sets a 10s per-test timeout; this is the outer fence around migrate and
+    # npm ci as well.
+    timeout-minutes: 10
+
+    services:
+      mariadb:
+        # Matches the production target and the version used for local
+        # verification. Pinned to the minor series, not `latest`, so the gate
+        # does not change behaviour on someone else's release day.
+        image: mariadb:11.4
+        env:
+          MARIADB_ROOT_PASSWORD: ci_root_not_a_secret
+          MARIADB_DATABASE: ncc_platform_test
+        ports:
+          - 3306:3306
+        # healthcheck.sh ships in the mariadb image. Without waiting on it the
+        # migrate step races the server's first startup and fails on connect,
+        # which looks identical to a broken migration.
+        options: >-
+          --health-cmd="healthcheck.sh --connect --innodb_initialized"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+
+    # Job level so migrate and the suite cannot disagree about which database
+    # they are talking to. tests/integration/setup-db-env.ts reads these; there
+    # is no .env in CI and it has no fallback, so a missing key fails loudly
+    # rather than connecting somewhere else.
+    env:
+      DB_HOST: 127.0.0.1
+      DB_PORT: 3306
+      DB_USER: root
+      DB_PASSWORD: ci_root_not_a_secret
+      DB_NAME: ncc_platform_test
+      # Not database configuration, but src/env.ts validates all sixteen keys at
+      # import time and throws, so the module graph will not load without them.
+      # Obvious fakes: nothing here signs a session or sends mail.
+      SESSION_SECRET: ci-session-secret-forty-four-chars-minimum!!
+      CRON_SECRET: ci-cron-secret-thirty-two-chars-minimum
+      INDEXNOW_KEY: 0123456789abcdef0123456789abcdef
+      APP_BASE_URL: http://localhost:3000
+      NODE_ENV: test
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: npm
+
+      - run: npm ci --ignore-scripts
+
+      # Hand-written SQL in migrations/, applied in lexical order by the runner.
+      # This is also the only automated check that the nine files apply cleanly
+      # to an empty database in order.
+      - name: migrate
+        run: npm run db:migrate
+
+      # One real query through getDb(), plus the transaction path, the
+      # one-pool guarantee, and the DECIMAL/DATE string contracts. This is the
+      # gate the pool bug would have failed.
+      - name: db integration smoke test
+        run: npm run test:integration
+
+      # Replays stock_ledger into item_stock and exits non-zero on drift. On an
+      # empty database it has nothing to compare, which is worth asserting
+      # anyway: it proves the canary runs and exits 0 rather than erroring on a
+      # schema it cannot read.
+      - name: stock reconciliation canary
+        run: npm run reconcile:stock
