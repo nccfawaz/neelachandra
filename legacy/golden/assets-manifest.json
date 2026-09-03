@@ -3,7 +3,36 @@
   "origin": "https://neelachandra.com",
   "tool": "capture-assets.mjs",
   "note": "Same-origin binaries referenced by the golden pages. Irreplaceable after Hostinger website removal.",
-  "total": 68,
+  "total": 72,
+  "amendments": [
+    {
+      "at": "2026-09-02T12:39:50.521Z",
+      "origin": "https://neelachandra.com",
+      "reason": "assetRefs() did not scan CSS url() or <meta content>, so these references were never requested at capture time. See DECISIONS.md 5.1.",
+      "added": [
+        {
+          "path": "/assets/images/about/hero.webp",
+          "bytes": 132946,
+          "error": null
+        },
+        {
+          "path": "/assets/images/packages/hero.webp",
+          "bytes": 57900,
+          "error": null
+        },
+        {
+          "path": "/assets/images/services/hero.webp",
+          "bytes": 95100,
+          "error": null
+        },
+        {
+          "path": "/og.webp",
+          "bytes": 1091756,
+          "error": null
+        }
+      ]
+    }
+  ],
   "assets": [
     {
       "path": "/apple-touch-icon.png",
@@ -18,6 +47,14 @@
       "bytes": 140022,
       "contentType": "image/webp",
       "sha256": "bdf45d7d1df424692ebb5f32680e19383db231446c345996dc1a0a5fe6ba59ce"
+    },
+    {
+      "path": "/assets/images/about/hero.webp",
+      "status": 200,
+      "bytes": 132946,
+      "contentType": "image/webp",
+      "sha256": "f6dfce4047c9318825e99291ba2a366c31808b71078d8b77fed615bfe5117b6d",
+      "capturedAt": "2026-09-02T12:39:50.163Z"
     },
     {
       "path": "/assets/images/about/int.webp",
@@ -308,6 +345,14 @@
       "sha256": "b7c6c3f1a8ec2cc0fa7f9f5ac785bb8b7d4cb30d7b76d5aab1fffcbfdb0c77ff"
     },
     {
+      "path": "/assets/images/packages/hero.webp",
+      "status": 200,
+      "bytes": 57900,
+      "contentType": "image/webp",
+      "sha256": "cb9db637407ef53bc25a457a3f407345b2b0dd8c3260590bfa787596c1e92334",
+      "capturedAt": "2026-09-02T12:39:50.282Z"
+    },
+    {
       "path": "/assets/images/packages/platinum.svg",
       "status": 200,
       "bytes": 717,
@@ -427,6 +472,14 @@
       "sha256": "f24eefc98683bcb8257eeff4d25e930be212120b5684d7aafd605d75932da013"
     },
     {
+      "path": "/assets/images/services/hero.webp",
+      "status": 200,
+      "bytes": 95100,
+      "contentType": "image/webp",
+      "sha256": "21fa4afa67ad8c0c5e91e79e92f0c1370ec872fb973b2f9d76b28780e374e788",
+      "capturedAt": "2026-09-02T12:39:50.327Z"
+    },
+    {
       "path": "/favicon-96x96.png",
       "status": 200,
       "bytes": 6096,
@@ -461,6 +514,14 @@
       "path": "/favicon/site.webmanifest",
       "status": 404,
       "error": "not ok"
+    },
+    {
+      "path": "/og.webp",
+      "status": 200,
+      "bytes": 1091756,
+      "contentType": "image/webp",
+      "sha256": "3a2a05a6a3d5ce1ee69d6149176677b112552a751beb68a855ccc44f074af8c1",
+      "capturedAt": "2026-09-02T12:39:50.503Z"
     },
     {
       "path": "/site.webmanifest",
