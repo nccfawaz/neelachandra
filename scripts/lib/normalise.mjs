@@ -173,14 +173,72 @@ export function seoFields (html) {
   }
 }
 
-/** Asset references, so a renamed or dropped image is caught. */
+/**
+ * Asset references, so a renamed or dropped image is caught.
+ *
+ * This is also the function capture-assets.mjs uses to decide what to mirror
+ * permanently before the live site is removed, so a reference mechanism missing
+ * from here is not merely an unchecked axis: the file is never requested from
+ * the live host and is gone for good. Four real assets were lost that way
+ * (three hero WebPs behind CSS url(), and og.webp behind <meta content>), which
+ * is why each mechanism below names what it exists to catch.
+ *
+ * Spec 3.2 point 7 enumerates img, source, link and script. That list does not
+ * satisfy its own stated intent, "the full asset reference set", so this is
+ * deliberately wider than the letter of 3.2. Widening adds no mask and no
+ * exclusion, so the zero-tolerance rule is untouched; see DECISIONS.md 4.5.
+ */
 export function assetRefs (html) {
   const set = new Set()
-  const add = re => { let m; while ((m = re.exec(html)) !== null) set.add(m[1]) }
+  const add = (re, group = 1) => {
+    let m
+    while ((m = re.exec(html)) !== null) if (m[group]) set.add(m[group])
+  }
+
   add(/<img\b[^>]*\bsrc=["']([^"']+)["']/gi)
-  add(/<source\b[^>]*\bsrcset=["']([^"']+)["']/gi)
   add(/<link\b[^>]*\bhref=["']([^"']+\.(?:css|ico|png|svg|webp|webmanifest))["']/gi)
   add(/<script\b[^>]*\bsrc=["']([^"']+)["']/gi)
+  // <source src> is for video and audio; <source srcset> is handled below.
+  add(/<source\b[^>]*\bsrc=["']([^"']+)["']/gi)
+
+  // srcset, split into candidates. The previous version stored the whole
+  // attribute as one opaque string, so a density variant that appears only in
+  // srcset was never mirrored. Every value here currently duplicates its own
+  // src, so this changes nothing today and stops it becoming a hole later.
+  for (const m of html.matchAll(/<(?:img|source)\b[^>]*\bsrcset=["']([^"']+)["']/gi)) {
+    for (const candidate of m[1].split(',')) {
+      const u = candidate.trim().split(/\s+/)[0]
+      if (u) set.add(u)
+    }
+  }
+
+  // CSS url(), from both <style> blocks and style="" attributes. The hero
+  // images on services, about, packages and projects are referenced ONLY this
+  // way, as background-image on a class defined in an inline <style> block:
+  //   .service-banner { background-image: linear-gradient(...), url("/x.webp") }
+  // No axis inspected style-block text, so those files were invisible.
+  for (const m of html.matchAll(/url\(\s*([^)]+?)\s*\)/gi)) {
+    const raw = m[1].replace(/^(?:["']|&quot;|&#0?34;|&apos;|&#0?39;)/i, '')
+      .replace(/(?:["']|&quot;|&#0?34;|&apos;|&#0?39;)$/i, '').trim()
+    // data: is inline content, not a reference to a file that must survive.
+    if (!raw || /^data:/i.test(raw)) continue
+    set.add(raw)
+  }
+
+  // Social and tile images. og.webp is referenced by nothing else on any page,
+  // and spec 7.5 item 6 requires it to survive byte-identical at 1,091,756
+  // bytes, so a gate that could not see it was checking the wrong set.
+  // Matched tag-first rather than attribute-first so that content="" appearing
+  // before property="" still resolves.
+  const IMAGE_META = new Set(['og:image', 'og:image:url', 'og:image:secure_url',
+    'twitter:image', 'twitter:image:src', 'msapplication-tileimage'])
+  for (const m of html.matchAll(/<meta\b[^>]*>/gi)) {
+    const key = /(?:property|name)\s*=\s*["']([^"']+)["']/i.exec(m[0])?.[1]?.toLowerCase()
+    if (!key || !IMAGE_META.has(key)) continue
+    const val = /\bcontent\s*=\s*["']([^"']*)["']/i.exec(m[0])?.[1]
+    if (val) set.add(val)
+  }
+
   return [...set].sort()
 }
 

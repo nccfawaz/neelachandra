@@ -25,10 +25,14 @@ import { readFile, writeFile, mkdir, readdir } from 'node:fs/promises'
 import { applyCorrections } from './lib/corrections.mjs'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { PAGES, VIEWPORTS, urlFor } from './lib/pages.mjs'
 import { textNodes, elementSequence, jsonLdNodes, jsonLdPayload, seoFields, assetRefs, diffSequences } from './lib/normalise.mjs'
 
-const ROOT = new URL('..', import.meta.url).pathname
+// fileURLToPath, not URL.pathname: see the note in selftest-parity.mjs. On
+// Windows the raw pathname is "/C:/..." and every path built from it resolves
+// to "C:\C:\...", so the gate cannot read the golden masters at all.
+const ROOT = fileURLToPath(new URL('..', import.meta.url))
 const GOLDEN = join(ROOT, 'legacy', 'golden')
 const OUT = join(ROOT, 'tests', 'parity-out')
 

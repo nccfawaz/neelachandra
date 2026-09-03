@@ -20,9 +20,11 @@
 import { mkdir, writeFile } from 'node:fs/promises'
 import { createHash } from 'node:crypto'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { PAGES, VIEWPORTS, INFRA_FILES, ORIGIN, urlFor } from './lib/pages.mjs'
 
-const ROOT = new URL('..', import.meta.url).pathname
+// fileURLToPath, not URL.pathname: see the note in selftest-parity.mjs.
+const ROOT = fileURLToPath(new URL('..', import.meta.url))
 const GOLDEN = join(ROOT, 'legacy', 'golden')
 const SHOTS = join(GOLDEN, 'shots')
 const INFRA = join(GOLDEN, 'infra')
