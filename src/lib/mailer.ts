@@ -195,3 +195,53 @@ export function enquiryNotificationEmail(opts: {
   ].join('\n')
   return { subject: `Website enquiry from ${opts.name}`, text }
 }
+
+/**
+ * The quote a client receives (spec 6.7 routes: "Emails the PDF-printable link,
+ * stamps sent_at").
+ *
+ * The figures are in the body, not only behind the link, because the link is
+ * /api/crm/quotes/:id/print and that route is guarded by crm.lead_view — a
+ * permission a client does not hold. The spec asks for the link and the link is
+ * sent, but a client clicking it reaches the sign-in page, so an email carrying
+ * nothing but the link would tell them nothing. Recorded in DECISIONS.md: there
+ * is no public quote-view token anywhere in the schema, and minting signed
+ * public URLs for price documents is a feature and an attack surface nobody
+ * asked for. Until one exists, the practical path is the exec printing to PDF
+ * and attaching it.
+ */
+export function quoteEmail(opts: {
+  contactName: string
+  quoteNo: string
+  revision: number
+  totalLabel: string
+  validUntil: string
+  link: string
+  senderName: string
+}) {
+  const text = [
+    `Dear ${opts.contactName},`,
+    '',
+    `Thank you for your interest in building with ${APP}.`,
+    '',
+    `Quote ${opts.quoteNo}${opts.revision > 1 ? ` revision ${opts.revision}` : ''}`,
+    `Total including GST: ${opts.totalLabel}`,
+    `Valid until: ${opts.validUntil}`,
+    '',
+    'The full quote sets out the specification, what is included, what is',
+    'excluded and the payment schedule. Please read the exclusions: they are the',
+    'part clients most often need to plan for separately.',
+    '',
+    opts.link,
+    '',
+    'Any question about a line in it is worth asking before you sign. Reply to',
+    'this email or call us.',
+    '',
+    opts.senderName,
+    APP,
+  ].join('\n')
+  return {
+    subject: `Your quote ${opts.quoteNo} from ${APP}`,
+    text,
+  }
+}

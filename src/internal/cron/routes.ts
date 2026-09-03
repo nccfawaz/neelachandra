@@ -5,6 +5,7 @@ import { purgeExpiredSessions } from '../../lib/session.js'
 import { purgeExpired as purgeRateLimits } from '../../lib/ratelimit.js'
 import { today } from '../../lib/dates.js'
 import { stockAlerts } from '../../modules/inventory/service.js'
+import { runCrmFollowups } from '../../modules/crm/service.js'
 
 /**
  * Scheduled jobs, invoked by Hostinger cron over HTTP with X-Cron-Key.
@@ -60,6 +61,31 @@ cron.post('/stock-alerts', async (c) => {
     expiring: alerts.expiring,
     equipment: alerts.equipment,
     negative: alerts.negative,
+  })
+})
+
+/**
+ * CRM follow-ups: rule 9's dormancy sweep, overdue next actions, unassigned
+ * enquiries and quotes near expiry.
+ *
+ * `went_dormant` is the one figure worth watching over time. A number that keeps
+ * climbing is not a cron problem, it is leads arriving faster than anyone is
+ * calling them, which is exactly what spec 6.7 rule 9 exists to make visible.
+ */
+cron.post('/crm-followups', async (c) => {
+  const result = await runCrmFollowups(c.get('db'))
+
+  return c.json({
+    ok: true,
+    ran_on: result.ranOn,
+    dormancy_days: result.dormancyDays,
+    went_dormant: result.wentDormant,
+    quotes_expired: result.quotesExpired,
+    quotes_near_expiry: result.quotesNearExpiry,
+    overdue_actions: result.overdueActions,
+    unassigned_enquiries: result.unassignedEnquiries,
+    unassigned_leads: result.unassignedLeads,
+    notifications_written: result.notified,
   })
 })
 

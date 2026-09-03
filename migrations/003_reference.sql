@@ -218,6 +218,17 @@ INSERT INTO settings (key_name, value_json, data_type, is_secret, label) VALUES
   ('finance.tds_default_pct', '2.00', 'string', 0, 'Default TDS percent, section 194C'),
   ('finance.retention_default_pct', '5.00', 'string', 0, 'Default retention percent'),
   ('projects.default_stage_template_id', 'null', 'int', 0, 'Default stage template'),
+  -- Spec 6.7 rule 7 says the funnel report shows "the count breaching a target
+  -- held in settings" without naming the target. Four working hours is this
+  -- tree's number, not the spec's: it is short enough that a paid Google click
+  -- is still warm and long enough to survive one site visit. Change it here
+  -- rather than in code once the business has an answer.
+  ('crm.first_response_target_hours', '4', 'int', 0, 'Target hours to first response on a new lead'),
+  -- Rule 9 fixes dormancy at 45 days. It is a setting because the same number
+  -- decides the temperature decay and the follow-up cron, and two copies of it
+  -- would drift.
+  ('crm.dormancy_days', '45', 'int', 0, 'Days without activity before a lead goes dormant'),
+  ('crm.quote_expiry_warning_days', '5', 'int', 0, 'Days before a quote expires to warn the owner'),
   ('numbering.project_prefix', JSON_QUOTE('NCC/PRJ'), 'string', 0, 'Project number prefix'),
   ('numbering.quote_prefix', JSON_QUOTE('NCC/QT'), 'string', 0, 'Quote number prefix'),
   ('numbering.po_prefix', JSON_QUOTE('NCC/PO'), 'string', 0, 'Purchase order number prefix'),

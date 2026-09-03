@@ -215,48 +215,7 @@ export async function createProject(
 ): Promise<{ projectId: number; code: string }> {
   return db.transaction().execute(async (trx) => {
     const code = await nextNumber(trx, 'project')
-
-    let templateId = input.stageTemplateId
-    if (!templateId) {
-      const tpl = await trx
-        .selectFrom('stage_templates')
-        .select('id')
-        .where('is_active', '=', 1)
-        .where((eb) =>
-          eb.or([
-            eb('project_type', '=', input.projectType as 'residential_construction'),
-            eb('is_default', '=', 1),
-          ])
-        )
-        .orderBy(sql`project_type = ${input.projectType}`, 'desc')
-        .orderBy('is_default', 'desc')
-        .executeTakeFirst()
-      templateId = tpl?.id ?? null
-    }
-
-    let items: Array<{
-      seq: number
-      name: string
-      weightage_pct: number
-      typical_duration_days: number | null
-      requires_quality_check: number
-    }> = []
-
-    if (templateId) {
-      items = (await trx
-        .selectFrom('stage_template_items')
-        .select(['seq', 'name', 'weightage_pct', 'typical_duration_days', 'requires_quality_check'])
-        .where('template_id', '=', templateId)
-        .orderBy('seq')
-        .execute()) as typeof items
-
-      const sum = items.reduce((s, i) => s + Number(i.weightage_pct), 0)
-      if (items.length > 0 && Math.abs(sum - 100) > 0.01) {
-        throw new UnprocessableError(
-          `The stage template weightages sum to ${sum.toFixed(2)} rather than 100. Correct the template before creating a project from it.`
-        )
-      }
-    }
+    const templateId = await resolveStageTemplate(trx, input.projectType, input.stageTemplateId)
 
     const inserted = await trx
       .insertInto('projects')
@@ -286,26 +245,7 @@ export async function createProject(
     const projectId = Number(inserted.insertId ?? 0)
     if (!projectId) throw new Error('Project insert returned no id')
 
-    if (items.length > 0) {
-      const stageIds: number[] = []
-      for (const item of items) {
-        const row = await trx
-          .insertInto('project_stages')
-          .values({
-            project_id: projectId,
-            seq: item.seq,
-            name: item.name,
-            weightage_pct: item.weightage_pct,
-            requires_quality_check: item.requires_quality_check,
-            // Finish-to-start chains the stages in template order. A
-            // template that wants parallel work models it by leaving the
-            // predecessor null, which the override path then does not need.
-            predecessor_stage_id: stageIds.length > 0 ? stageIds[stageIds.length - 1]! : null,
-          })
-          .executeTakeFirst()
-        stageIds.push(Number(row.insertId ?? 0))
-      }
-    }
+    await instantiateStagesFromTemplate(trx, projectId, templateId)
 
     // The site store is created here rather than on the first material
     // receipt, because a GRN arriving at a site with no location row is a
@@ -323,6 +263,98 @@ export async function createProject(
 
     return { projectId, code }
   })
+}
+
+/**
+ * Picks the stage template for a new project.
+ *
+ * An explicit choice wins. Otherwise the best match for the project type, and
+ * failing that the default template. Null is a legitimate answer: a project
+ * with no stages is one whose schedule has not been decided yet, which is
+ * better than silently giving a villa the interiors template.
+ *
+ * Extracted from createProject so that a project created by CRM conversion
+ * resolves its template the same way rather than by a second, drifting copy.
+ */
+export async function resolveStageTemplate(
+  trx: Trx,
+  projectType: string,
+  templateId: number | null
+): Promise<number | null> {
+  if (templateId) return templateId
+
+  const tpl = await trx
+    .selectFrom('stage_templates')
+    .select('id')
+    .where('is_active', '=', 1)
+    .where((eb) =>
+      eb.or([
+        eb('project_type', '=', projectType as 'residential_construction'),
+        eb('is_default', '=', 1),
+      ])
+    )
+    .orderBy(sql`project_type = ${projectType}`, 'desc')
+    .orderBy('is_default', 'desc')
+    .executeTakeFirst()
+
+  return tpl?.id ?? null
+}
+
+/**
+ * Writes a project's stages from its template, chained finish-to-start.
+ *
+ * The template weightage must sum to exactly 100. A template summing to 97
+ * produces a project that can never reach 100 percent complete, and that
+ * failure surfaces months later as an argument about whether the job is
+ * finished. The throw aborts the caller's transaction, so a bad template
+ * leaves no project behind.
+ *
+ * Returns the number of stages written, so a caller that needs to know whether
+ * a schedule exists does not have to count them again.
+ */
+export async function instantiateStagesFromTemplate(
+  trx: Trx,
+  projectId: number,
+  templateId: number | null
+): Promise<number> {
+  if (!templateId) return 0
+
+  const items = await trx
+    .selectFrom('stage_template_items')
+    .select(['seq', 'name', 'weightage_pct', 'typical_duration_days', 'requires_quality_check'])
+    .where('template_id', '=', templateId)
+    .orderBy('seq')
+    .execute()
+
+  if (items.length === 0) return 0
+
+  const sum = items.reduce((s, i) => s + Number(i.weightage_pct), 0)
+  if (Math.abs(sum - 100) > 0.01) {
+    throw new UnprocessableError(
+      `The stage template weightages sum to ${sum.toFixed(2)} rather than 100. Correct the template before creating a project from it.`
+    )
+  }
+
+  const stageIds: number[] = []
+  for (const item of items) {
+    const row = await trx
+      .insertInto('project_stages')
+      .values({
+        project_id: projectId,
+        seq: item.seq,
+        name: item.name,
+        weightage_pct: item.weightage_pct,
+        requires_quality_check: item.requires_quality_check,
+        // Finish-to-start chains the stages in template order. A template
+        // that wants parallel work models it by leaving the predecessor null,
+        // which the override path then does not need.
+        predecessor_stage_id: stageIds.length > 0 ? stageIds[stageIds.length - 1]! : null,
+      })
+      .executeTakeFirst()
+    stageIds.push(Number(row.insertId ?? 0))
+  }
+
+  return items.length
 }
 
 /** Creates the project's site_store location if it does not have one. */
