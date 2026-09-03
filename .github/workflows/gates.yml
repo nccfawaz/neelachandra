@@ -1,0 +1,51 @@
+name: gates
+
+# The gates the work order requires green before every commit, run where the
+# owner can see them rather than only in an agent's report.
+#
+# Deliberately narrow: this runs the two things that are true in any
+# environment. It does not run `parity` (needs a candidate origin serving the
+# site), the pixel axis (needs Playwright browser binaries), `test:htaccess`
+# (needs Apache) or anything touching MariaDB. A workflow that faked those
+# would be a green by substitution, which is worse than an absent check.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  gates:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # engines.node pins 22.x. Development happens on 24, so this is the
+          # only place the pinned version is actually exercised.
+          node-version: 22.x
+          cache: npm
+
+      # --ignore-scripts because the only postinstall in the tree downloads
+      # Playwright browsers, which nothing in this workflow uses.
+      - run: npm ci --ignore-scripts
+
+      # tsconfig.json excludes tests/ and scripts/, so this proves src/ alone.
+      - name: typecheck
+        run: npm run typecheck
+
+      - name: unit tests
+        run: npm test
+
+      # Pure Node, no network, no database: it mutates a copy of the golden
+      # masters and asserts the parity gate catches every mutation. The one
+      # part of the §3.2 gate that can run without an origin.
+      - name: parity self-test
+        run: npm run parity:selftest
+
+      # Checks the RBAC seed against its own claims: every grant resolves to a
+      # real permission key, and no key is orphaned.
+      - name: rbac seed audit
+        run: node scripts/audit-rbac-seed.mjs
