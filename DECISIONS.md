@@ -990,6 +990,207 @@ them exists.
 The consequence of waiting is bounded. The three keys have no readers until finance is built,
 and a wrong value is visible in the field it was typed into.
 
+---
+
+## 14. HR, first slice: the employee master, pay, documents and the exit, 2026-09-04
+
+Covers `src/modules/hr/{queries.ts,schemas.ts,service.ts,routes.tsx}` against §6.6. Attendance,
+leave, contractors, safety and recruiting are still the stub screens; what follows is only what
+had to be decided to ship the first four.
+
+### 14.1 The employee-to-login link is recorded twice and written once
+
+Two columns describe the same relationship and the spec declares both: `employees.user_id`
+(§6.6, `migrations/006_hr.sql`) and `users.employee_id` (§4, `001_core_auth.sql`, FK added in
+006). Neither is named canonical. **Only one has a writer** — `createUser` in
+`src/modules/admin/service.ts` sets `users.employee_id`; nothing in the codebase writes
+`employees.user_id`.
+
+That is not cosmetic. `runExit` read `employee.user_id` to find the login to close, so for any
+account created through the 6.1 admin screen — which is all of them — the branch never fired:
+
+- an employee row was marked `exited` while a live session still held their cookie;
+- `exitBlockers` keys its assignment and raised-expense queries on the user id, so a departing
+  employee with open project assignments produced an empty checklist and read as a clean
+  clearance.
+
+Both faults are invisible to a test that seeds `employees.user_id` directly, which is why
+`tests/integration/hr-flow.test.ts` links the login the production way (`users.employee_id`) and
+asserts `employees.user_id` is still null while the exit still revokes the session.
+
+**Decision: read both directions, write neither.** `employeeLoginId(db, employeeId, userId)`
+prefers `employees.user_id` when set and otherwise looks up `users.employee_id`; `runExit` and
+`exitBlockers` both go through it, and `findEmployee`'s users join became
+`ON users.id = employees.user_id OR users.employee_id = employees.id`. Two matching rows would
+need two accounts each claiming the same employee, and `executeTakeFirst` returns one row either
+way — so the widened predicate cannot break the profile page, where the narrow one showed "no
+login" on every one of them.
+
+Rejected: adding a writer for `employees.user_id` in `createUser`. Which column is canonical is a
+schema question, and choosing makes the other stale for rows that already exist. Rejected also: a
+migration dropping one of them — 006 is applied and checksummed (see 13.3).
+
+**Reopens if:** §8 settles the direction, or a second writer appears. The change then is one
+function.
+
+### 14.2 Two of the five exit blockers match on a name, and are advisory
+
+§6.6 rule 7 lists five things that must be clear before an exit completes. Three key on ids. Two
+cannot, because the schema does not carry one:
+
+- `material_issues.received_by_name` — free text signed at a store counter;
+- `equipment_deployments.operator_name` — the same.
+
+So those two are matched against `employees.full_name` exactly. **A store issue recorded as
+"Ramesh" against an employee named "Ramesh Kumar" does not appear on the checklist.**
+
+**Decision: match exactly, and treat the checklist as a prompt rather than a proof of
+clearance.** Rule 7 already provides for the case — a blocked exit completes against a recorded
+reason — and `override` is stored as that reason rather than as a boolean, so an exit forced
+through with keys outstanding is legible six months later. The refusal is `UnprocessableError`,
+not `Conflict`: the request is well formed and the state of the world is what is wrong with it.
+
+Rejected: adding `received_by_employee_id` / `operator_employee_id`. The spec models these as
+free text on purpose — a gate entry names whoever signed, including people with no employee row,
+such as a contractor's driver — and inventing the FK changes two other modules' write paths from
+inside HR. Rejected also: fuzzy matching (`LIKE '%name%'`, token overlap). A false positive
+blocks a departure over someone else's issue slip, while a silent miss is at least in front of
+the person running the exit, who can see the store register.
+
+**Reopens if:** attendance lands a per-employee site record that these rows could join by id.
+
+Recorded alongside: `advancesOutstanding` ships although rule 7's enumerated list does not name
+it — rule 7's prose case ("three open advances") does. Both queries run: an expense the employee
+*raised* (`created_by`, still `draft` or `pending_approval`) and one where they are the *payee*
+(`employee_id` with `payee_type = 'employee'`, through `part_paid`). Both are money that follows
+the person out of the door.
+
+### 14.3 Rule 6 has two halves; the schema enforces one and nothing implements the other
+
+Rule 6 (§6.6, spec line 1751): only `aadhaar_last4` is stored, plus the scanned document "in
+`files` under an access-checked route ... `GET /api/files/:id` enforcing permission, so a leaked
+filename does not leak a document."
+
+The first half holds, four deep:
+
+- `employees.aadhaar_last4 CHAR(4)`, and the column refuses more;
+- `employeeSchema` accepts exactly four digits or nothing. A twelve-digit paste is **rejected,
+  never truncated** — truncating admits the full number into the request body, and from there
+  into whatever logs the request, which is the thing the Aadhaar Act restricts;
+- `documentSchema` refuses a `document_no` that is not four digits when `doc_type = 'aadhaar'`.
+  That column is `VARCHAR(60)`, so without the refine the number rule 6 keeps off the employee
+  row is accepted on a document row for the same person. Rule 6 is about the number not being in
+  the database, not about which table it is in;
+- `auditableEmployee` keeps `aadhaar_last4`, `pan` and the three bank columns out of `audit_log`.
+  `audit.view` is a wider grant than `hr.employee_view`, so copying them there routes around the
+  permission that protects the profile. `document_no` is not audited either, for the same reason
+  and with no per-type exception.
+
+**No hashed or tokenised form of the number is specified anywhere in the spec** — line 1751 and
+the two schema lines are every mention of Aadhaar in it. None was invented: flagged rather than
+chosen. The consequence is 14.2 — with no stable identifier for a person beyond `employees.id`, a
+free-text site record can only be matched by name.
+
+The second half is not built:
+
+- **`GET /api/files/:id` has no route handler.** The path appears in a comment at
+  `src/lib/files.ts:16` and as a link at `src/modules/projects/routes.tsx:1011`; nothing serves
+  it, so that link 404s today.
+- `storeUpload` (`src/lib/files.ts:92`) has no callers anywhere in `src/` or `tests/`.
+- `csrfProtect` skips `multipart/form-data` (`src/middleware/csrf.ts:29`) and expects
+  `x-csrf-token` instead, so a plain browser upload form would not pass it as written.
+- `files` carries `uploaded_by` and `visibility` but **no `entity_type`/`entity_id`**, so a
+  serving route cannot derive from the row which permission protects the document. It would have
+  to search every table holding a `file_id`.
+
+Consequence for HR, stated precisely: `POST /api/hr/employees/:id/documents` takes a `file_id`
+and verifies the row exists, so the document register is real — but the only way a `files` row
+gets there today is a direct insert. **No Aadhaar scan can be uploaded or served yet, so nothing
+is exposed.** This is a missing feature, not a leak. Named here because rule 6 reads as satisfied
+and half of it is not, and because the fix belongs with `files` and CSRF rather than in HR.
+
+**Blocks:** any HR screen offering a document upload.
+
+### 14.4 Pay is separated by query shape, not by a flag
+
+Rule 5 puts compensation in its own table behind `hr.payroll_view`. Implemented so that
+`findEmployee` *cannot* return a pay figure: it does not select from `employee_compensation` at
+all, and `compensationHistory` is called only from the fragment behind that permission. No
+`canViewPay` boolean threaded through a join, no filtering of a result set after the fact. That is
+what lets `ops_manager` see the team without seeing what the team is paid, and the integration
+test asserts the absence on the returned object rather than on the rendered page. The same
+reasoning keeps `aadhaar_last4` and the bank columns out of `listEmployees`: a list page is the
+thing left open on a shared site laptop.
+
+A revision closes the open period the day before the new one starts, so the history is a set of
+adjacent non-overlapping periods and "what was he on in August" has one answer. An
+`effective_from` on or before the open row's start is refused rather than silently reordered:
+backdating over a period already paid is a payroll correction, and it needs a person to decide
+what happens to the payment already made. Unlike the employee writes, the *figures* go into the
+audit entry — `hr.payroll_view` is the narrower grant, and a pay revision with no record of what
+changed is the one an owner asks about.
+
+Found while checking who can reach it: **`accounts_manager` holds `hr.payroll_view` and
+`hr.payroll_run` but not `hr.employee_view`** (`migrations/002_rbac.sql:274`). Every §6.6 route
+that renders a pay figure hangs off `/app/hr/employees/:id`, which requires `hr.employee_view`. So
+the role the spec gives payroll to has no screen on which to exercise it. Left as the seed has it:
+the alternative is granting a role a permission the spec's own table did not list, and the figures
+may be intended to reach that role through §6.8 finance instead. **Reopens with the payroll slice.**
+
+### 14.5 The attendance grid's permission contradicts the seed
+
+Spec line 1723 gives `GET /app/hr/attendance` to `hr.employee_view`; line 1724 gives
+`POST /api/hr/attendance/bulk` to `hr.attendance_record`. The 002 seed grants those two
+permissions to almost disjoint sets of roles: `project_manager` and `site_supervisor` can record
+attendance and cannot open the grid (`002_rbac.sql:244`, `:260`); `admin` can open the grid and
+cannot record (`:208`). Only `ops_manager` and `hr_manager` hold both.
+
+A site supervisor is the person who enters the day's attendance. Read literally, the spec's table
+denies them the screen it is entered on.
+
+Not resolved, and not resolved silently either. The HR dashboard's "Attendance unapproved" card
+shows its count to every holder of `hr.employee_view` but **links to the grid only for a holder of
+`hr.attendance_record`**, so nobody is offered a link that 403s. The stub route keeps the spec's
+permission unchanged. The choice between widening it to `hr.employee_view OR hr.attendance_record`
+and adding `hr.employee_view` to the two site roles belongs with the attendance slice and with §8.
+
+### 14.6 HR declares no `json_valid` column of its own
+
+The working assumption going in was that this module would put a first reader on some of the eight
+registered JSON columns that have none. It does not: `006_hr.sql` declares no JSON column at all.
+
+What HR does instead is indirect and worth recording so the count is not double-claimed. The
+module *writes* `audit_log.before_json` and `after_json` through `writeAudit` on all five of its
+mutations, and `tests/integration/hr-flow.test.ts` reads them back through `parseJsonColumn` from
+`src/lib/json.ts` — the first reader either of those two columns has had. No second parse path was
+added; `tests/json-columns.test.ts` still fails the build on a bare `JSON.parse` anywhere in
+`src/` outside that one file. An HR-owned JSON column would arrive with attendance, if at all.
+
+### 14.7 What this slice deliberately did not touch
+
+- **Contractor labour.** §6.6 keeps two populations apart, and nothing in `service.ts` writes
+  `labour_contractors` from an employee form or the reverse; `/app/hr/contractors` is a count
+  behind `hr.labour_contractor_manage`. The separation is currently preserved by the second half
+  not being built, which is not the same as having designed it. The rate/attendance/bill chain is
+  where it will actually be tested.
+- Attendance, leave, safety, recruiting: stubs, unchanged.
+- `approval_limits` is still empty pending §8.2. Contractor bill approval needs it (line 1728,
+  "`hr.labour_contractor_manage` + limit"), so that slice cannot close on real numbers either.
+- Reporting lines are walked, not checked one level deep: A reports to B reports to A is the same
+  mistake as A reports to A, and it produces an org chart renderer that recurses until the stack
+  ends. Both refusals are `UnprocessableError` and both roll back.
+
+**Verified for this section, 2026-09-04, on the machine in §7:** `npm run typecheck` clean over 71
+project files with all four HR files in `--listFilesOnly`; `npm test` 8 files / 204 tests passed;
+`npm run test:integration` 4 files / 82 tests passed against the dev MariaDB on 3307 (hr-flow 32),
+and a post-run count over `users, employees, employee_compensation, employee_documents, expenses,
+files, audit_log, user_sessions, leads, projects` returned 0 for all ten, so the fixtures clean up
+after themselves. The first integration run failed its `afterAll` on `fk_emp_reports` — one DELETE
+over a range of employees can reach a manager before their report — fixed by nulling
+`reporting_to_employee_id` and `users.employee_id` ahead of the table deletes, and the rows that
+partial cleanup left behind were removed by hand and counted back to zero.
+
+
 
 
 

@@ -1,0 +1,266 @@
+import { z } from 'zod'
+
+/**
+ * HR input contracts (spec 6.6).
+ *
+ * Zod at every route boundary, as spec 2.6 requires. Two rules from 6.6 are
+ * enforced here rather than in the service because they are properties of the
+ * input itself:
+ *
+ *   Rule 6, full Aadhaar is not stored. The column is `aadhaar_last4 CHAR(4)`
+ *   and this schema refuses anything that is not exactly four digits. A
+ *   twelve-digit paste is rejected, not truncated: truncating would accept a
+ *   full Aadhaar into the request body and from there into whatever logs the
+ *   request, which is the thing the Aadhaar Act restricts. The scanned
+ *   document goes to `files` behind an access-checked route instead.
+ *
+ *   Rupees in the form, paise in the column. The conversion happens at this
+ *   boundary so nothing downstream ever holds a rupee float (spec 2.4).
+ */
+
+/** An empty text input arrives as '', which is not the same as absent. */
+const optionalText = (max: number) =>
+  z
+    .string()
+    .trim()
+    .max(max)
+    .optional()
+    .transform((v) => (v === '' || v === undefined ? null : v))
+
+export const optionalDate = z
+  .string()
+  .trim()
+  .optional()
+  .transform((v) => (v === '' || v === undefined ? null : v))
+  .refine((v) => v === null || /^\d{4}-\d{2}-\d{2}$/.test(v), 'Enter a date as YYYY-MM-DD.')
+
+export const requiredDate = z
+  .string()
+  .trim()
+  .regex(/^\d{4}-\d{2}-\d{2}$/, 'Enter a date as YYYY-MM-DD.')
+
+/** Rupees in, paise stored. Required variant: a CTC of nothing is not a CTC. */
+const rupeesToPaiseRequired = z
+  .string()
+  .trim()
+  .min(1, 'Enter the annual CTC.')
+  .transform((v) => {
+    const n = Number(v.replace(/,/g, ''))
+    return Number.isFinite(n) ? Math.round(n * 100) : Number.NaN
+  })
+  .refine((n) => Number.isFinite(n) && n > 0, 'Enter the annual CTC in rupees.')
+
+const rupeesToPaiseOptional = z
+  .string()
+  .trim()
+  .optional()
+  .transform((v) => {
+    if (v === '' || v === undefined) return null
+    const n = Number(v.replace(/,/g, ''))
+    return Number.isFinite(n) ? Math.round(n * 100) : null
+  })
+
+const optionalId = z
+  .string()
+  .optional()
+  .transform((v) => {
+    const n = Number.parseInt(v ?? '', 10)
+    return Number.isInteger(n) && n > 0 ? n : null
+  })
+
+export const EMPLOYMENT_TYPES = ['permanent', 'probation', 'contract', 'intern', 'consultant'] as const
+export const EMPLOYEE_STATUSES = ['active', 'on_notice', 'on_leave', 'suspended', 'exited'] as const
+export const EXIT_TYPES = ['resigned', 'terminated', 'retired', 'contract_ended', 'absconded'] as const
+export const GENDERS = ['male', 'female', 'other'] as const
+
+export const DOC_TYPES = [
+  'aadhaar',
+  'pan',
+  'passport',
+  'driving_licence',
+  'educational',
+  'experience',
+  'offer_letter',
+  'appointment_letter',
+  'police_verification',
+  'medical_fitness',
+  'safety_training',
+  'trade_certificate',
+  'other',
+] as const
+
+/**
+ * Exactly the last four digits, or nothing (6.6 rule 6).
+ *
+ * The refusal message says what the field is for, because a user who typed
+ * twelve digits was not being careless -- the label on every other form in
+ * India asks for the whole number.
+ */
+const aadhaarLast4 = z
+  .string()
+  .trim()
+  .optional()
+  .transform((v) => (v === '' || v === undefined ? null : v))
+  .refine(
+    (v) => v === null || /^\d{4}$/.test(v),
+    'Enter only the last four digits of the Aadhaar number. The full number is deliberately not stored; attach the scanned document instead.'
+  )
+
+const pan = z
+  .string()
+  .trim()
+  .toUpperCase()
+  .optional()
+  .transform((v) => (v === '' || v === undefined ? null : v))
+  .refine((v) => v === null || /^[A-Z]{5}\d{4}[A-Z]$/.test(v), 'A PAN looks like ABCDE1234F.')
+
+const ifsc = z
+  .string()
+  .trim()
+  .toUpperCase()
+  .optional()
+  .transform((v) => (v === '' || v === undefined ? null : v))
+  .refine((v) => v === null || /^[A-Z]{4}0[A-Z0-9]{6}$/.test(v), 'An IFSC looks like HDFC0001234.')
+
+const phone = (message: string) =>
+  z
+    .string()
+    .trim()
+    .optional()
+    .transform((v) => (v === '' || v === undefined ? null : v))
+    .refine((v) => v === null || /^[0-9+\-\s()]{6,20}$/.test(v), message)
+
+export const employeeSchema = z
+  .object({
+    fullName: z.string().trim().min(3, 'Enter the full name.').max(140),
+    fatherOrSpouseName: optionalText(140),
+    dateOfBirth: optionalDate,
+    gender: z
+      .string()
+      .optional()
+      .transform((v) => (v === '' || v === undefined ? null : v))
+      .refine(
+        (v) => v === null || (GENDERS as readonly string[]).includes(v),
+        'Choose a valid entry for gender.'
+      ),
+    bloodGroup: optionalText(5),
+    personalPhone: phone('Enter a valid phone number.'),
+    personalEmail: z
+      .string()
+      .trim()
+      .optional()
+      .transform((v) => (v === '' || v === undefined ? null : v))
+      .refine((v) => v === null || z.string().email().safeParse(v).success, 'Enter a valid email address.'),
+    emergencyContactName: optionalText(120),
+    emergencyContactPhone: phone('Enter a valid emergency contact number.'),
+    permanentAddress: optionalText(2000),
+    currentAddress: optionalText(2000),
+    departmentId: optionalId,
+    designationId: optionalId,
+    reportingToEmployeeId: optionalId,
+    employmentType: z.enum(EMPLOYMENT_TYPES),
+    dateOfJoining: requiredDate,
+    probationUntil: optionalDate,
+    baseLocationId: optionalId,
+    pan,
+    aadhaarLast4: aadhaarLast4,
+    uan: optionalText(12),
+    pfNumber: optionalText(30),
+    esiNumber: optionalText(20),
+    bankAccountName: optionalText(140),
+    bankAccountNo: optionalText(30),
+    bankIfsc: ifsc,
+  })
+  .refine(
+    (v) => v.probationUntil === null || v.probationUntil >= v.dateOfJoining,
+    { message: 'Probation cannot end before the date of joining.', path: ['probationUntil'] }
+  )
+  .refine(
+    (v) => v.dateOfBirth === null || v.dateOfBirth < v.dateOfJoining,
+    { message: 'The date of birth must fall before the date of joining.', path: ['dateOfBirth'] }
+  )
+
+/**
+ * A compensation revision (6.6 rule 5).
+ *
+ * effective_from is required and the service closes the previous row the day
+ * before it, so the history is a continuous set of non-overlapping periods
+ * rather than a set of rows a reader has to guess the order of.
+ */
+export const compensationSchema = z
+  .object({
+    effectiveFrom: requiredDate,
+    ctcAnnualPaise: rupeesToPaiseRequired,
+    basicPaise: rupeesToPaiseOptional,
+    hraPaise: rupeesToPaiseOptional,
+    conveyancePaise: rupeesToPaiseOptional,
+    specialAllowancePaise: rupeesToPaiseOptional,
+    siteAllowancePaise: rupeesToPaiseOptional,
+    employerPfPaise: rupeesToPaiseOptional,
+    employerEsiPaise: rupeesToPaiseOptional,
+    revisionReason: optionalText(160),
+  })
+  .refine(
+    (v) => {
+      const parts = [
+        v.basicPaise,
+        v.hraPaise,
+        v.conveyancePaise,
+        v.specialAllowancePaise,
+        v.siteAllowancePaise,
+      ].filter((n): n is number => n !== null)
+      if (parts.length === 0) return true
+      // Monthly components against an annual CTC: the components are a monthly
+      // gross, so twelve of them cannot exceed the annual figure. Caught here
+      // because a CTC that disagrees with its own breakdown is a payroll
+      // dispute later, and nothing downstream re-checks it.
+      return parts.reduce((a, b) => a + b, 0) * 12 <= v.ctcAnnualPaise
+    },
+    { message: 'The monthly components multiplied by twelve exceed the annual CTC.', path: ['ctcAnnualPaise'] }
+  )
+
+/**
+ * A document row.
+ *
+ * The Aadhaar refine closes a hole rule 6 leaves open: `document_no` is
+ * VARCHAR(60), so the column that refuses a full Aadhaar on the employee row
+ * accepts one here, on a document row for the same person. Rule 6 is about the
+ * number not being in the database, not about which table it is in.
+ */
+export const documentSchema = z
+  .object({
+    docType: z.enum(DOC_TYPES),
+    documentNo: optionalText(60),
+    issuedOn: optionalDate,
+    expiresOn: optionalDate,
+    fileId: z.coerce.number().int().positive('Attach the scanned document.'),
+  })
+  .refine((v) => v.docType !== 'aadhaar' || v.documentNo === null || /^\d{4}$/.test(v.documentNo), {
+    message:
+      'For an Aadhaar document record only the last four digits, or leave the number blank. The full number is deliberately not stored.',
+    path: ['documentNo'],
+  })
+  .refine((v) => v.expiresOn === null || v.issuedOn === null || v.expiresOn >= v.issuedOn, {
+    message: 'A document cannot expire before it was issued.',
+    path: ['expiresOn'],
+  })
+
+/**
+ * The exit checklist (6.6 rule 7).
+ *
+ * `override` carries the reason a blocked exit was completed anyway. It is not
+ * a boolean: an exit forced through with keys outstanding is exactly the case
+ * somebody needs to read six months later.
+ */
+export const exitSchema = z.object({
+  dateOfExit: requiredDate,
+  exitType: z.enum(EXIT_TYPES),
+  exitReason: optionalText(255),
+  override: optionalText(500),
+})
+
+/** Turns the first Zod issue into one sentence for the banner. */
+export function firstError(err: z.ZodError): string {
+  const issue = err.issues[0]
+  return issue ? issue.message : 'That submission was not valid.'
+}
