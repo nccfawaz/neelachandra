@@ -28,6 +28,7 @@ import { requirePermission } from '../../middleware/requirePermission.js'
 import { PERMISSIONS } from '../../lib/permissions.js'
 import { readBody } from '../../middleware/csrf.js'
 import { NotFoundError, isAppError } from '../../lib/errors.js'
+import { parseJsonColumnArray } from '../../lib/json.js'
 import { formatRupees, paiseToRupees } from '../../lib/money.js'
 import { addDays, financialYear, financialYearBounds, formatDate, nowSqlDateTime, today } from '../../lib/dates.js'
 import { getSetting } from '../../lib/settings.js'
@@ -1772,30 +1773,19 @@ interface ScheduleRow {
 /**
  * Reads payment_schedule_json for display and for prefilling a revision.
  *
- * The column arrives already parsed — MariaDB reports it as JSON and mysql2
- * builds the Array — so the string branch here is the fallback for a row
- * written by hand, not the main path. Taking it the other way round is what
- * made this return an empty schedule for every quote: the print view showed no
- * payment terms and a revision silently dropped the milestones it was meant to
- * carry forward.
+ * The column arrives already parsed; src/lib/json.ts explains why. Reading it
+ * as a string is what made this return an empty schedule for every quote: the
+ * print view showed no payment terms and a revision silently dropped the
+ * milestones it was meant to carry forward.
  *
- * service.ts keeps its own parser for the same column. It is not shared,
- * because that one guards a transaction that creates project milestones and
- * this one fills in a form: the service's must stay strict about what it will
- * act on, and coupling them would make a change to the display loosen the
- * conversion. Both treat a malformed value as an empty schedule.
+ * service.ts keeps its own shape check on the same column. The parse is shared
+ * and the validation is not, because that one guards a transaction that creates
+ * project milestones and this one fills in a form: the service's must stay
+ * strict about what it will act on, and merging them would make a change to the
+ * display loosen the conversion. Both treat a malformed value as empty.
  */
 function readSchedule(raw: unknown): ScheduleRow[] {
-  if (raw === null || raw === undefined || raw === '') return []
-  let parsed: unknown = raw
-  if (typeof raw === 'string') {
-    try {
-      parsed = JSON.parse(raw)
-    } catch {
-      return []
-    }
-  }
-  if (!Array.isArray(parsed)) return []
+  const parsed = parseJsonColumnArray(raw)
   const out: ScheduleRow[] = []
   for (const item of parsed) {
     if (typeof item !== 'object' || item === null) continue

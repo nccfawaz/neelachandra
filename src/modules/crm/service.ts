@@ -5,6 +5,7 @@ import { env } from '../../env.js'
 import { writeAudit } from '../../lib/audit.js'
 import { nextNumber, sequenceCode } from '../../lib/numbering.js'
 import { ConflictError, NotFoundError, UnprocessableError } from '../../lib/errors.js'
+import { parseJsonColumnArray } from '../../lib/json.js'
 import { PERMISSIONS, resolveApprovalLimit } from '../../lib/permissions.js'
 import { notify, notifyPermission, usersWithPermission } from '../../lib/notify.js'
 import { quoteEmail, send } from '../../lib/mailer.js'
@@ -2834,33 +2835,14 @@ function siteAddressOf(locality: string | null, city: string): string {
 /**
  * Reads the payment schedule off the quote.
  *
- * payment_schedule_json is written with JSON.stringify, but it does not
- * necessarily come back as a string: MariaDB reports the column with JSON
- * metadata and mysql2 parses it for us, so the driver hands over a live Array.
- * Verified against MariaDB 11.4, not assumed — the earlier version of this
- * function took `string`, called JSON.parse on an Array, got "[object Object]",
- * caught its own SyntaxError and returned an empty schedule, which made
- * convertLeadToProject refuse every conversion with "has no payment schedule".
- * src/db/types.ts still types the column `string | null`; that type is a
- * statement about what is written, not about what is read.
- *
- * So the string branch is the fallback, not the main path. That is the same
- * shape settings.ts:parse and audit.ts:parseAuditJson already use for their own
- * JSON columns. Anything that is not an array of the expected shape yields an
- * empty schedule and the caller refuses, rather than a project with milestones
- * invented from a malformed row.
+ * The column arrives already parsed — see src/lib/json.ts for why, and for the
+ * reason there is exactly one JSON.parse in src/. This function is the shape
+ * check on top of it: anything that is not an array of milestones with a name
+ * and a positive percentage yields an empty schedule, and the caller refuses,
+ * rather than a project with milestones invented from a malformed row.
  */
 function parsePaymentSchedule(raw: unknown): MilestoneInput[] {
-  if (raw === null || raw === undefined) return []
-  let parsed: unknown = raw
-  if (typeof raw === 'string') {
-    try {
-      parsed = JSON.parse(raw)
-    } catch {
-      return []
-    }
-  }
-  if (!Array.isArray(parsed)) return []
+  const parsed = parseJsonColumnArray(raw)
   const out: MilestoneInput[] = []
   for (const item of parsed) {
     if (typeof item !== 'object' || item === null) continue

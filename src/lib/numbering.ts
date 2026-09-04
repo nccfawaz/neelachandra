@@ -1,6 +1,7 @@
 import { sql } from 'kysely'
 import type { Trx } from '../db/kysely.js'
 import { currentFinancialYear } from './dates.js'
+import { parseJsonColumn } from './json.js'
 
 /**
  * Document number generation (spec 6.2).
@@ -68,20 +69,12 @@ async function resolvePrefix(trx: Trx, docType: DocType): Promise<string> {
     .executeTakeFirst()
 
   if (!row) return DEFAULT_PREFIX[docType]
-  const raw = row.value_json
-  const value = typeof raw === 'string' ? safeJsonString(raw) : null
-  return value && value.length > 0 ? value : DEFAULT_PREFIX[docType]
-}
-
-function safeJsonString(raw: string): string | null {
-  try {
-    const parsed: unknown = JSON.parse(raw)
-    return typeof parsed === 'string' ? parsed : null
-  } catch {
-    // A settings row holding a bare string rather than a JSON string is still
-    // usable; falling back to the raw value beats failing document creation.
-    return raw.length > 0 ? raw : null
-  }
+  // The column arrives parsed, so a prefix stored as a JSON string is already
+  // a JS string here. A row holding anything else — an object, a number typed
+  // into the settings form — is not a prefix, and the default is better than
+  // stringifying it into a document number.
+  const value = parseJsonColumn(row.value_json)
+  return typeof value === 'string' && value.length > 0 ? value : DEFAULT_PREFIX[docType]
 }
 
 export async function nextNumber(

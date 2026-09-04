@@ -2,6 +2,7 @@ import type { Db } from '../../db/kysely.js'
 import { writeAudit } from '../../lib/audit.js'
 import { destroyAllUserSessions } from '../../lib/session.js'
 import { BadRequestError, ConflictError, NotFoundError } from '../../lib/errors.js'
+import { jsonColumnEquals, parseJsonColumn } from '../../lib/json.js'
 import { issueInvite } from '../auth/service.js'
 import { invalidateSettings, coerceSetting } from '../../lib/settings.js'
 import { otherActiveOwnerCount, userByEmail } from './queries.js'
@@ -321,8 +322,13 @@ export async function saveSettings(
       if (raw === undefined && row.data_type !== 'bool') continue
 
       const next = coerceSetting(row.data_type, raw ?? '')
+      // Compared through the parsed value, not the encodings. value_json comes
+      // back parsed, so `JSON.stringify(next) === row.value_json` compared JSON
+      // text against a live value: never equal, so every save rewrote every row
+      // on the form, wrote an audit entry for each and reported all of them as
+      // changed.
+      if (jsonColumnEquals(row.value_json, next)) continue
       const nextJson = JSON.stringify(next)
-      if (nextJson === row.value_json) continue
 
       await trx
         .updateTable('settings')
@@ -335,8 +341,10 @@ export async function saveSettings(
         action: 'setting.update',
         entityType: 'setting',
         entityId: Number(row.id),
-        before: { key: row.key_name, value: row.value_json },
-        after: { key: row.key_name, value: nextJson },
+        // Both sides parsed, so the audit viewer diffs like against like rather
+        // than a value against its own encoding.
+        before: { key: row.key_name, value: parseJsonColumn(row.value_json) },
+        after: { key: row.key_name, value: next },
         ip: actor.ip,
       })
       changed += 1

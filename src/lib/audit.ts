@@ -89,13 +89,3 @@ export function diffFields(
   }
   return out
 }
-
-export function parseAuditJson(raw: unknown): unknown {
-  if (raw === null || raw === undefined) return null
-  if (typeof raw !== 'string') return raw
-  try {
-    return JSON.parse(raw)
-  } catch {
-    return raw
-  }
-}

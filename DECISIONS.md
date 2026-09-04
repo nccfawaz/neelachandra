@@ -757,4 +757,133 @@ the run: every tracked table is back to zero rows and all reference data is inta
 `document_numbering` is deliberately **not** reset, so quote and lead numbers advance across
 runs. Assertions match the shape `NCC/QT/2026-27/nnn`, never a literal sequence number.
 
+## 12. The JSON column sweep, 2026-09-04
+
+§11.2 recorded the mechanism and fixed the two CRM readers. This section closes the class:
+every JSON column in the schema, every reader of one, one reader for all of them, and two
+tests that fail if a second appears.
+
+Verification for this section: `npx tsc --noEmit -p tsconfig.json` → exit 0, no output.
+`npm test` → 8 files, **204 passed**. `npm run test:integration` → 3 files, **49 passed**.
+
+### 12.1 Twelve columns, three of them invisible to a grep
+From `information_schema.check_constraints` where `check_clause like '%json_valid%'`, with no
+limit this time (§11.2 reported five because the probe had `limit 5` on it):
+
+`audit_log.after_json`, `audit_log.before_json`, `dashboard_daily_snapshot.detail_json`,
+`email_log.response_json`, `project_documents.visible_to_roles`,
+`quotes.payment_schedule_json`, `settings.value_json`, `site_page_revisions.content_json`,
+`site_page_revisions.schema_types`, `site_pages.content_json`, `site_pages.schema_types`,
+`site_services.body_json`.
+
+Three are not named `*_json` — `project_documents.visible_to_roles` and both `schema_types`.
+Any search that assumed the naming convention would have missed them, and two of the three
+belong to a module nobody has written yet.
+
+### 12.2 Six variants of one function, now one
+Before the sweep, five files parsed a JSON column and each did it differently:
+
+| Site | Was | Now |
+| --- | --- | --- |
+| `src/lib/audit.ts` | `parseAuditJson`, zero callers | deleted |
+| `src/lib/settings.ts` | local `parse`, threw on every row | `parseJsonColumn` |
+| `src/lib/numbering.ts` | `safeJsonString`, fell back to the default prefix every call | `parseJsonColumn` |
+| `src/modules/crm/service.ts` | `parsePaymentSchedule` returned `[]` always | `parseJsonColumnArray` |
+| `src/modules/crm/routes.tsx` | `readSchedule` returned `[]` always | `parseJsonColumnArray` |
+| `src/modules/admin/routes.tsx` | local `parse` + `FieldDiff`'s own attempt | `parseJsonColumn` |
+| `src/modules/admin/service.ts` | `JSON.stringify(next) === row.value_json` | `jsonColumnEquals` |
+
+`src/lib/json.ts` holds all of it: `JSON_COLUMNS`, `parseJsonColumn`, `parseJsonColumnArray`,
+`jsonColumnEquals`. Nothing in projects or inventory read a JSON column at all —
+`project_documents.visible_to_roles` has no reader yet — so neither module changed.
+
+`diffFields` in `src/lib/audit.ts` was left alone. It overlaps `FieldDiff` in spirit, but
+merging them changes what the audit screen displays, and that is not this bug.
+
+### 12.3 The one a `JSON.parse` grep could not have found
+`src/modules/admin/service.ts` `saveSettings` compared `JSON.stringify(next) === row.value_json`
+— JSON text on the left, a pre-parsed value on the right. Never equal. So every save of the
+settings form rewrote every row on the form, wrote a `setting.update` audit entry for each,
+and told the user it had saved 25 settings when it had been asked to change none. The audit
+entry it wrote was itself wrong: `before` was the encoded column and `after` was the decoded
+value, so the diff viewer compared a value against its own encoding.
+
+There is no `JSON.parse` on that line. The grep in the work order would have walked past it.
+It was found by reading every use of a JSON column rather than every use of the parser, which
+is the reason the column list in 12.1 exists at all.
+
+### 12.4 The reader parses less than its predecessors did
+Every deleted variant parsed any string it was given. `parseJsonColumn` parses a string only
+when it is unambiguously JSON structure — it starts with `[`, `{` or `"`, or it is exactly
+`null`, `true` or `false`.
+
+The reason is `company.phone_primary`. It arrives from the driver as the JS string
+`+91 78292 92929`; a stored value of `9876543210` would arrive as the JS string `9876543210`,
+and a reader that parses every string turns that into a number. Nothing complains until
+something calls `.trim()` on it. The old settings `parse` did exactly this, and so would a
+naive consolidation. Bare text and bare numbers now come back as the strings they are, and
+the fallback still covers the case it exists for: a hand-written row or a server that reports
+the column as text, where an array or an object always starts with a structure character.
+
+Malformed JSON returns the string, not `null` and not a throw. An unreadable setting should
+still render as whatever is in the column; an unreadable payment schedule should be refused by
+the caller about to raise invoices against it. A parser cannot tell those two apart.
+
+### 12.5 Two tests hold the line
+`tests/json-columns.test.ts` (unit, no database, 16 tests) scans every `.ts`/`.tsx` under
+`src/` with comments stripped and fails unless `JSON.parse` appears in exactly one file,
+`src/lib/json.ts`, exactly once. Comment stripping drops whole lines that begin with `//` or
+`*` rather than cutting at the first `//`, so a line of code keeps its trailing comment and no
+call can hide behind one. The rest of the file pins the reader's behaviour, including the
+`9876543210` case from 12.4 and the comparison from 12.3.
+
+Checked that the guard fires: a throwaway `src/modules/hr/_guard_probe.ts` containing one
+`JSON.parse` turned that test red, in a module that is still a stub. Probe deleted.
+
+`tests/integration/json-columns.test.ts` (7 tests) reads the `json_valid` CHECK constraints
+out of `information_schema` and requires them to equal `JSON_COLUMNS` exactly, extracting the
+column name from the clause rather than trusting MariaDB to keep naming an inline CHECK after
+its column. A migration that adds a JSON column now fails the build until the column is
+registered. It also asserts the settings form round-trips: posting back what the page rendered
+returns `changed === 0` and writes no `audit_log` row — 12.3 as a property, against a real
+driver, which is the only place that bug is visible. The actor is user 0, which does not
+exist, so a regression fails the `updated_by` foreign key as well as the count.
+
+### 12.6 Eight of the twelve columns have no reader yet
+Only four are read anywhere today: both `audit_log` columns, `quotes.payment_schedule_json` and
+`settings.value_json` — which is to say, all four that had a reader had a broken one.
+
+The other eight are `dashboard_daily_snapshot.detail_json`, `email_log.response_json`,
+`project_documents.visible_to_roles`, `site_pages.content_json`, `site_pages.schema_types`,
+`site_page_revisions.content_json`, `site_page_revisions.schema_types` and
+`site_services.body_json`. Two are written already — `src/lib/mailer.ts:111` puts the SMTP
+response into `email_log.response_json` with `JSON.stringify` — and the rest belong to the
+dashboard snapshot job and the marketing / site-content module, which are stubs.
+
+Every one of them is a place this bug gets reintroduced by the next person who needs the value
+and reaches for `JSON.parse`. That is what 12.5 is for, and it is why the guard is a test rather
+than a note in this file.
+
+### 12.7 Three settings rows contradict their own `data_type` — flagged, not fixed
+`migrations/003_reference.sql:217-219` insert `finance.gst_default_pct`,
+`finance.tds_default_pct` and `finance.retention_default_pct` as unquoted `18.00`, `2.00` and
+`5.00` — valid JSON, so `json_valid` accepts them, but JSON **numbers** — under
+`data_type = 'string'`. The driver returns `18`, the `.00` already lost. The settings page
+renders `String(18)`, and `coerceSetting('string', '18')` returns the string `"18"`, so the
+first real save of that form rewrites all three rows as a different type than they were seeded
+with and reports three changes the user did not make.
+
+Nothing reads these three keys yet — finance is a stub — so nothing is broken today. The trap
+is for whoever writes finance: `getSetting('finance.gst_default_pct', 18)` returns a number on
+a fresh database and a string after any settings save. Fixing it needs a decision this session
+cannot make, because `coerceSetting` has no decimal type: either `data_type` becomes `int` and
+fractional percents stop being expressible, or the values become JSON strings and every reader
+must `parseFloat`. Both need a migration, and neither is a JSON-parse bug, so the sweep stopped
+at recording it. `tests/integration/json-columns.test.ts` asserts that these three and only
+these three are contradictory, so the list cannot grow unnoticed and fixing the seed forces the
+assertion to be updated.
+
+
+
+
 

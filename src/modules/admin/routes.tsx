@@ -18,6 +18,7 @@ import { requirePermission } from '../../middleware/requirePermission.js'
 import { PERMISSIONS, PERMISSION_MODULES } from '../../lib/permissions.js'
 import { readBody } from '../../middleware/csrf.js'
 import { NotFoundError } from '../../lib/errors.js'
+import { parseJsonColumn } from '../../lib/json.js'
 import { formatDate, formatDateTime } from '../../lib/dates.js'
 import { formatPaise } from '../../lib/money.js'
 import { allSettings } from '../../lib/settings.js'
@@ -598,14 +599,6 @@ admin.get('/app/admin/settings', requirePermission(PERMISSIONS.REFERENCE_MANAGE)
   const user = currentUser(c)
   const session = currentSession(c)
 
-  const parse = (raw: string): unknown => {
-    try {
-      return JSON.parse(raw)
-    } catch {
-      return raw
-    }
-  }
-
   return c.html(
     <AppShell
       title="Settings"
@@ -624,7 +617,7 @@ admin.get('/app/admin/settings', requirePermission(PERMISSIONS.REFERENCE_MANAGE)
               and no UI code at all (spec 6.2). */}
           <div class="ncc-stack">
             {rows.map((row) => {
-              const value = parse(row.value_json)
+              const value = parseJsonColumn(row.value_json)
               const name = `s_${row.key_name}`
               if (row.data_type === 'bool') {
                 return (
@@ -878,20 +871,24 @@ admin.get('/app/admin/audit', requirePermission(PERMISSIONS.AUDIT_VIEW), async (
  * Showing two raw JSON blobs makes the reader diff them by eye, which is
  * exactly what nobody does at the moment they need the audit log. Only keys
  * that actually changed are listed.
+ *
+ * The props are `unknown` because audit_log.before_json and after_json arrive
+ * already parsed (src/lib/json.ts). Typing them `string | null` and parsing was
+ * the bug: an object is truthy, JSON.parse stringified it to "[object Object]"
+ * and threw, and the catch rendered one `value` row holding the entire blob —
+ * so the diff this component exists to produce never ran once.
  */
-function FieldDiff(props: { before: string | null; after: string | null }) {
-  const parse = (raw: string | null): Record<string, unknown> | null => {
-    if (!raw) return null
-    try {
-      const value = JSON.parse(raw)
-      return value && typeof value === 'object' ? (value as Record<string, unknown>) : { value }
-    } catch {
-      return { value: raw }
-    }
+function FieldDiff(props: { before: unknown; after: unknown }) {
+  const asRecord = (raw: unknown): Record<string, unknown> | null => {
+    const value = parseJsonColumn(raw)
+    if (value === null || value === undefined || value === '') return null
+    // A scalar in the column is not a field map. Wrapping it keeps it visible
+    // rather than rendering an empty diff.
+    return typeof value === 'object' ? (value as Record<string, unknown>) : { value }
   }
 
-  const before = parse(props.before)
-  const after = parse(props.after)
+  const before = asRecord(props.before)
+  const after = asRecord(props.after)
   if (!before && !after) return <span class="ncc-muted">No detail</span>
 
   const keys = [...new Set([...Object.keys(before ?? {}), ...Object.keys(after ?? {})])]

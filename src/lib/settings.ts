@@ -1,4 +1,5 @@
 import type { Queryable } from '../db/kysely.js'
+import { parseJsonColumn } from './json.js'
 
 /**
  * Reading the settings table (spec 6.2).
@@ -20,21 +21,10 @@ let cache: Map<string, unknown> | null = null
 let loadedAt = 0
 let inflight: Promise<Map<string, unknown>> | null = null
 
-function parse(raw: unknown): unknown {
-  if (typeof raw !== 'string') return raw
-  try {
-    return JSON.parse(raw)
-  } catch {
-    // A non-JSON value in a JSON column means the row was written by hand.
-    // Returning the raw string is more useful than throwing on page render.
-    return raw
-  }
-}
-
 async function load(db: Queryable): Promise<Map<string, unknown>> {
   const rows = await db.selectFrom('settings').select(['key_name', 'value_json']).execute()
   const map = new Map<string, unknown>()
-  for (const row of rows) map.set(row.key_name, parse(row.value_json))
+  for (const row of rows) map.set(row.key_name, parseJsonColumn(row.value_json))
   cache = map
   loadedAt = Date.now()
   return map
@@ -102,11 +92,10 @@ export function coerceSetting(dataType: string, raw: string): unknown {
     case 'bool':
       return raw === 'on' || raw === 'true' || raw === '1'
     case 'json':
-      try {
-        return JSON.parse(raw)
-      } catch {
-        return raw
-      }
+      // Form input, so this really is a string — but it goes through the same
+      // reader as the column so there is one JSON.parse in src/ and the test
+      // that enforces that can stay simple.
+      return parseJsonColumn(raw)
     default:
       return raw
   }
