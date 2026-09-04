@@ -916,11 +916,61 @@ export async function requestLeave(
   })
 }
 
+/** A day count that reads as English, since half days make `1 days` reachable. */
+function dayCount(n: number): string {
+  return `${n} day${n === 1 ? '' : 's'}`
+}
+
+/**
+ * The quota gate, written now and dormant until 8.6 supplies the numbers.
+ *
+ * `leave_types.annual_quota` is NULL for all seven seeded types, and NULL here
+ * means "no policy, so nothing to enforce" -- the same shape as
+ * `requires_document`, which is recorded on the request and not refused because
+ * there is no upload route to satisfy it with. The difference is that this one
+ * only needs data: put a number in `annual_quota` and the refusal below starts
+ * firing on the next approval, with no deploy.
+ *
+ * What "available" means is a reading, not a spec statement. The spec gives
+ * `annual_quota` on the type and `opening`/`accrued`/`availed`/`encashed` on the
+ * balance, and says nothing about how they relate. Nothing writes `accrued`
+ * (there is no accrual job), so a gate that only looked at the balance columns
+ * would refuse EVERY request the moment a quota was set, which is a trap
+ * disguised as a seam. So the entitlement is whichever of `accrued` and the
+ * quota is larger: the quota stands in while the accrual column is zero, and an
+ * accrual job that catches up takes over from it without another code change.
+ * Mid-year that is generous -- 12 days available in month one rather than one
+ * twelfth of them -- which is the same direction as the holiday decision in
+ * 16.3, towards the employee. Recorded in DECISIONS 17.1.
+ */
+function assertWithinQuota(
+  bal: {
+    typeName: string
+    quota: number | null
+    opening: number
+    accrued: number
+    availed: number
+    encashed: number
+  },
+  days: number,
+  fy: string
+): void {
+  if (bal.quota === null) return
+  const entitlement = Math.max(bal.accrued, bal.quota)
+  const available = bal.opening + entitlement - bal.availed - bal.encashed
+  if (days <= available) return
+  // Rounded to one place because both columns are DECIMAL(n,1) and 0.5 days are
+  // real, so a raw float subtraction can otherwise print 2.9000000000000004.
+  const shortfall = Math.round((days - available) * 10) / 10
+  throw new UnprocessableError(
+    `${bal.typeName} has ${dayCount(Math.round(available * 10) / 10)} available in ${fy} against a quota of ${dayCount(bal.quota)}, and this request needs ${dayCount(days)}. It is short by ${dayCount(shortfall)}.`
+  )
+}
+
 export interface LeaveDecisionInput {
   decision: 'approve' | 'reject'
   rejectReason: string | null
 }
-
 export interface LeaveDecisionResult {
   decision: 'approve' | 'reject'
   employeeName: string
@@ -946,10 +996,12 @@ export interface LeaveDecisionResult {
  * `attendance` is leave the company paid for and never charged to anything.
  * Sundays are skipped for the same reason they do not count towards `days`.
  *
- * It also moves `leave_balances.availed`. The balance is TRACKED, not enforced:
- * every seeded `annual_quota` is NULL pending 8.6, so there is no quota to
- * refuse against and a negative balance is a fact for HR to look at rather than
- * a validation failure.
+ * It also moves `leave_balances.availed`, and the quota gate sits on that move.
+ * Every seeded `annual_quota` is NULL pending 8.6, so the gate is DORMANT: with
+ * no quota there is nothing to refuse against and a negative balance stays a
+ * fact for HR to look at. Supplying quota values turns it on with no code
+ * change, which is the whole point of writing it now -- see DECISIONS 17.1 for
+ * what "available" means and why `annual_quota` stands in for `accrued`.
  */
 export async function decideLeave(
   db: Db,
@@ -972,6 +1024,8 @@ export async function decideLeave(
         'leave_requests.days',
         'leave_requests.status',
         'leave_types.code as type_code',
+        'leave_types.name as type_name',
+        'leave_types.annual_quota',
         'leave_types.is_paid',
         'employees.full_name as employee_name',
       ])
@@ -1038,6 +1092,32 @@ export async function decideLeave(
     const isHalf = days < 1 && from === to
     const leaveStatus = isHalf ? 'half_day' : Number(request.is_paid) === 1 ? 'paid_leave' : 'unpaid_leave'
 
+    // The whole request lands in the financial year its first day falls in, even
+    // when the range crosses 31 March. Splitting it would need a rule for which
+    // year a March-to-April absence draws down, and 8.6 has not answered the
+    // simpler quota question yet. Flagged in DECISIONS.
+    const fy = financialYear(from)
+    const existing = await trx
+      .selectFrom('leave_balances')
+      .select(['id', 'opening', 'accrued', 'availed', 'encashed'])
+      .where('employee_id', '=', Number(request.employee_id))
+      .where('leave_type_id', '=', Number(request.leave_type_id))
+      .where('financial_year', '=', fy)
+      .executeTakeFirst()
+
+    assertWithinQuota(
+      {
+        typeName: request.type_name,
+        quota: request.annual_quota === null ? null : Number(request.annual_quota),
+        opening: Number(existing?.opening ?? 0),
+        accrued: Number(existing?.accrued ?? 0),
+        availed: Number(existing?.availed ?? 0),
+        encashed: Number(existing?.encashed ?? 0),
+      },
+      days,
+      fy
+    )
+
     const priorRows = await trx
       .selectFrom('attendance')
       .select(['id', 'attendance_date', 'approved_at'])
@@ -1089,19 +1169,8 @@ export async function decideLeave(
       .where('id', '=', requestId)
       .execute()
 
-    // The whole request lands in the financial year its first day falls in, even
-    // when the range crosses 31 March. Splitting it would need a rule for which
-    // year a March-to-April absence draws down, and 8.6 has not answered the
-    // simpler quota question yet. Flagged in DECISIONS.
-    const fy = financialYear(from)
-    const existing = await trx
-      .selectFrom('leave_balances')
-      .select(['id', 'opening', 'accrued', 'availed', 'encashed'])
-      .where('employee_id', '=', Number(request.employee_id))
-      .where('leave_type_id', '=', Number(request.leave_type_id))
-      .where('financial_year', '=', fy)
-      .executeTakeFirst()
-
+    // `existing` was read before the attendance writes, because the quota gate
+    // above needs it and a refusal should not depend on a rollback to be correct.
     let balanceAfter: number
     if (existing) {
       const availed = Number(existing.availed) + days
@@ -1145,6 +1214,10 @@ export async function decideLeave(
         attendance_rows_written: attendanceRowsWritten,
         financial_year: fy,
         balance_after: balanceAfter,
+        // Recorded on every approval, not just the enforced ones, so the day the
+        // quota numbers land is legible in the log rather than inferred.
+        annual_quota: request.annual_quota === null ? null : Number(request.annual_quota),
+        quota_enforced: request.annual_quota !== null,
         period_override: opts.canOverridePeriod ? true : undefined,
       },
       ip: actor.ip,

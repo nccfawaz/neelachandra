@@ -49,6 +49,7 @@ const TRACKED = [
   'attendance',
   'leave_balances',
   'leave_requests',
+  'leave_types',
   'employees',
   'projects',
   'clients',
@@ -79,6 +80,10 @@ let clientId = 0
 let elTypeId = 0
 let patTypeId = 0
 let lwpTypeId = 0
+/* The one type in the database with a non-NULL annual_quota, created here rather
+   than by editing a seeded row, so the quota gate has both branches to prove and
+   the seven real types keep the NULL that 8.6 has not answered yet. */
+let quotaTypeId = 0
 
 /* Alpha approves, Beta is marked and takes leave, Gamma joins mid-month. */
 let alphaId = 0
@@ -198,6 +203,23 @@ beforeAll(async () => {
   patTypeId = byCode.get('PAT') ?? 0
   lwpTypeId = byCode.get('LWP') ?? 0
 
+  // A quota of 2 days, which is small enough that a 3-day request is short by 1
+  // and a 2-day one fits exactly. Paid, no notice and no document, so nothing
+  // but the quota can refuse a request against it.
+  const quotaType = await db
+    .insertInto('leave_types')
+    .values({
+      code: 'FIXQ',
+      name: 'Fixture Quota Leave',
+      annual_quota: 2,
+      is_paid: 1,
+      requires_document: 0,
+      min_notice_days: 0,
+      is_active: 1,
+    })
+    .executeTakeFirst()
+  quotaTypeId = Number(quotaType.insertId ?? 0)
+
   // A project of its own, because the point of rule 1's project select is that
   // the day is charged somewhere, and the assertion that an approved leave day
   // is charged nowhere needs a project_id that was really set first.
@@ -268,6 +290,20 @@ describe('the fixtures', () => {
     expect((await q.attendanceMonthState(db, EMPTY_MONTH)).total).toBe(0)
     expect([alphaId, betaId, gammaId].every((id) => id > 0)).toBe(true)
     expect([elTypeId, patTypeId, lwpTypeId].every((id) => id > 0)).toBe(true)
+  })
+
+  it('has exactly one leave type carrying a quota, and it is the fixture one', async () => {
+    // The dormancy of the quota gate is a property of the DATA, so it is worth
+    // asserting rather than assuming: if 8.6 lands and someone fills the seeded
+    // quotas in, this test names what changed before the balance assertions
+    // further down start failing for reasons that look unrelated.
+    const withQuota = await db
+      .selectFrom('leave_types')
+      .select(['id', 'code'])
+      .where('annual_quota', 'is not', null)
+      .execute()
+    expect(withQuota.map((t) => t.code)).toEqual(['FIXQ'])
+    expect(Number(withQuota[0]!.id)).toBe(quotaTypeId)
   })
 })
 
@@ -814,8 +850,16 @@ describe('approving leave, and the attendance rows it writes', () => {
   it('creates the balance row on first use and leaves the untouched types at zero', async () => {
     const balances = await q.leaveBalances(db, betaId, '2026-27')
     // Left joined from leave_types, so a new joiner sees the whole list rather
-    // than an empty table.
-    expect(balances).toHaveLength(7)
+    // than an empty table. Counted against the active types rather than against
+    // the literal seven, because this file adds an eighth of its own to exercise
+    // the quota gate and the property being pinned is one row per type.
+    const activeTypes = await db
+      .selectFrom('leave_types')
+      .select((eb) => eb.fn.countAll<number>().as('n'))
+      .where('is_active', '=', 1)
+      .executeTakeFirstOrThrow()
+    expect(balances).toHaveLength(Number(activeTypes.n))
+    expect(balances.length).toBeGreaterThanOrEqual(7)
     const el = balances.find((b) => b.type_code === 'EL')
     expect(el).toEqual({
       leave_type_id: elTypeId,
@@ -828,8 +872,10 @@ describe('approving leave, and the attendance rows it writes', () => {
       encashed: 0,
       balance: -3,
     })
-    // Tracked, not enforced: every seeded annual_quota is NULL pending 8.6, so
-    // a negative balance is a fact for HR to look at, not a refusal.
+    // Tracked, not enforced while the quota is NULL: every SEEDED annual_quota is
+    // NULL pending 8.6, so a negative balance is a fact for HR to look at rather
+    // than a refusal. The gate that fires when a quota is present is proven
+    // separately, further down.
     expect(balances.filter((b) => b.type_code !== 'EL').every((b) => b.availed === 0)).toBe(true)
   })
 
@@ -1103,6 +1149,13 @@ describe('a range that crosses 31 March', () => {
     )
     expect(result.days).toBe(4)
     expect(result.financialYear).toBe('2026-27')
+    // Beta reaches -11 EL days across this file because `annual_quota` is NULL
+    // for every seeded type and the quota gate in `decideLeave` is dormant while
+    // it is (DECISIONS 17.1). When 8.6 supplies EL's quota this line is the first
+    // thing that fails, and it fails because the gate started working: the
+    // approval will be refused with a shortfall instead of returning a balance.
+    // The fix then is to give this file's fixture employees an opening balance,
+    // not to loosen the gate.
     expect(result.balanceAfter).toBe(-11)
 
     // Every one of the four days is written, on both sides of the boundary.
@@ -1113,6 +1166,132 @@ describe('a range that crosses 31 March', () => {
     const nextYear = (await q.leaveBalances(db, betaId, '2027-28')).find((b) => b.type_code === 'EL')
     expect(nextYear!.availed).toBe(0)
     expect(nextYear!.balance).toBe(0)
+  })
+})
+
+describe('the quota gate, dormant and awake (DECISIONS 17.1)', () => {
+  /* Both branches of the same code path, decided only by whether
+     `leave_types.annual_quota` holds a number. Nothing in `decideLeave` is
+     switched by a flag, an env var or a permission: the data is the switch, which
+     is the property that makes 8.6 a data change rather than a release. */
+
+  it('lets a NULL-quota approval take the balance negative, which is current behaviour', async () => {
+    // 2026-09-16 and 17 are a Wednesday and a Thursday. Raised on behalf so EL's
+    // three days of notice is waived rather than being what this test measures.
+    const requestId = await svc.requestLeave(
+      db,
+      actor,
+      leaveInput({ employeeId: String(gammaId), fromDate: '2026-09-16', toDate: '2026-09-17' }),
+      { selfEmployeeId: alphaId, canRaiseForOthers: true }
+    )
+    const result = await svc.decideLeave(
+      db,
+      actor,
+      requestId,
+      { decision: 'approve', rejectReason: null },
+      { approverEmployeeId: alphaId, canOverridePeriod: false }
+    )
+    expect(result.days).toBe(2)
+    // No opening, no accrual, no quota: the balance is simply what was taken,
+    // negative, and HR reads it rather than the system refusing it.
+    expect(result.balanceAfter).toBe(-2)
+    const el = (await q.leaveBalances(db, gammaId, '2026-27')).find((b) => b.type_code === 'EL')
+    expect(el!.annual_quota).toBeNull()
+    expect(el!.availed).toBe(2)
+    expect(el!.balance).toBe(-2)
+  })
+
+  it('admits a request that exactly fills a non-NULL quota', async () => {
+    // 2026-09-20 is a Sunday, so this is the Monday and Tuesday after it: two
+    // working days against a quota of exactly two.
+    const requestId = await svc.requestLeave(
+      db,
+      actor,
+      leaveInput({
+        leaveTypeId: String(quotaTypeId),
+        employeeId: String(gammaId),
+        fromDate: '2026-09-21',
+        toDate: '2026-09-22',
+      }),
+      { selfEmployeeId: alphaId, canRaiseForOthers: true }
+    )
+    const result = await svc.decideLeave(
+      db,
+      actor,
+      requestId,
+      { decision: 'approve', rejectReason: null },
+      { approverEmployeeId: alphaId, canOverridePeriod: false }
+    )
+    expect(result.days).toBe(2)
+    // The gate compares 2 days requested against 2 available and lets it
+    // through. The stored `balance` column is still the spec's formula, which
+    // has no quota term in it, so it reads -2 on a request that was WITHIN
+    // quota. That asymmetry is real and is what 17.1 records: the entitlement
+    // lives on the type, the ledger lives on the balance row, and only an
+    // accrual job would reconcile them.
+    expect(result.balanceAfter).toBe(-2)
+
+    const audit = await db
+      .selectFrom('audit_log')
+      .select(['after_json'])
+      .where('action', '=', 'hr.leave_approve')
+      .where('entity_id', '=', requestId)
+      .executeTakeFirstOrThrow()
+    const after = parseJsonColumn(audit.after_json) as Record<string, unknown>
+    expect(after.quota_enforced).toBe(true)
+    expect(Number(after.annual_quota)).toBe(2)
+  })
+
+  it('refuses the next day against that quota, naming the type and the shortfall', async () => {
+    // One more working day, 2026-09-23, with the quota already spent.
+    const requestId = await svc.requestLeave(
+      db,
+      actor,
+      leaveInput({
+        leaveTypeId: String(quotaTypeId),
+        employeeId: String(gammaId),
+        fromDate: '2026-09-23',
+        toDate: '2026-09-23',
+      }),
+      { selfEmployeeId: alphaId, canRaiseForOthers: true }
+    )
+    await expect(
+      svc.decideLeave(
+        db,
+        actor,
+        requestId,
+        { decision: 'approve', rejectReason: null },
+        { approverEmployeeId: alphaId, canOverridePeriod: false }
+      )
+    ).rejects.toThrow(
+      'Fixture Quota Leave has 0 days available in 2026-27 against a quota of 2 days, and this request needs 1 day. It is short by 1 day.'
+    )
+
+    // The refusal is a refusal, not a partial write. The request is still
+    // pending, no attendance row exists for the day, and `availed` did not move
+    // -- which is the part that needs a real transaction to prove, since the
+    // gate runs before the attendance loop AND inside the same transaction.
+    const still = await q.findLeaveRequest(db, requestId)
+    expect(still!.status).toBe('pending')
+    expect(await cell(gammaId, '2026-09-23')).toBeUndefined()
+    const fixq = (await q.leaveBalances(db, gammaId, '2026-27')).find((b) => b.type_code === 'FIXQ')
+    expect(fixq!.availed).toBe(2)
+  })
+
+  it('still rejects that request cleanly, since a refusal to approve is not a decision', async () => {
+    // The gate sits in the approve branch only. Leave nobody can approve has to
+    // remain rejectable or it would sit in the queue forever.
+    const pending = await q.listLeaveRequests(db, { status: 'pending', pendingFor: alphaId })
+    const stuck = pending.find((p) => p.type_code === 'FIXQ')
+    expect(stuck).toBeDefined()
+    const result = await svc.decideLeave(
+      db,
+      actor,
+      Number(stuck!.id),
+      { decision: 'reject', rejectReason: 'Quota for the year is spent' },
+      { approverEmployeeId: alphaId, canOverridePeriod: false }
+    )
+    expect(result).toMatchObject({ decision: 'reject', attendanceRowsWritten: 0, balanceAfter: null })
   })
 })
 

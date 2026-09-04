@@ -1553,14 +1553,47 @@ What the counts do **not** cover: the four `/app/hr/*` screens and three `/api/h
 slice are exercised through their services, not through HTTP. No e2e run touches the grid, and
 the "not built" of 16.10 is a statement about the markup, which no gate here asserts.
 
+## 17. Seams written now so that later work is a data change
 
+### 17.1 The leave quota check is written and dormant; a number in `annual_quota` activates it
 
+`assertWithinQuota` in `src/modules/hr/service.ts` runs on every leave approval and refuses one
+that would exceed the type's entitlement. It is **dormant**, because `leave_types.annual_quota` is
+NULL for all seven seeded types (spec line 1617 defers them to §8.6) and NULL means "no policy, so
+nothing to enforce". Negative balances therefore stay exactly as 16.6 describes them: tracked, not
+refused. **Supplying quota values switches enforcement on with no code change and no deploy** —
+that is the reason to write it before the numbers exist rather than after.
 
+**What "available" means is a reading, and it is the part to argue with.** The spec gives
+`annual_quota` on the type and `opening`/`accrued`/`availed`/`encashed` on the balance row, and
+says nothing about how the two relate. Nothing writes `accrued`: there is no accrual job anywhere
+in the codebase. So a gate that drew only on the balance columns would compute an entitlement of
+zero and **refuse every request the moment a quota was set** — a trap wearing the costume of a
+seam, and the failure mode would arrive on the day HR finally answered §8.6. The entitlement is
+therefore `max(accrued, annual_quota)`: the quota stands in while the accrual column is zero, and
+an accrual job that catches up takes over from it without another edit.
 
+Two consequences, both deliberate:
 
+- **Mid-year it is generous.** Twelve days are available in month one rather than one twelfth of
+  them. That is the same direction as 16.3's treatment of public holidays — towards the employee —
+  and it is the safer error while the policy is unwritten.
+- **The stored `balance` column and the gate disagree, and both are right.** `balance` stays the
+  spec's formula, `opening + accrued - availed - encashed`, with no quota term, so an approval that
+  passed the gate can still leave `balance` negative. The entitlement lives on the type and the
+  ledger lives on the balance row; only an accrual job reconciles them. The integration test says
+  this out loud rather than asserting around it.
 
+Ordering: the check runs **before** the attendance loop, so a refusal does not depend on the
+transaction rolling back to be correct — though it is inside the transaction too, and the test
+proves `availed` did not move and no `attendance` row survives the refusal.
 
+The audit entry for `hr.leave_approve` now carries `annual_quota` and `quota_enforced` on **every**
+approval, enforced or not, so the day the numbers land is legible in the log instead of inferred
+from a behaviour change. The refusal message names the type, what is available, the quota and the
+shortfall, because "quota exceeded" gives an approver nothing to tell the employee.
 
-
-
-
+The `-11` balance assertion in `tests/integration/hr-attendance-flow.test.ts` carries a comment
+pointing here. When §8.6 lands it is the first thing that will fail, and it will fail *because the
+gate started working*. The fix then is to give the fixture employees an opening balance, **not** to
+loosen the gate.
