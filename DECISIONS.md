@@ -883,6 +883,81 @@ at recording it. `tests/integration/json-columns.test.ts` asserts that these thr
 these three are contradictory, so the list cannot grow unnoticed and fixing the seed forces the
 assertion to be updated.
 
+## 13. A percentage is basis points, 2026-09-04
+
+Fixes 12.7 forward, in `migrations/011_settings_rate_units.sql`. The question was how the
+three finance rate settings should be represented, and the working assumption on the table was
+a decimal string parsed with explicit decimal conversion, to keep floats away from a
+money-adjacent rate. The spec answers it differently, and the spec wins.
+
+### 13.1 What the spec says
+Three places, none of them a float:
+
+- **4.3**, restated verbatim in `migrations/002_rbac.sql:90-92`: `max_value BIGINT` is
+  "paise, or basis points when document_type is quote_discount_pct".
+- **6.7 rule 5**: "`quotes.discount_pct` is checked against `approval_limits` for
+  `quote_discount_pct` in basis points."
+- **6.8**: every rate in the finance schema is `DECIMAL(5,2)` — `gst_pct ... DEFAULT 18.00`,
+  `tds_pct ... DEFAULT 0`, `contingency_pct ... DEFAULT 3.00`, plus `work_done_pct`,
+  `threshold_pct` and `actual_pct`. Two decimal places, exactly.
+
+So a percentage held in a general-purpose column is an integer in basis points, and 18.00
+percent is 1800 of them. Basis points encode `DECIMAL(5,2)` losslessly and introduce no parse
+step where a float could enter. A decimal string would have been a *second* representation of a
+percentage in a codebase where `submitQuote` already compares one in basis points against
+`approval_limits.max_value` and `admin/routes.tsx:572` already renders that column as
+`max_value / 100` with a percent sign — and converting between two representations is where the
+drift being avoided actually happens.
+
+### 13.2 Why `data_type` is `int` and the unit lives in the label
+6.2 fixes the enum at `('string','int','money','bool','json')`. There is no decimal member, so
+this is a choice inside the enum, not an extension of it. `money` would render 1800 as 18 in the
+editor but hint "in rupees" and call a tax rate money. `int` renders the stored integer, so the
+unit moves into `label`, which is a data column: "Default GST rate, in basis points (1800 =
+18.00%)". 6.2's promise that the editor "renders from `settings.data_type`, so adding a key
+needs no new UI code" still holds — no UI changed for this.
+
+`coerceSetting('int', '1800')` returns 1800 and `jsonColumnEquals(1800, 1800)` is true, so the
+form round-trips exactly and the no-op save from 12.5 stays a no-op.
+
+### 13.3 A forward migration, and why the conversion is arithmetic
+003 cannot be edited: `scripts/migrate.mjs` checksums every applied file and treats a change as
+a hard failure, which is the same reason 010 exists. 011 converts with
+`ROUND(CAST(JSON_UNQUOTE(value_json) AS DECIMAL(9,4)) * 100)` rather than writing three
+literals, so a value an owner had already edited is carried across at its own figure, from
+either the seeded form (JSON number `18`) or the post-save form (JSON string `"18"`).
+
+Verified: `npm run db:migrate` → `Applied 011_settings_rate_units.sql`; the three rows read back
+`1800`, `500`, `200` as `int` with the new labels; 25 settings rows and 12 `json_valid` checks,
+unchanged. Then a fresh database migrated 001 through 011 from empty (`--db ncc_fresh`) landed on
+the identical three values and the same 12 checks, so the arithmetic does not depend on the dev
+database's history. Scratch database dropped.
+
+### 13.4 `MODIFY COLUMN ... LONGTEXT` silently unmarks a JSON column
+Probed in a throwaway database before shipping 011's `ALTER TABLE settings MODIFY COLUMN
+value_json JSON NOT NULL COMMENT ...`, because a comment is not worth changing a constraint set
+by accident:
+
+| Statement | `json_valid` checks on the column |
+| --- | --- |
+| `CREATE TABLE t (v JSON NOT NULL)` | 1 |
+| `MODIFY COLUMN v JSON NOT NULL COMMENT 'x'` | 1 — preserved, not duplicated |
+| `MODIFY COLUMN v LONGTEXT NOT NULL COMMENT 'x'` | **0 — dropped** |
+
+MariaDB's `JSON` is an alias for `LONGTEXT` plus that CHECK, so spelling out the underlying type
+in a later migration removes the marker. mysql2 reads the marker to decide whether to pre-parse,
+so a migration that did this would stop the driver parsing the column and every reader would
+start receiving raw text — the 12.x bug inverted, and the one thing the shared reader's string
+branch is there to survive. `tests/integration/json-columns.test.ts` fails on it immediately: 11
+constraints against 12 registered columns.
+
+### 13.5 What still is not decided
+Nothing reads these three keys yet. The finance module is the first consumer and it will need to
+divide by 100 on the way into a `DECIMAL(5,2)` column; that conversion belongs in one place in
+`src/modules/finance/`, not spread across call sites, and this section is the reason it exists.
+`approval_limits` is still empty pending open question 8.2 — the representation of a limit is
+settled, the numbers are not.
+
 
 
 

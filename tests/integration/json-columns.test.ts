@@ -131,6 +131,11 @@ describe('the reader, against what the driver actually returns', () => {
         if (row.data_type === 'bool') return typeof value !== 'boolean'
         if (row.data_type === 'int' || row.data_type === 'money') return typeof value !== 'number'
         if (row.data_type === 'json') return typeof value !== 'object'
+        // 'string' is checked too, and it is the one that caught the three
+        // finance rates: JSON numbers seeded under data_type 'string', which the
+        // settings form would have rewritten as strings on its first save.
+        // Fixed in migrations/011_settings_rate_units.sql. DECISIONS.md 12.7.
+        if (row.data_type === 'string') return typeof value !== 'string'
         return false
       })
       .map((row) => `${row.key_name} (${row.data_type})`)
@@ -154,17 +159,29 @@ describe('saving the settings form without changing it', () => {
     for (const row of after) expect(row.updated_at).toBeTruthy()
   })
 
-  it('names the rows whose stored value contradicts their data_type', () => {
-    // Not a pass mark. migrations/003_reference.sql:217-219 insert 18.00, 2.00
-    // and 5.00 as JSON numbers under data_type 'string', so the form renders
-    // "18", the save coerces it back to the string "18", and the row is
-    // rewritten as a different type than it was seeded with. Held out of the
-    // post above so this suite writes nothing; recorded here so that fixing the
-    // seed makes this list shorter and this assertion fail. DECISIONS.md 12.
-    expect(contradictory).toEqual([
-      'finance.gst_default_pct',
-      'finance.retention_default_pct',
-      'finance.tds_default_pct',
-    ])
+  it('finds no row whose stored value contradicts its data_type', () => {
+    // Three rows failed this until migrations/011_settings_rate_units.sql:
+    // 003_reference.sql seeded the GST, TDS and retention defaults as unquoted
+    // JSON numbers under data_type 'string', so the first save of the settings
+    // form would have rewritten all three as strings and reported three changes
+    // nobody made. They are now basis-point integers under 'int', which is what
+    // spec 4.3 uses for a percentage in a general column. DECISIONS.md 13.
+    expect(contradictory).toEqual([])
+  })
+
+  it('holds the finance rates in basis points', () => {
+    // 1800 not 18: spec 6.8 makes every rate DECIMAL(5,2) and 4.3 stores a pct
+    // as basis points, which encodes those two decimal places exactly and
+    // matches what submitQuote already compares against approval_limits.
+    const rates = new Map(
+      settingsRows
+        .filter((row) => row.key_name.startsWith('finance.') && row.key_name.endsWith('_pct'))
+        .map((row) => [row.key_name, parseJsonColumn(row.value_json)])
+    )
+    expect(Object.fromEntries(rates)).toEqual({
+      'finance.gst_default_pct': 1800,
+      'finance.retention_default_pct': 500,
+      'finance.tds_default_pct': 200,
+    })
   })
 })
