@@ -1597,3 +1597,59 @@ The `-11` balance assertion in `tests/integration/hr-attendance-flow.test.ts` ca
 pointing here. When §8.6 lands it is the first thing that will fail, and it will fail *because the
 gate started working*. The fix then is to give the fixture employees an opening balance, **not** to
 loosen the gate.
+
+### 17.2 Rule 1's Alpine attendance matrix gets its own slice, immediately after HR slice 3
+
+16.10 recorded that the keyboard-driven month-by-employee matrix of spec line 1761 is not built.
+This is the disposition of that gap: **it is neither dropped nor deferred to phase 9.** It becomes
+its own slice, scheduled immediately after HR slice 3 (contractor labour and bills), and it is
+built as **the reference pattern for every later client-side component** — §6.5's `ItemPicker` and
+`LineItemGrid` (line 1355) and §6.7's `ApplicantBoard` drag-free `hx-post` all land on top of
+whatever this slice establishes.
+
+Sequenced after slice 3 rather than before it for one reason: **Alpine is not introduced in the
+middle of a slice.** The first client-side stateful component in a codebase that is otherwise
+entirely server-rendered sets conventions — where the state lives, how it posts, how it degrades
+without JavaScript, how it is tested — and those decisions deserve their own commit, their own
+DECISIONS entry and their own gate, not a paragraph inside a bill-generation change.
+
+**Rejected: drop the keyboard grid and keep the day-at-a-time form.** The spec gives a reason, not
+a preference — "HR marks a whole month in one sitting and a click-per-cell form is unusable" — and
+the shipped form is exactly the click-per-cell form named there. Ten employees over a 26-working-day
+month is 260 cells across 26 separate posts. Dropping it would mean the module's most-used screen
+stays the one the spec singled out as unusable.
+
+**Rejected: defer it to phase 9 hardening.** §7.6 hardening is backup verification, rate-limit
+tuning and the audit retention job — work that does not change what the application does. A missing
+primary entry surface is not hardening, and deferring it there would also mean the first client
+component gets designed under cutover pressure, which is the worst moment to set a pattern that
+five later components inherit.
+
+### 17.3 Two blocking data items, logged rather than invented
+
+Both of these are inputs only the business can supply. Nothing in the codebase guesses at either,
+and neither is worked around.
+
+**The Karnataka public holiday list for the current year.** `isWorkingDay` treats Sunday as the
+only non-working day, so every national and state holiday — 26 January, 15 August, 2 October,
+Ugadi, Ganesh Chaturthi, Deepavali, Kannada Rajyotsava and the rest — is currently counted as a
+working day. The consequences: `workingDaysBetween` **over-counts** the days deducted from a leave
+range containing a holiday, the `holiday` member of the `attendance` status ENUM has no writer, and
+the muster roll shows a holiday as an ordinary unmarked day. 16.3 records the direction of the
+error; this records what would fix it. What is needed is the dated list for the financial year,
+which is a `holidays` table plus one branch in `isWorkingDay`, not a redesign. **Not invented**: the
+gazetted Karnataka list varies by year and by whether a holiday is a general or a restricted one,
+and a wrong date silently mis-costs payroll.
+
+**Per-type leave quotas, §8.6.** `annual_quota` and `carry_forward_max` for each of EL, CL, SL,
+LWP, COMP, MAT and PAT. 17.1 is the seam waiting for them. Also unanswered in the same §8.6 block
+and needed before this module can be called finished: whether the company is registered under EPF
+and ESI (which decides whether `uan`, `pf_number` and `esi_number` are required or optional), and
+whether leave accrual runs on the 1 April financial year — assumed yes, matching
+`document_numbering` — or on the calendar year.
+
+**Also unanswered, and it gates the shape of HR slice 3 rather than a column in it:** §8.6 asks
+"Do you use labour contractors, and roughly how many? The whole `labour_contractors` and
+`contractor_bills` design in 6.6 assumes yes. If site labour is directly employed instead, that
+part of the module changes shape substantially." Slice 3 is built to the spec's design, which
+assumes yes. If the answer is no, that slice is dead weight rather than wrong.
