@@ -35,11 +35,20 @@ import type {
  * from the ledger and compare.
  *
  * Stock is valued at weighted average cost. Spec 6.4 does not name a costing
- * method, and one had to be chosen to keep item_stock.value_paise consistent
- * with a replay of the ledger; weighted average is the only method of the
- * three candidates that a replay in id order reproduces exactly without
- * storing per-layer state. Recorded as a provisional decision in DECISIONS.md
- * 2.7 rather than settled here.
+ * method, and one had to be chosen. Weighted average was chosen because it is
+ * one row per (item_id, location_id), so an issue is a single locked read and
+ * a single write: see postStockMovement below, which takes SELECT ... FOR
+ * UPDATE on that one cache row. FIFO would need open layers per receipt, an
+ * issue spanning four of them is four writes plus a partial-consumption rule
+ * for each, and the layer table is a second thing that can drift from the
+ * ledger — which is the opposite of rule 1's point.
+ *
+ * Not a reason: that batch-level costing could not be replayed. It could.
+ * stock_ledger keeps batch_no on every row and grn_lines keeps what each batch
+ * was actually received at, so the history to compute FIFO or batch cost is
+ * present. The choice is about write cost and having one writer, not about
+ * lost data. Recorded as a provisional decision in DECISIONS.md 2.7 rather
+ * than settled here.
  *
  * mysql2 runs without decimalNumbers, so DECIMAL columns arrive as strings
  * despite being typed number in src/db/types.ts. Every quantity read from a

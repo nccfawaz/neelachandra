@@ -136,6 +136,30 @@ traceability and expiry, not for costing; and a stock-out drives the balance to 
 by taking the whole remaining value rather than leaving a rounding tail
 (`postStockMovement`, out-movement branch).
 
+**Reading the ledger without being misled.** The first consequence above is the one
+that looks like a bug to anyone who does not know the rule, so it is worth spelling
+out. Three issue lines naming three different batches will show the same
+`rate_paise` — 39677 against BATCH-A, BATCH-B and BATCH-C is the rule working, not a
+data fault. A batch-named row carries the store's weighted average at the moment of
+issue. It does not carry that batch's cost.
+
+Batch cost is not lost, it is just somewhere else:
+
+| Want | Read |
+| --- | --- |
+| What a batch was received at | `grn_lines.rate_paise` |
+| What an issue was valued at | `issue_lines.rate_paise`, `stock_ledger.rate_paise` |
+| Current average at a store | `item_stock.value_paise / item_stock.qty_on_hand` |
+
+Joining `stock_ledger.batch_no` to `grn_lines.batch_no` recovers the receipt rate, so
+recomputing batch-level or FIFO cost from history stays possible.
+
+`migrations/010_costing_comments.sql` carries the same statement as `COMMENT` text on
+each of those columns, so `SHOW FULL COLUMNS` answers the question at the point
+someone is most likely to ask it. It is a comments-only migration: 005 has already run
+on live databases and the runner checksums applied files, so annotating 005 in place
+would break the next `migrate` rather than document anything.
+
 Structural enforcement, since the rule is only as good as what stops a second writer:
 `postStockMovement` in `src/modules/inventory/service.ts` is the only function that
 touches `item_stock`, it takes `SELECT ... FOR UPDATE` on the cache row, and
