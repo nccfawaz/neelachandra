@@ -584,13 +584,51 @@ that is a `package.json` change nobody asked for.
 
 | § | Question | Blocks | Effect now |
 |---|---|---|---|
-| 8.1 | Actual org chart and roles | phase 2 | roles are provisional (2.5); no real staff rows exist |
+| 8.1 | Actual org chart and roles | phase 2 | roles are provisional (2.5); no real staff rows exist; two specific grants now need a ruling, see 9.1 |
 | 8.2 | Approval limits | phase 7 | finance approval thresholds unseeded |
 | 8.3 | Stage templates and payment milestones | phase 3 | `stage_templates` seeded from the spec's example only |
 | 8.4 | Material consumption norms | phase 4 rule 4 | consumption variance cannot be computed |
 | 8.7 | Offline capability | phase 3 | assumed yes (2.4) |
 | 8.11 | Hosting plan specifics | phase 0 | MariaDB assumed; collation depends on it (2.1) |
 | 8.12 | Freeze scope, and the sign-off owner | phase 1, 9 | no named owner to sign off a gate failure (4.4) |
+
+### 9.1 §8.1, two grants that need the owner's ruling
+
+Added 2026-09-04, from building §6.6. Both are tensions **inside the spec** — the §4.3
+permission matrix against the §6.6 route table — not defects in
+`migrations/002_rbac.sql`. The seed reproduces the matrix exactly in both cases, and
+**the seed is left as it is.**
+
+**1. `accounts_manager` has `hr.payroll_view` and no `hr.employee_view`.**
+§4.3 line 613 gives that role `hr.payroll_view` (R); line 608 withholds
+`hr.employee_view` from it. `002_rbac.sql:274` matches. But every §6.6 route that
+renders a pay figure hangs off `/app/hr/employees/:id`, which requires
+`hr.employee_view` (spec line 1718), so the role the matrix trusts with payroll has no
+screen on which to use it. There is a reading in which this is deliberate: §6.8 rule 10
+(line 2155) routes staff cost to that role in aggregate, as `accrued_staff_cost` inside
+`getProjectMargin`, "visible only to `owner` and `accounts_manager`". *Question: should
+`accounts_manager` reach an individual employee's pay history at all, or only the
+aggregate through finance?*
+
+**2. The attendance grid is gated on a permission the two roles that record attendance
+do not hold.** §4.3 line 610 gives `hr.attendance_record` to `project_manager` and
+`site_supervisor` (W+S) and line 608 gives neither of them `hr.employee_view`; spec line
+1723 gates `GET /app/hr/attendance` on `hr.employee_view`. `002_rbac.sql:244` and `:260`
+match the matrix. So the two roles whose job is entering the day's attendance cannot open
+the grid it is entered on; only `ops_manager` and `hr_manager` hold both keys. *Question:
+does a site supervisor see the month grid for their own site, or only a single-day entry
+form for it?*
+
+Neither is resolved here. Granting a role a key the matrix withholds is the quiet
+resolution section 4 exists to prevent, and both fixes are one line whenever the answer
+arrives — widen the route guard, or add the grant to 002's successor. What ships instead
+is 14.4 and 14.5: the pay figures simply stay unreachable for `accounts_manager`, and the
+dashboard withholds the attendance link from anyone who would receive a 403 on it rather
+than offering it and then refusing.
+
+**Blocks:** attendance and payroll closing on real roles. Neither blocks *building* them
+— `hr_manager` and `ops_manager` hold both keys, and the integration tests exercise
+permissions as sets rather than through a seeded role.
 
 ---
 
@@ -1097,8 +1135,9 @@ The second half is not built:
   `src/lib/files.ts:16` and as a link at `src/modules/projects/routes.tsx:1011`; nothing serves
   it, so that link 404s today.
 - `storeUpload` (`src/lib/files.ts:92`) has no callers anywhere in `src/` or `tests/`.
-- `csrfProtect` skips `multipart/form-data` (`src/middleware/csrf.ts:29`) and expects
-  `x-csrf-token` instead, so a plain browser upload form would not pass it as written.
+- `csrfProtect` skips the body parse for `multipart/form-data` (`src/middleware/csrf.ts:29`) and
+  expects `x-csrf-token` instead, so a plain browser upload form is *rejected* as things stand.
+  That is a hard precondition on the upload work, not a note: **see 15.1.**
 - `files` carries `uploaded_by` and `visibility` but **no `entity_type`/`entity_id`**, so a
   serving route cannot derive from the row which permission protects the document. It would have
   to search every table holding a `file_id`.
@@ -1180,6 +1219,31 @@ added; `tests/json-columns.test.ts` still fails the build on a bare `JSON.parse`
   mistake as A reports to A, and it produces an org chart renderer that recurses until the stack
   ends. Both refusals are `UnprocessableError` and both roll back.
 
+### 14.8 Deferred to phase 9: one canonical direction for the employee-login link
+
+14.1 resolves the split by reading both directions. That is correct for now and it is not the end
+state, because **nothing keeps the two columns consistent.** `users.employee_id` and
+`employees.user_id` are two directions of one relationship, each nullable, with no constraint, no
+trigger and no shared writer between them. Today only one is ever written, so they cannot disagree.
+The moment a second writer appears — a "link an existing login" button, an import, a fix applied by
+hand in the database — they can, and `employeeLoginId` prefers `employees.user_id` when it is set,
+so a stale value there would win over a correct `users.employee_id`.
+
+**Phase 9: pick one canonical direction, then drop or derive the other.** Either is defensible:
+
+- keep `users.employee_id` — it is the column that has a writer, and it puts the FK on the side
+  that is genuinely optional, since an employee need not have a login;
+- keep `employees.user_id` — HR reads start from the employee, and it is one hop shorter on the
+  pages that matter.
+
+Whichever survives, the other should become a view or a generated column rather than a second
+nullable FK, and `employeeLoginId` collapses to a single lookup. A migration reconciling existing
+rows has to run before the drop; with no real staff rows yet (the fence in section 3), that
+reconciliation is currently empty — this is the cheapest the change will ever be.
+
+**Reading both ways is explicitly fine until then.** Recorded as hardening, not as a defect: the
+behaviour is correct, the invariant is merely unenforced.
+
 **Verified for this section, 2026-09-04, on the machine in §7:** `npm run typecheck` clean over 71
 project files with all four HR files in `--listFilesOnly`; `npm test` 8 files / 204 tests passed;
 `npm run test:integration` 4 files / 82 tests passed against the dev MariaDB on 3307 (hr-flow 32),
@@ -1189,6 +1253,58 @@ after themselves. The first integration run failed its `afterAll` on `fk_emp_rep
 over a range of employees can reach a manager before their report — fixed by nulling
 `reporting_to_employee_id` and `users.employee_id` ahead of the table deletes, and the rows that
 partial cleanup left behind were removed by hand and counted back to zero.
+
+---
+
+## 15. Preconditions on unbuilt work
+
+Blocking conditions on code that does not exist yet, recorded here because the person who
+writes it will not have been in the conversation where the condition was found. Each names
+the file it applies to. **A precondition is not advice.** If one cannot be met, it is
+escalated, not worked around.
+
+### 15.1 No upload handler lands until multipart CSRF is covered
+
+**Applies to:** `src/lib/files.ts` (`storeUpload`, currently uncalled), the unwritten
+`GET /api/files/:id`, and any route that accepts a file.
+
+**The condition:** `csrfProtect` does not read a CSRF token out of a `multipart/form-data`
+body. `src/middleware/csrf.ts:29` lists that content type in `SKIP_CONTENT_TYPES`, and the
+skip is on the **body parse**, for a real reason — buffering the body to find a hidden field
+would hold 15 MB in memory before the guard runs, which defeats streaming the upload.
+
+State it precisely, because the direction of the failure decides what has to be built:
+
+- The guard still runs on a multipart POST, and it still calls `verifyToken`. Multipart is
+  **not exempt from verification.**
+- With no body to read, the token must arrive in the `x-csrf-token` header. If it does not,
+  `verifyToken` throws `ForbiddenError` (`src/lib/csrf.ts:29-31`). So the failure is
+  **closed** — a plain `<form enctype="multipart/form-data">` carrying the hidden `nc_csrf`
+  field is *rejected*, not waved through.
+- This is therefore an unbuilt path, not an open hole. Nothing is exposed today because
+  `storeUpload` has no callers and no route serves a file.
+
+**What satisfies the precondition.** Any one of:
+
+1. Submit the upload through htmx or `fetch`. `AppShell.tsx:54` already sets
+   `hx-headers={{'x-csrf-token': …}}` on `<body>`, so every htmx request inside the dashboard
+   carries the header for free — an `hx-post` with `hx-encoding="multipart/form-data"` passes
+   the guard as written, and this is the cheapest route.
+2. Give `csrfProtect` a streaming-safe multipart branch that reads only far enough to find the
+   token field and leaves the file parts unconsumed.
+3. A dedicated guard on the upload route that verifies the header before the handler touches
+   the body.
+
+**What does not.** Adding `multipart/form-data` to a list that bypasses `verifyToken`;
+mounting the upload route outside `csrfProtect`; or "temporarily" accepting an unverified
+multipart POST. An upload endpoint is the one route where a forged cross-site POST writes a
+file to disk under a real user's identity.
+
+**Second half of the same slice:** `files` has `uploaded_by` and `visibility` but no
+`entity_type`/`entity_id` (14.3), so `GET /api/files/:id` has nothing on the row from which
+to decide *which* permission protects it. That question is settled in the same piece of work
+or the route ships guarding an Aadhaar scan by `uploaded_by`, which is not a permission
+check. See 14.3 for what §6.6 rule 6 promises here.
 
 
 

@@ -26,6 +26,17 @@ declare module 'hono' {
   }
 }
 
+/**
+ * Content types whose body is NOT parsed here.
+ *
+ * PRECONDITION, DECISIONS.md 15.1: this skips the *body parse* only. The guard
+ * below still runs and still calls verifyToken, so a multipart POST must carry
+ * the token in the x-csrf-token header or it is refused -- which means a plain
+ * <form enctype="multipart/form-data"> does not work as written, and no upload
+ * handler may land until that is deliberately covered (htmx already sends the
+ * header via hx-headers on <body>). Never resolve it by making this list skip
+ * verification, and never mount an upload route outside csrfProtect.
+ */
 const SKIP_CONTENT_TYPES = ['multipart/form-data']
 
 export function csrfProtect(): MiddlewareHandler<AppEnv> {

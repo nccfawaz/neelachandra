@@ -11,6 +11,31 @@ import { today } from './dates.js'
 /**
  * File upload with MIME sniffing and checksum (spec 2.7, 6.6 rule 6).
  *
+ * ==========================================================================
+ * PRECONDITION BEFORE ANY UPLOAD ROUTE LANDS -- DECISIONS.md 15.1
+ *
+ * `storeUpload` below has no callers and `GET /api/files/:id` has no handler.
+ * Before either gains one:
+ *
+ *   1. Multipart CSRF must be covered. `csrfProtect` does not read the token
+ *      out of a multipart body (`src/middleware/csrf.ts:29`) -- it skips the
+ *      *body parse*, then still calls `verifyToken`, so the token has to
+ *      arrive in the `x-csrf-token` header. A plain
+ *      <form enctype="multipart/form-data"> is therefore REJECTED, not
+ *      accepted. Post it through htmx instead: AppShell already sets
+ *      hx-headers with the token on <body>, so `hx-post` +
+ *      `hx-encoding="multipart/form-data"` passes as written.
+ *      Do NOT satisfy this by exempting the route from `csrfProtect` or by
+ *      bypassing `verifyToken` for multipart. An upload endpoint is the one
+ *      route where a forged cross-site POST writes a file to disk as a real
+ *      user.
+ *
+ *   2. `files` has `uploaded_by` and `visibility` and no `entity_type` /
+ *      `entity_id`, so nothing on the row says which permission protects it.
+ *      A serving route needs that decided first: 6.6 rule 6 puts an Aadhaar
+ *      scan behind this route, and `uploaded_by` is not a permission check.
+ * ==========================================================================
+ *
  * Two locations chosen by sensitivity: UPLOAD_PUBLIC_DIR is served
  * statically, UPLOAD_PRIVATE_DIR is streamed through a permission check at
  * GET /api/files/:id. Both sit outside the repository so a deploy does not
