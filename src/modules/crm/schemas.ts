@@ -669,6 +669,27 @@ export const convertSchema = z.object({
   stageTemplateId: optionalId,
 })
 
+/**
+ * What the conversion route actually posts.
+ *
+ * convertLeadToProject takes two overrides and derives everything else — the
+ * name, the project type, the address, the jurisdiction, the contract value,
+ * the rate, the built-up area, the delivery model and the stage template — from
+ * the lead and the accepted quote, inside the transaction. That is rule 6's
+ * "nothing is retyped": the number the client signed is the number the project
+ * carries, and a conversion form that let any of it be re-entered would be a
+ * form that let it be changed.
+ *
+ * convertSchema above is therefore wider than the service accepts. It is left
+ * in place rather than narrowed because narrowing it is a decision about the
+ * service's signature, not about this boundary; the mismatch is recorded in
+ * DECISIONS.md and in the header of routes.tsx.
+ */
+export const convertOverridesSchema = z.object({
+  plannedStart: optionalDate,
+  contractSignedOn: optionalDate,
+})
+
 export function firstError(err: z.ZodError): string {
   const issue = err.issues[0]
   return issue ? issue.message : 'That submission was not valid.'

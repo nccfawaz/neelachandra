@@ -563,6 +563,37 @@ code {
   max-width: 14rem;
 }
 
+/*
+ * Long forms. Added by the CRM module (spec 6.7): the lead form and the quote
+ * builder are the first forms in the app with enough fields to need grouping,
+ * so they group with fieldset and legend rather than with a styled div — a
+ * screen reader announces the group name with every field inside it, which a
+ * div cannot do.
+ *
+ * .ncc-grid--form is narrower than .ncc-grid--2 on purpose. A 320px minimum
+ * puts a date field on a line of its own on a laptop; a form of twenty short
+ * fields reads as a form only when four of them fit across.
+ */
+
+.ncc-fieldset {
+  border: 1px solid var(--ncc-border);
+  border-radius: var(--ncc-radius);
+  padding: 0.9rem 1.1rem 1.1rem;
+  margin: 0;
+}
+
+.ncc-fieldset > legend {
+  padding: 0 0.4rem;
+  font-weight: 600;
+  font-size: 0.92rem;
+  color: var(--ncc-text-muted);
+}
+
+.ncc-grid--form {
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 0.75rem 1rem;
+}
+
 @media (max-width: 900px) {
   .ncc-shell {
     grid-template-columns: 1fr;

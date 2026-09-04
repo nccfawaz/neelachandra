@@ -294,6 +294,86 @@ should not proceed is short-close with a reason (`poShortCloseSchema`, minimum t
 characters). **Flagged** because an approver who wants to send a PO back to the raiser
 has no way to do it, and that is a workflow the owner may expect.
 
+### 4.12 §6.7's CRM route table is narrower than the module needs to work
+Eight route-level departures, all recorded in the header comment of
+`src/modules/crm/routes.tsx` and repeated here because they are spec conflicts, not
+style:
+
+1. **Quote reads take either quote key.** Same shape as 4.7: `crm.quote_create` **or**
+   `crm.quote_approve` opens `/app/crm/quotes`, because `nav.ts` shows that link to
+   both and an approver who could not open the list would be looking at a link that
+   403s. Every write keeps its own narrow key.
+2. **PATCH is registered alongside POST** on stage and assign. An HTML form submits GET
+   or POST only, and `requiresCsrf()` covers every method that is not GET, HEAD or
+   OPTIONS, so the documented verb still works for an API client and is still
+   token-checked.
+3. **Writes redirect instead of returning JSON.** `errorHandler.wantsJson()` answers
+   any `/api/` path with JSON and §6.7 puts every write under `/api/`, while the only
+   client posting to them is a form in this file. Rule 3's site-visit refusal would
+   otherwise reach a sales executive as a JSON body in a blank tab. The `guard` helper
+   turns an `AppError` into a flash and rethrows everything else. The same latent
+   problem exists in inventory's `/api/po/...` handlers and is reported, not changed.
+4. **Routes added that the table omits:** `GET /app/crm/leads/new` (already linked from
+   admin/routes.tsx with `?enquiry=`), lead edit GET and POST, `GET
+   /app/crm/quotes/new`, `GET /app/crm/quotes/:id/revise`, `POST
+   /api/crm/site-visits/:id/status`, `POST /api/crm/quotes/:id/accept` and `/reject`,
+   `POST /api/crm/leads/:id/probability`, and `GET /app/crm/reports/losses`. The accept
+   route is not optional: rule 6 refuses to convert a lead without an accepted quote,
+   so without it conversion is unreachable. Declining a discount is **not** a new
+   route — `/approve` reads the shared `ApprovalBar`'s `decision` field, so approve and
+   decline are one endpoint and one permission, which is what the single row says.
+5. **`convertSchema` is wider than `convertLeadToProject` accepts** — see 4.13.
+6. **No htmx in the module.** §6.7 drags board cards and recalculates quote totals over
+   htmx. htmx and Alpine are loaded by the shell, so both are available; no module uses
+   them yet and inventory built its line grids as plain forms. The board gives each
+   card one "advance" button, the accessible equivalent of dragging it one column
+   right. A live total would be a second implementation of `computeQuoteTotals` in the
+   browser, and two copies of a price calculation is how a client is shown a figure the
+   database will not agree with.
+7. **NextActionBar's client-side guard is a server-side warning.** "Will not let the
+   page be left without a next action set" needs client code; the lead detail shows a
+   warning instead when the stage is past contacted and no next action is set.
+8. **No `pages/` directory**, per 4.9.
+
+### 4.13 §6.7's conversion form retypes what rule 6 says must not be retyped
+The spec's `convertSchema` accepts a project name, type, address, contract value, rate,
+area and delivery model. `convertLeadToProject` accepts `{ plannedStart,
+contractSignedOn }` and derives every other field from the lead and the accepted quote,
+which is rule 6's own "nothing is retyped". The two cannot both be right. The service
+wins: the conversion form posts the two dates through a narrower
+`convertOverridesSchema`, and `convertSchema` is left in place untouched in case
+another caller is intended for it. **Flagged rather than resolved** — the alternative
+fix is to widen the service, and that would let a converting user type a contract value
+that disagrees with the quote the client signed.
+
+### 4.14 Rule 1 names the scoring signals and none of the weights
+`computeLeadScore` apportions 100 points across the six signals rule 1 names: plot
+ownership 25, funding 20, sanctioned plan 15, expected start 15, budget fit 15, served
+area 10. The direction is the spec's ("clear title highest, not-yet-purchased near
+zero"); the numbers are mine. Ownership and funding carry most because they are the two
+that stop a job dead, and the served-area check carries least because it is a logistics
+cost rather than a reason the sale fails. `tests/crm-score.test.ts` pins all six and
+asserts the maxima sum to 100, so a weight cannot drift without a failing test.
+**Flagged:** these weights decide every lead's temperature, and they are a judgement
+call the owner may want to set differently.
+
+### 4.15 `crm.first_response_target_hours` was a setting with no reader
+The seed writes it; nothing in the tree read it. `firstResponseBreaches(db, targetHours,
+scope)` takes it as an argument, and before the funnel report existed nobody passed it.
+`/app/crm/reports/funnel` now reads it through `getSetting` with a fallback of 4.
+**Also noted:** the followup cron does not read it either, so a breach is reported on
+the funnel page and does not notify anybody. That is the spec's design — rule 9's cron
+handles dormancy and followups, not response time — and is left as it stands.
+
+### 4.16 `markQuoteViewed` is unreachable, so the `viewed` status never occurs
+`quotes.status` has a `viewed` member and `service.ts` exports `markQuoteViewed` to set
+it. Setting it needs a client-side read receipt or a tracked link, neither of which
+exists: quotes go out as an email with a printable link behind the staff login. The
+function has no caller, and every screen that switches on status treats `sent` and
+`viewed` identically so that the dead member cannot strand a quote. **Flagged, not
+deleted** — a public tokenised quote link is a plausible later feature and this is the
+hook for it.
+
 ---
 
 ## 5. Deliberate deviations, with reasons
@@ -581,4 +661,100 @@ inventory module has been executed against a database.**
 `.github/workflows` is absent, so `tsc --noEmit` and the suite are green because they
 were run by hand here and reported above, not because anything enforces them on push.
 Outstanding.
+
+**Superseded 2026-09-04 by `1542b67`.** `.github/workflows/ci.yml` now runs `tsc --noEmit`,
+the unit suite and the DB integration suite on push, the last against a MariaDB service
+container that the workflow migrates first. The gate is enforced. What 10.5 says about
+this workstation is unchanged.
+
+## 11. Verification record, 2026-09-04 — CRM module
+
+### 11.1 What was executed against a real database
+The whole module, for the first time. `tests/integration/crm-flow.test.ts` drives the sale
+end to end against the local MariaDB 11.4.4 — lead, activity, stage moves, site visit,
+quote, submit, approve, send, accept, conversion, and the losing paths — then re-reads
+every screen query. **42 integration tests pass** (36 CRM + 6 db-smoke), alongside 188 unit
+tests and a clean `tsc --noEmit`.
+
+This is the difference section 10.5 was describing. The unit suite was green on the CRM
+module before any of it had touched SQL, and it stayed green through four real defects.
+
+### 11.2 mysql2 hands back MariaDB JSON columns already parsed
+The finding worth carrying into every remaining module. `quotes.payment_schedule_json` is
+declared `longtext` and written with `JSON.stringify`, and `src/db/types.ts` types it
+`Generated<string | null>` — but the driver returns a live JS `Array`. Verified by reading
+the column back through Kysely in the integration test, which now asserts it.
+
+`JSON.parse` on that value stringifies it to `"[object Object]"` and throws, and every
+reader here catches its own `SyntaxError` and returns empty. The two CRM readers did:
+
+- `parsePaymentSchedule` (`src/modules/crm/service.ts`) returned `[]`, so
+  `convertLeadToProject` refused **every** conversion with "has no payment schedule". Rule 6
+  was unreachable. Fixed.
+- `readSchedule` (`src/modules/crm/routes.tsx`) returned `[]`, so the printed quote showed no
+  payment terms and revising a quote silently dropped the milestones it was meant to carry
+  forward. Fixed.
+
+Both now treat the parsed value as the main path and the string as the fallback, which is
+the shape `src/lib/settings.ts` and `src/lib/audit.ts` already use for their own JSON
+columns — those two were written defensively and are correct.
+
+**Two readers outside this module have the same bug and are not fixed**, because admin is not
+this module and changing it means re-verifying it:
+
+- `src/modules/admin/routes.tsx:882` `FieldDiff` takes `before: string | null` and is called
+  with the raw `audit_log.before_json` / `after_json`. Both arrive parsed, so the per-key
+  diff never runs and the audit screen renders one `value` row holding the whole object.
+  `src/lib/audit.ts` already exports a correctly guarded `parseAuditJson` that this screen
+  does not use.
+- `src/modules/admin/routes.tsx:601` the settings page's local `parse(raw: string)`, same
+  shape, cosmetic by comparison.
+
+### 11.3 `HAVING` cannot see an ungrouped column in MariaDB
+`runCrmFollowups` filtered dormancy with
+`HAVING COALESCE(MAX(lead_activities.occurred_at), leads.created_at) < ?` while
+`leads.created_at` was in neither the select list nor the `GROUP BY`. MariaDB answers
+`Unknown column 'leads.created_at' in 'HAVING'`, so `/internal/cron/crm-followups` would have
+returned 500 every night it ran. Fixed by adding the column to both; it is functionally
+dependent on `leads.id`, which is already grouped, so the grouping is unchanged. The cron now
+runs end to end in the suite.
+
+### 11.4 Both preconditions named in the task were already satisfied
+The `quote_sent` visit gate asked for in `changeStage` was already there, and
+`convertLeadToProject` was already a single `db.transaction()`. Neither needed an edit; both
+are now executed and asserted rather than merely read. See 11.5.
+
+### 11.5 What the suite proves, specifically
+The three refusals are the point: `changeStage` to `quote_sent` and `createQuote` both refuse
+with no completed site visit (so a lead cannot sit in `quote_sent` with no quote in
+existence, and a rate cannot be quoted unseen); `approveQuote` refuses the person who raised
+it; a second `convertLeadToProject` refuses. Also executed: the escalation branch against a
+fixture `approval_limits` row (`limitBps` 250 against a 500 bps discount), the zero-discount
+self-approve branch, `sendQuote` reporting `emailed:false` with an `email_log` row because
+SMTP is unconfigured, `rejectQuote` → `reviseQuote` superseding revision 1, and the
+conversion opening a client, 12 stages from template 1, 3 milestones summing to the
+subtotal exactly (613,510,000 paise, GST excluded), and the site store.
+
+Row-level scoping is asserted from both sides: the gated `expected_value_paise` and
+`probability_pct` columns are **absent** from the row when `canViewValue` is false, not
+merely nulled, and a lead outside the scope predicate is invisible to the scoped reader.
+
+### 11.6 Test-side errors worth recording
+Four of the eleven first-run failures were mine, not the module's, and two of them are
+facts about the schema that the next module will meet again: `lead_activities.activity_type`
+splits calls by direction (`call_out` / `call_in`, no bare `call`), and
+`project_milestones` names its weightage column `percent_of_contract`. Also
+`duplicatesByPhone` lives in `service.ts`, not `queries.ts`, and `leadStageHistory` reads
+newest-first.
+
+### 11.7 Fixtures, and why the numbers move between runs
+The suite creates two obviously-fake users (`@example.invalid`, open question 8.1 is still
+unanswered so no real name appears) and one fixture `approval_limits` row, and cleans up by
+`id > MAX(id)` captured in `beforeAll` — Kysely 0.27 has no savepoints and every service
+function opens its own transaction, so an outer rollback is not available. Verified after
+the run: every tracked table is back to zero rows and all reference data is intact.
+
+`document_numbering` is deliberately **not** reset, so quote and lead numbers advance across
+runs. Assertions match the shape `NCC/QT/2026-27/nnn`, never a literal sequence number.
+
 

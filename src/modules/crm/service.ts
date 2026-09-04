@@ -2834,19 +2834,31 @@ function siteAddressOf(locality: string | null, city: string): string {
 /**
  * Reads the payment schedule off the quote.
  *
- * payment_schedule_json is a JSON column, typed Generated<string | null> in
- * src/db/types.ts and written with JSON.stringify, so it comes back as a string
- * that has to be parsed. Anything that is not an array of the expected shape
- * yields an empty schedule and the caller refuses, rather than a project with
- * milestones invented from a malformed row.
+ * payment_schedule_json is written with JSON.stringify, but it does not
+ * necessarily come back as a string: MariaDB reports the column with JSON
+ * metadata and mysql2 parses it for us, so the driver hands over a live Array.
+ * Verified against MariaDB 11.4, not assumed — the earlier version of this
+ * function took `string`, called JSON.parse on an Array, got "[object Object]",
+ * caught its own SyntaxError and returned an empty schedule, which made
+ * convertLeadToProject refuse every conversion with "has no payment schedule".
+ * src/db/types.ts still types the column `string | null`; that type is a
+ * statement about what is written, not about what is read.
+ *
+ * So the string branch is the fallback, not the main path. That is the same
+ * shape settings.ts:parse and audit.ts:parseAuditJson already use for their own
+ * JSON columns. Anything that is not an array of the expected shape yields an
+ * empty schedule and the caller refuses, rather than a project with milestones
+ * invented from a malformed row.
  */
-function parsePaymentSchedule(raw: string | null): MilestoneInput[] {
-  if (raw === null) return []
-  let parsed: unknown
-  try {
-    parsed = JSON.parse(raw)
-  } catch {
-    return []
+function parsePaymentSchedule(raw: unknown): MilestoneInput[] {
+  if (raw === null || raw === undefined) return []
+  let parsed: unknown = raw
+  if (typeof raw === 'string') {
+    try {
+      parsed = JSON.parse(raw)
+    } catch {
+      return []
+    }
   }
   if (!Array.isArray(parsed)) return []
   const out: MilestoneInput[] = []
@@ -2996,13 +3008,19 @@ export async function runCrmFollowups(db: Db): Promise<FollowupRunResult> {
   // Rule 9. The last-touch date is MAX(occurred_at) falling back to the lead's
   // own created_at, so a lead nobody has ever logged an activity against ages
   // from the day it arrived rather than reading as touched today.
+  //
+  // leads.created_at is in the select list and the GROUP BY because it has to
+  // be: MariaDB resolves HAVING against the grouped and selected columns only,
+  // and rejects a bare column there with "Unknown column in 'HAVING'" even
+  // though it is functionally dependent on leads.id. Grouping by a column of
+  // the PK's own row changes no grouping.
   const stale = await db
     .selectFrom('leads')
     .leftJoin('lead_activities', 'lead_activities.lead_id', 'leads.id')
-    .select(['leads.id', 'leads.lead_no', 'leads.stage', 'leads.contact_name', 'leads.assigned_to'])
+    .select(['leads.id', 'leads.lead_no', 'leads.stage', 'leads.contact_name', 'leads.assigned_to', 'leads.created_at'])
     .where('leads.stage', 'in', OPEN_STAGES)
     .where('leads.next_action_date', 'is', null)
-    .groupBy(['leads.id', 'leads.lead_no', 'leads.stage', 'leads.contact_name', 'leads.assigned_to'])
+    .groupBy(['leads.id', 'leads.lead_no', 'leads.stage', 'leads.contact_name', 'leads.assigned_to', 'leads.created_at'])
     .having(sql<boolean>`COALESCE(MAX(lead_activities.occurred_at), leads.created_at) < ${cutoff}`)
     .execute()
 

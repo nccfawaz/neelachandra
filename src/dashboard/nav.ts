@@ -61,10 +61,16 @@ export const NAV: NavGroup[] = [
   {
     label: 'Sales',
     items: [
+      { label: 'Pipeline', href: '/app/crm', perms: [PERMISSIONS.CRM_LEAD_VIEW] },
       { label: 'Leads', href: '/app/crm/leads', perms: [PERMISSIONS.CRM_LEAD_VIEW] },
       { label: 'Site visits', href: '/app/crm/visits', perms: [PERMISSIONS.CRM_LEAD_VIEW] },
       { label: 'Quotes', href: '/app/crm/quotes', perms: [PERMISSIONS.CRM_QUOTE_CREATE, PERMISSIONS.CRM_QUOTE_APPROVE] },
       { label: 'Enquiries', href: '/app/admin/enquiries', perms: [PERMISSIONS.ENQUIRIES_VIEW] },
+      // Sources and losses are reached from the funnel page. Only the funnel is
+      // linked here, for the same reason inventory links Consumption and not its
+      // other two reports: a sidebar that lists every report stops being a way
+      // to find anything.
+      { label: 'Funnel', href: '/app/crm/reports/funnel', perms: [PERMISSIONS.CRM_VIEW_PIPELINE_VALUE] },
     ],
   },
   {
