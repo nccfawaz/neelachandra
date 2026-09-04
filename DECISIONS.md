@@ -965,12 +965,27 @@ looks like a typo and behaves like a money bug, and nothing in the save path wou
 today.
 
 Deferred deliberately, not overlooked. The fix belongs with the rest of the input hardening in
-**spec phase 9**, and it is a validation rule rather than a schema change: reject a value below
-100 for `finance.gst_default_pct`, `finance.tds_default_pct` and
-`finance.retention_default_pct`, with a message that names the unit — "GST rate is in basis
-points: 1800 is 18 percent. 18 would be 0.18 percent." A `pct` data_type with its own editor
-branch was considered and rejected for now: it changes 6.2's type-driven render for one module's
-three keys, mid-flight, before the module that reads them exists.
+**spec phase 9**, and it is a validation rule rather than a schema change. It applies to exactly
+three keys — `finance.gst_default_pct`, `finance.tds_default_pct`,
+`finance.retention_default_pct` — in three bands, not as a floor:
+
+| Value | Verdict | Why |
+|---|---|---|
+| `0` | accept | A zero rate is legitimate. §6.8 line 1999: `tds_pct DECIMAL(5,2) NOT NULL DEFAULT 0`. TDS under 194C does not apply to every payment, and the spec's own default is nil. |
+| `1`–`99` | **reject** | Below one percent for GST, TDS or retention. Reads as a decimal entered into a basis-point field: `18` meaning 18 percent, stored as 0.18. |
+| `>= 100` | accept | One percent or more, in basis points. |
+
+The message has to name the unit and the zero case, because the value the user typed looks
+correct to them: "This rate is in basis points — 1800 is 18 percent, 200 is 2 percent. You
+entered 18, which is 0.18 percent. Enter 0 for a nil rate."
+
+The first draft of this section set the floor at 100 and would have rejected the spec's own TDS
+default. Corrected here rather than in phase 9, where a rule written from the wrong premise
+would have been implemented as written.
+
+A `pct` data_type with its own editor branch was considered and rejected for now: it changes
+6.2's type-driven render for one module's three keys, mid-flight, before the module that reads
+them exists.
 
 The consequence of waiting is bounded. The three keys have no readers until finance is built,
 and a wrong value is visible in the field it was typed into.
