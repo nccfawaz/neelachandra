@@ -28,7 +28,10 @@ describe('visibleNav', () => {
 
   it('drops groups left empty rather than rendering an empty heading', () => {
     const groups = visibleNav(new Set([PERMISSIONS.INVENTORY_VIEW]))
-    expect(groups.map((g) => g.label)).toEqual(['Inventory'])
+    // People survives on the Leave item alone, which is anyUser. Everything
+    // else in it needs a permission this set does not hold.
+    expect(groups.map((g) => g.label)).toEqual(['Inventory', 'People'])
+    expect(groups.find((g) => g.label === 'People')!.items.map((i) => i.label)).toEqual(['Leave'])
   })
 
   it('admits an item on any one of its permissions, not all of them', () => {
@@ -37,8 +40,26 @@ describe('visibleNav', () => {
     expect(labels).toContain('Purchase orders')
   })
 
-  it('returns nothing for a session with no permissions', () => {
-    expect(visibleNav(new Set())).toEqual([])
+  /**
+   * Leave is the one route in the app whose spec permission is "own", so it
+   * carries no requirePermission and any authenticated user reaches it. The
+   * sidebar has to show it or the invariant fails in its second direction --
+   * which is why an empty permission set no longer produces an empty sidebar.
+   */
+  it('shows an anyUser item to a session with no permissions, and nothing else', () => {
+    const groups = visibleNav(new Set())
+    expect(groups.flatMap((g) => g.items.map((i) => i.href))).toEqual(['/app/hr/leave'])
+  })
+
+  it('keeps perms: [] fail-closed for an item that is not anyUser', () => {
+    // An item with neither a permission nor the flag stays hidden, so a
+    // half-edited entry hides rather than leaks.
+    const hidden = NAV.flatMap((g) => g.items).filter(
+      (i) => i.perms.length === 0 && i.anyUser !== true
+    )
+    for (const item of hidden) {
+      expect(visibleNav(new Set(Object.values(PERMISSIONS))).flatMap((g) => g.items)).not.toContain(item)
+    }
   })
 
   it('shows every item to a permission set holding everything', () => {

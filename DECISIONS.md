@@ -1306,6 +1306,259 @@ to decide *which* permission protects it. That question is settled in the same p
 or the route ships guarding an Aadhaar scan by `uploaded_by`, which is not a permission
 check. See 14.3 for what §6.6 rule 6 promises here.
 
+### 15.2 `leave_types.requires_document` stays unenforced until an upload route exists
+
+**Applies to:** `requestLeave` in `src/modules/hr/service.ts`, and the leave form in
+`src/modules/hr/routes.tsx`.
+
+**The condition:** three of the seven seeded leave types carry `requires_document = 1` — SL,
+MAT and PAT — and SL is the most frequently taken kind of leave there is. `leave_requests`
+has `file_id` with an FK to `files`, and `requestLeave` checks that a supplied file exists.
+Nothing can supply one: `storeUpload` has no callers and no route accepts a file (15.1).
+
+So the flag is **surfaced and not enforced.** The form prints "needs a document" beside those
+types, the audit entry for every request carries
+`document_required_and_absent: <requires_document && file_id === null>`, and the request is
+accepted. Enforcing it today would make three of seven types unrequestable, including sick
+leave, which is the one type nobody can give notice for.
+
+**What satisfies the precondition:** 15.1, and then one line in `requestLeave` turning the
+audited flag into a refusal. Until then the audit field is the record of which approvals were
+granted without the document the type asks for, which is what an inspection would ask about.
+
+**Do not** enforce it by adding a "document reference" text column, or by refusing SL. The
+first stores a promise instead of a document; the second removes the most common leave type
+from the system.
+
+## 16. HR, second slice: attendance and leave, 2026-09-04
+
+Covers §6.6 rules 1 and 4 and the leave half of the route table, in the same four files as
+section 14 (`src/modules/hr/{queries.ts,schemas.ts,service.ts,routes.tsx}`) plus `src/dashboard/nav.ts`.
+Contractor labour, safety and recruiting are still stubs. What follows is what had to be
+decided, what was found on the way, and what is deliberately not built.
+
+### 16.1 The month lock is derived from `attendance.approved_at`, and it blocks inserts
+
+Rule 4 requires a closed month to refuse changes. There is no table to record that a month is
+closed: `migrations/` declares no `attendance_periods`, and `accounting_periods` belongs to
+finance. Its permission `finance.period_close` is what rule 4 names as the **override** for a
+closed attendance month, so using finance's table as the lock would make one permission both
+the gate and the key.
+
+**Decision: the lock is derived.** A month is closed when any of its `attendance` rows has a
+non-null `approved_at` (`attendanceMonthState`, `locked: approved > 0`). Three consequences,
+all of them chosen rather than inherited:
+
+- **The close is whole-month and has no project scope.** A close covering one project would
+  leave the month simultaneously locked and open, and a derived lock cannot express that
+  without the table it does not have.
+- **The lock refuses inserts, not only updates.** A month closed with twenty days entered and
+  the twenty-first added afterwards changes the same payroll figure the lock exists to freeze.
+- **One approved row closes the month.** There is no partial close, and `approveAttendanceMonth`
+  refuses a second close (`ConflictError`) rather than restamping: `where approved_at is null`
+  is the only record of when the month was first closed.
+
+The derived state is read in three places — the month state the screen renders, the per-row
+prior in `recordAttendanceBulk`, and the month check in `decideLeave`'s approve branch, because
+approving leave writes attendance rows and would otherwise walk straight into a closed month.
+All three go through `assertMonthOpen`, which is why they cannot drift apart.
+
+**Reopens if:** an `attendance_periods` table lands. The change is `attendanceMonthState` and
+nothing else.
+
+### 16.2 An unreachable guard in `recordAttendanceBulk`, found and kept
+
+`recordAttendanceBulk` carries a per-row check that a prior row is not already approved
+(`service.ts:644`). **It cannot fire.** Under a derived lock, an approved row makes its month
+locked, so `assertMonthOpen` throws before the loop when `canOverridePeriod` is false — and
+the guard is skipped when it is true.
+
+Reported rather than deleted, and kept: it is the guard a stored or project-scoped lock would
+need on day one, and a row-level check in front of a row-level write is not misleading code.
+`tests/integration/hr-attendance-flow.test.ts` asserts the observable truth — that the refusal
+arrives with the month's message, not the row's — and says why in a comment, so the next reader
+does not "fix" the test to match the unreachable branch.
+
+### 16.3 A day counted is a day that is not Sunday; public holidays count
+
+`workingDaysBetween` excludes Sundays and nothing else. Sunday is the weekly off on these
+sites, and charging leave entitlement for one would overstate what the person took.
+
+**Public holidays are not excluded, and this costs the employee.** There is no holiday calendar
+table in the schema and no holiday list in the spec, so a range containing 2 October is charged
+one day more than the person was absent for. Inventing the company's holiday list would be
+inventing a business rule; the over-count is in the direction that is visible to the employee,
+who will say so, rather than the direction that quietly pays for a day nobody worked.
+
+The same rule is used twice — for `days` on the request and for the set of dates the approval
+writes `attendance` rows across — and it has to be the same call, or the balance says one number
+and the muster roll shows another.
+
+**Reopens if:** §8 supplies a holiday calendar. `isWorkingDay` is then the only function to
+change and both readers follow.
+
+### 16.4 `min_notice_days` is enforced on a self-raise and waived on an approver's
+
+Seeded notice: MAT 30, PAT 15, EL 3, CL/LWP/COMP 1, SL 0.
+
+**Decision: enforce it against the person raising their own leave, waive it for a holder of
+`hr.leave_approve` raising it for someone else, and audit the waiver.** A system that cannot
+record a maternity notification given at twenty days is a system HR keeps its real leave
+register outside of, and a register kept outside the system is the failure mode this module
+exists to prevent. The audit entry for every request carries `notice_days_given`,
+`notice_days_required` and `notice_waived`, so the waiver is a fact somebody can be asked
+about rather than a silent bypass.
+
+Rejected: enforcing for both. It makes the on-behalf path useless for the case it exists for —
+recording something that already happened. Rejected also: dropping the check entirely, which
+leaves the column with no reader and the notice period with no meaning.
+
+### 16.5 The document a leave type asks for is surfaced, not enforced
+
+See **15.2**. Three of seven seeded types require a document, no route can accept one, and
+enforcing the flag would make sick leave unrequestable. The audit field
+`document_required_and_absent` is the record until 15.1 is satisfied.
+
+### 16.6 An approval writes attendance, and clears the project off a day already worked
+
+`paid_leave`, `unpaid_leave` and `half_day` are `attendance.status` ENUM members with **no
+writer anywhere in the codebase except `decideLeave`**. §6.8 rule 10 costs staff time by joining
+`attendance` to `employee_compensation`, so approved paid leave that never reached `attendance`
+is time the company paid for and charged to nothing. The approval therefore writes one row per
+working day in the range, inserting where the day is unmarked and updating where it is not.
+
+Four things the update branch decides:
+
+- **`project_id` is cleared.** A day on leave was not worked on a site, and leaving the day
+  charged puts leave cost inside a project's budget. The day may well have been marked
+  `present` against a project before the leave was approved, which is the case the UPDATE
+  exists for and the one that had never run.
+- `in_time`, `out_time` and `overtime_hours` are cleared for the same reason.
+- `remarks` becomes `Leave request <id>`, so the row says where it came from without a join.
+- **A half day is written as `half_day`, not as a whole day of `paid_leave`.** `days` is 0.5 in
+  a `DECIMAL(4,1)` column, and the muster roll counts a `paid_leave` row as a full day absent.
+
+The interlock runs the other way too: `recordAttendanceBulk` refuses to mark an approved leave
+day as worked and puts the request number in the message, because withdrawing the request is
+the correct way to undo it. A *leave* status over an approved leave day is still allowed —
+`unpaid_leave` over `paid_leave` is a correction a supervisor is entitled to make, and the
+balance is not touched by it.
+
+Balances are **tracked, not enforced.** Every seeded `annual_quota` is NULL pending §8.6, so
+there is no quota to refuse against and a negative balance is a fact for HR to look at rather
+than a validation failure. `leave_balances` is upserted on `uq_bal (employee_id, leave_type_id,
+financial_year)` with the arithmetic done in JS: `balance = opening + accrued - availed - encashed`.
+
+### 16.7 A leave range crossing 31 March lands wholly in the financial year it starts in
+
+`financialYear(from_date)` picks the balance row for the whole request, so 30 March to 2 April
+draws four days from the year that is ending and none from the year that is starting.
+
+Splitting it would need a rule for which year a March-to-April absence draws down, and §8.6 has
+not answered the simpler question of what the annual quota even is. **Guessed, and recorded as a
+guess.** The alternative — refusing a range that crosses the boundary — pushes the employee into
+raising two requests and produces the same total in two rows, with no rule to say it is right
+either.
+
+**Reopens with §8.6.** If the answer splits the range, `decideLeave`'s balance block is the only
+code that changes.
+
+### 16.8 "Own" is expressed as the absence of a permission, and the sidebar had to learn it
+
+The §6.6 route table gives `GET /app/hr/leave` the permission mode "own". There is no `own`
+permission key, and there is no route-level middleware that can express it: `/app/*` sits behind
+`csrfProtect()` then `requireAuth()`, so **a route with no `requirePermission` is
+authenticated-only**, which is what "own" means here. `/app/hr/leave`, `POST /app/hr/leave` and
+`POST /api/hr/leave/:id/withdraw` all carry none.
+
+Ownership is therefore enforced below the route, in two places that cannot be bypassed by
+shaping the request differently:
+
+- `listLeaveRequests({ employeeId })` filters inside the query. The route passes
+  `canApprove ? undefined : (selfEmployeeId ?? -1)` — the `?? -1` is deliberate: a login with no
+  employee record sees **nothing**, not everything.
+- `withdrawLeave` refuses a request that is not the caller's own, and refuses one that is not
+  pending. An approved request has already moved `attendance` and `leave_balances`, so undoing
+  it is a reversal an approver makes.
+- `decideLeave` refuses self-approval **by employee, not by login**. The request is filed against
+  an employee record and carries no user id, so an HR officer whose account is linked to employee
+  4 cannot approve employee 4's leave. The dashboard queue filters the same way.
+
+This broke the sidebar's stated invariant — a route you can reach is a route you can find — in
+its second direction: with every item requiring a permission, a user holding none saw an empty
+sidebar and had no link to the one page they could open. `NavItem.anyUser` was added for exactly
+this case, and `perms: []` without the flag stays hidden, so a half-edited entry hides rather
+than leaks (`tests/nav.test.ts`).
+
+### 16.9 The attendance grid's permission was widened, resolving 14.5 in one direction
+
+14.5 recorded that the spec's route table denies a site supervisor the screen attendance is
+entered on: line 1723 gives the grid to `hr.employee_view`, and the 002 seed grants that to
+`admin`, `ops_manager` and `hr_manager` while giving `hr.attendance_record` to
+`project_manager` and `site_supervisor`.
+
+**Decision: widen the read, leave the writes exactly as specified.**
+`GET /app/hr/attendance` requires `hr.employee_view` **OR** `hr.attendance_record` **OR**
+`hr.attendance_approve`; `POST /api/hr/attendance/bulk` keeps `hr.attendance_record` and
+`POST /api/hr/attendance/approve` keeps `hr.attendance_approve`, both alone. Inside the page,
+`canRecord`, `canApprove` and `canOverride` (from `finance.period_close`) decide which controls
+render, so a viewer who cannot record sees the month without the submit.
+
+Widening a read grants nobody a write the spec did not give them. The alternative — adding
+`hr.employee_view` to the two site roles — edits the grants in a migration that is applied and
+checksummed (13.3), and it also hands those roles the employee master, including pay. **Still an
+§8.1 question**; this is the reversible half of it.
+
+### 16.10 Rule 1's Alpine keyboard matrix is not built, and nothing pretends it is
+
+Spec line 1761: "`AttendanceGrid.tsx` is a month-by-employee matrix with keyboard entry (arrow
+keys to move, single letter to set status) **built in Alpine**, because HR marks a whole month in
+one sitting and a click-per-cell form is unusable."
+
+**What ships instead:** a server-rendered grid for **one day** across the roster, prefilled from
+`attendanceOn`, submitted as a single POST for the whole day, plus a month view that reads. The
+month-by-employee matrix, the arrow-key movement and the single-letter status are **not built.**
+
+The reason is not effort. Alpine is vendored, and there is **no `x-data`, `x-model` or `x-on:`
+anywhere in `src/`** — every interactive surface in the application so far is a server-rendered
+form plus htmx. Writing the first client-side stateful component in the codebase, inside the
+attendance slice, on an inferred design, would set the pattern for §6.5's `ItemPicker` and
+`LineItemGrid` (line 1355) by accident. Flagged rather than chosen, which is the standing rule
+for a spec instruction that conflicts with a built convention.
+
+What ships is enterable from the keyboard in the browser's own tab order across a day's rows.
+That is not the same thing, and the month-in-one-sitting workflow the spec gives as the reason
+for the matrix is not served by it. **This is the largest deliberate gap in the slice.**
+
+### 16.11 Verification record, 2026-09-04 — attendance and leave
+
+Run from `C:\Users\HP\Downloads\neelachandra-main\neelachandra-main`, against the persistent dev
+MariaDB 11.4.4 on 127.0.0.1:3307 (`ncc_dev`):
+
+| Gate | Command | Result |
+| --- | --- | --- |
+| Types | `npm run typecheck` | 0 errors, **71** source files listed by `--listFiles` |
+| Pure | `npm test` | **245 passed**, 9 files |
+| Database | `npm run test:integration` | **138 passed**, 5 files |
+
+The integration total is 82 → 138 because `tests/integration/hr-attendance-flow.test.ts` adds
+**56** tests. The pure total is 204 → 245, which is `tests/hr-schemas.test.ts` new at **27**, the
+month and working-day block appended to `tests/dates.test.ts` at **12**, and **2** more generated
+rows in `tests/nav.test.ts` — one per new sidebar entry, since that file asserts every href is a
+path some module registers. Both HR integration files run against the same database in one fork (`fileParallelism: false`, `singleFork: true`) and clean up by id above a
+high-water mark; `hr-flow.test.ts` asserts `unapprovedAttendance === 0`, which only passes if the
+attendance file's cleanup is complete, so the two files check each other.
+
+What the counts do **not** cover: the four `/app/hr/*` screens and three `/api/hr/*` posts in this
+slice are exercised through their services, not through HTTP. No e2e run touches the grid, and
+the "not built" of 16.10 is a statement about the markup, which no gate here asserts.
+
+
+
+
+
+
+
 
 
 

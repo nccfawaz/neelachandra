@@ -16,6 +16,19 @@ export interface NavItem {
   href: string
   /** Any one of these admits the item. */
   perms: PermissionKey[]
+  /**
+   * Admitted for any authenticated user, whatever their permissions.
+   *
+   * Only for a route whose spec permission is "own" -- 6.6's leave row, where
+   * "any employee with a login raises their own" and the matching route
+   * therefore carries no `requirePermission` at all. Without this the invariant
+   * above fails in its second direction: the route is reachable and the link is
+   * not there to find it.
+   *
+   * A separate flag rather than `perms: []`, because an empty array reading as
+   * "hidden" is the fail-closed default an item left half-edited should get.
+   */
+  anyUser?: true
 }
 
 export interface NavGroup {
@@ -87,8 +100,16 @@ export const NAV: NavGroup[] = [
     label: 'People',
     items: [
       { label: 'Employees', href: '/app/hr/employees', perms: [PERMISSIONS.HR_EMPLOYEE_VIEW] },
-      { label: 'Attendance', href: '/app/hr/attendance', perms: [PERMISSIONS.HR_ATTENDANCE_RECORD, PERMISSIONS.HR_ATTENDANCE_APPROVE] },
-      { label: 'Leave', href: '/app/hr/leave', perms: [PERMISSIONS.HR_LEAVE_APPROVE, PERMISSIONS.HR_EMPLOYEE_VIEW] },
+      // hr.employee_view is here because it is what the 6.6 route table gives
+      // the attendance GET, and the route now guards on the OR of all three.
+      { label: 'Attendance', href: '/app/hr/attendance', perms: [PERMISSIONS.HR_EMPLOYEE_VIEW, PERMISSIONS.HR_ATTENDANCE_RECORD, PERMISSIONS.HR_ATTENDANCE_APPROVE] },
+      // The statutory register, linked despite the "not every report" rule the
+      // CRM group states: hr.employee_view is the only permission the spec gives
+      // it, and the link on the attendance screen sits behind permissions an
+      // employee_view holder need not have.
+      { label: 'Muster roll', href: '/app/hr/reports/muster', perms: [PERMISSIONS.HR_EMPLOYEE_VIEW] },
+      // Any authenticated user: the route is "own" and unguarded. See anyUser.
+      { label: 'Leave', href: '/app/hr/leave', perms: [PERMISSIONS.HR_LEAVE_APPROVE, PERMISSIONS.HR_EMPLOYEE_VIEW], anyUser: true },
       { label: 'Contractors', href: '/app/hr/contractors', perms: [PERMISSIONS.HR_LABOUR_CONTRACTOR_MANAGE] },
       { label: 'Recruiting', href: '/app/hr/recruiting', perms: [PERMISSIONS.HR_RECRUIT_MANAGE] },
     ],
@@ -118,7 +139,7 @@ export const NAV: NavGroup[] = [
 export function visibleNav(perms: Set<string>): NavGroup[] {
   return NAV.map((group) => ({
     label: group.label,
-    items: group.items.filter((item) => item.perms.some((p) => perms.has(p))),
+    items: group.items.filter((item) => item.anyUser === true || item.perms.some((p) => perms.has(p))),
   })).filter((group) => group.items.length > 0)
 }
 

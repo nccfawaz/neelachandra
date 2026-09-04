@@ -4,19 +4,24 @@ import {
   addMonths,
   addYears,
   currentFinancialYear,
+  datesBetween,
   daysBetween,
   financialYear,
   financialYearBounds,
   formatDate,
   formatDateTime,
+  formatMonth,
   isValidIsoDate,
   isWorkingDay,
+  monthBounds,
+  monthOf,
   nowSqlDateTime,
   periodOf,
   previousWorkingDay,
   relativeDays,
   sqlDateTimeIn,
   today,
+  workingDaysBetween,
   yesterday,
 } from '../src/lib/dates.js'
 
@@ -204,5 +209,96 @@ describe('isValidIsoDate', () => {
     expect(isValidIsoDate('')).toBe(false)
     expect(isValidIsoDate(null)).toBe(false)
     expect(isValidIsoDate(20260903)).toBe(false)
+  })
+})
+
+/* The month and working-day helpers the attendance grid and leave counting
+   rest on (spec 6.6 rules 1 and 4). ------------------------------------- */
+
+describe('monthBounds', () => {
+  it('ends on the real last day, including February in a leap year', () => {
+    expect(monthBounds('2026-09')).toEqual({ start: '2026-09-01', end: '2026-09-30' })
+    expect(monthBounds('2026-02')).toEqual({ start: '2026-02-01', end: '2026-02-28' })
+    // Derived by stepping a month forward and a day back, so no leap branch.
+    expect(monthBounds('2028-02')).toEqual({ start: '2028-02-01', end: '2028-02-29' })
+    expect(monthBounds('2026-12')).toEqual({ start: '2026-12-01', end: '2026-12-31' })
+  })
+
+  it('round-trips with monthOf', () => {
+    for (const month of ['2026-01', '2026-04', '2026-11', '2027-02']) {
+      const { start, end } = monthBounds(month)
+      expect(monthOf(start)).toBe(month)
+      expect(monthOf(end)).toBe(month)
+    }
+  })
+})
+
+describe('datesBetween', () => {
+  it('is inclusive of both ends and ascending', () => {
+    expect(datesBetween('2026-09-01', '2026-09-04')).toEqual([
+      '2026-09-01',
+      '2026-09-02',
+      '2026-09-03',
+      '2026-09-04',
+    ])
+  })
+
+  it('returns the single date when the ends are equal', () => {
+    expect(datesBetween('2026-09-04', '2026-09-04')).toEqual(['2026-09-04'])
+  })
+
+  it('returns nothing when the range is backwards, rather than looping', () => {
+    expect(datesBetween('2026-09-04', '2026-09-01')).toEqual([])
+  })
+
+  it('spans a month and covers every day of it', () => {
+    const { start, end } = monthBounds('2026-09')
+    expect(datesBetween(start, end)).toHaveLength(30)
+  })
+
+  it('crosses a year boundary', () => {
+    expect(datesBetween('2026-12-30', '2027-01-02')).toEqual([
+      '2026-12-30',
+      '2026-12-31',
+      '2027-01-01',
+      '2027-01-02',
+    ])
+  })
+})
+
+describe('workingDaysBetween', () => {
+  it('excludes Sundays, which are the weekly off on these sites', () => {
+    // 2026-09-06 and 2026-09-13 are Sundays.
+    expect(isWorkingDay('2026-09-06')).toBe(false)
+    expect(isWorkingDay('2026-09-13')).toBe(false)
+    expect(workingDaysBetween('2026-09-07', '2026-09-11')).toBe(5)
+    expect(workingDaysBetween('2026-09-07', '2026-09-13')).toBe(6)
+    expect(workingDaysBetween('2026-09-05', '2026-09-07')).toBe(2)
+  })
+
+  it('counts a single working day as one and a single Sunday as none', () => {
+    expect(workingDaysBetween('2026-09-04', '2026-09-04')).toBe(1)
+    // A leave range of nothing but Sundays is refused by the service, which
+    // depends on this returning zero rather than one.
+    expect(workingDaysBetween('2026-09-06', '2026-09-06')).toBe(0)
+  })
+
+  it('counts public holidays, because there is no holiday calendar', () => {
+    // 2 October is Gandhi Jayanti, a national holiday, and a Friday in 2026.
+    // It counts, which over-counts a leave range containing it by one day in
+    // the direction that costs the employee. Recorded in DECISIONS.
+    expect(workingDaysBetween('2026-10-02', '2026-10-02')).toBe(1)
+  })
+
+  it('gives 26 working days for a 30-day month with four Sundays', () => {
+    const { start, end } = monthBounds('2026-09')
+    expect(workingDaysBetween(start, end)).toBe(26)
+  })
+})
+
+describe('formatMonth', () => {
+  it('reads as a heading, not as a key', () => {
+    expect(formatMonth('2026-09')).toBe('September 2026')
+    expect(formatMonth('2027-01')).toBe('January 2027')
   })
 })

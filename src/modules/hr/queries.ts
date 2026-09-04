@@ -1,4 +1,5 @@
 import type { Db, Queryable } from '../../db/kysely.js'
+import { monthBounds } from '../../lib/dates.js'
 
 /**
  * HR reads (spec 6.6).
@@ -350,6 +351,395 @@ export function blockerCount(b: ExitBlockers): number {
     b.expensesRaised.length +
     b.advancesOutstanding.length
   )
+}
+
+/* Attendance (6.6 rules 1 and 4) ----------------------------------------- */
+
+/**
+ * The people a month's grid has a row for.
+ *
+ * Not "active employees": someone who joined on the 20th or left on the 8th
+ * belongs in that month's muster roll for the part of it they were employed,
+ * and a roster that dropped them would lose their days from 6.8's staff cost.
+ * The join and exit dates come back with the row so the grid can grey out the
+ * cells outside them.
+ */
+export interface RosterRow {
+  id: number
+  employee_code: string
+  full_name: string
+  father_or_spouse_name: string | null
+  gender: string | null
+  date_of_joining: string
+  date_of_exit: string | null
+  status: string
+  department_name: string | null
+  designation_name: string | null
+}
+
+export async function attendanceRoster(
+  db: Queryable,
+  month: string,
+  opts: { employeeId?: number } = {}
+): Promise<RosterRow[]> {
+  const { start, end } = monthBounds(month)
+  let query = db
+    .selectFrom('employees')
+    .leftJoin('departments', 'departments.id', 'employees.department_id')
+    .leftJoin('designations', 'designations.id', 'employees.designation_id')
+    .select([
+      'employees.id',
+      'employees.employee_code',
+      'employees.full_name',
+      // Carried for the muster roll, which is a statutory form: Form XVI wants
+      // the father's or husband's name, the sex and the designation beside the
+      // daily marks. The month grid ignores these columns.
+      'employees.father_or_spouse_name',
+      'employees.gender',
+      'employees.date_of_joining',
+      'employees.date_of_exit',
+      'employees.status',
+      'departments.name as department_name',
+      'designations.name as designation_name',
+    ])
+    .where('employees.date_of_joining', '<=', end)
+    .where((eb) =>
+      eb.or([eb('employees.date_of_exit', 'is', null), eb('employees.date_of_exit', '>=', start)])
+    )
+    .orderBy('employees.employee_code')
+  if (opts.employeeId) query = query.where('employees.id', '=', opts.employeeId)
+  return (await query.execute()) as unknown as RosterRow[]
+}
+
+export interface AttendanceCell {
+  id: number
+  employee_id: number
+  attendance_date: string
+  project_id: number | null
+  status: string
+  in_time: string | null
+  out_time: string | null
+  overtime_hours: number
+  approved_at: string | null
+  remarks: string | null
+  project_code: string | null
+}
+
+export async function attendanceMonth(
+  db: Queryable,
+  month: string,
+  opts: { employeeId?: number; projectId?: number } = {}
+): Promise<AttendanceCell[]> {
+  const { start, end } = monthBounds(month)
+  let query = db
+    .selectFrom('attendance')
+    .leftJoin('projects', 'projects.id', 'attendance.project_id')
+    .select([
+      'attendance.id',
+      'attendance.employee_id',
+      'attendance.attendance_date',
+      'attendance.project_id',
+      'attendance.status',
+      'attendance.in_time',
+      'attendance.out_time',
+      'attendance.overtime_hours',
+      'attendance.approved_at',
+      'attendance.remarks',
+      'projects.code as project_code',
+    ])
+    .where('attendance.attendance_date', '>=', start)
+    .where('attendance.attendance_date', '<=', end)
+    .orderBy('attendance.attendance_date')
+  if (opts.employeeId) query = query.where('attendance.employee_id', '=', opts.employeeId)
+  if (opts.projectId) query = query.where('attendance.project_id', '=', opts.projectId)
+  return (await query.execute()) as unknown as AttendanceCell[]
+}
+
+/**
+ * One day's rows, for the entry grid's prefill.
+ *
+ * Deliberately not filtered by project, unlike the month grid: the entry grid
+ * prefills from this, and a day charged to another project showing as unmarked
+ * would invite a supervisor to enter it twice and move the cost.
+ */
+export async function attendanceOn(db: Queryable, date: string): Promise<AttendanceCell[]> {
+  return (await db
+    .selectFrom('attendance')
+    .leftJoin('projects', 'projects.id', 'attendance.project_id')
+    .select([
+      'attendance.id',
+      'attendance.employee_id',
+      'attendance.attendance_date',
+      'attendance.project_id',
+      'attendance.status',
+      'attendance.in_time',
+      'attendance.out_time',
+      'attendance.overtime_hours',
+      'attendance.approved_at',
+      'attendance.remarks',
+      'projects.code as project_code',
+    ])
+    .where('attendance.attendance_date', '=', date)
+    .execute()) as unknown as AttendanceCell[]
+}
+
+/**
+ * Whether a month is closed, and how far the entry has got.
+ *
+ * The lock is DERIVED, not stored. There is no `attendance_periods` table and
+ * `accounting_periods` belongs to finance -- whose `finance.period_close` is
+ * the override in rule 4, so reusing it as the lock would make the override its
+ * own key. So a month is closed once any row in it carries `approved_at`, which
+ * is what `POST /api/hr/attendance/approve` stamps. Recorded in DECISIONS.
+ */
+export interface MonthState {
+  month: string
+  total: number
+  approved: number
+  locked: boolean
+}
+
+export async function attendanceMonthState(db: Queryable, month: string): Promise<MonthState> {
+  const { start, end } = monthBounds(month)
+  const row = await db
+    .selectFrom('attendance')
+    .select((eb) => [
+      eb.fn.countAll<number>().as('total'),
+      eb.fn.count<number>('attendance.approved_at').as('approved'),
+    ])
+    .where('attendance.attendance_date', '>=', start)
+    .where('attendance.attendance_date', '<=', end)
+    .executeTakeFirst()
+  const total = Number(row?.total ?? 0)
+  const approved = Number(row?.approved ?? 0)
+  return { month, total, approved, locked: approved > 0 }
+}
+
+/** Projects a day's attendance can be charged to. NULL is overhead (rule 1). */
+export async function projectOptions(db: Queryable) {
+  return db
+    .selectFrom('projects')
+    .select(['id', 'code', 'name'])
+    .where('status', 'in', ['mobilising', 'in_progress', 'on_hold', 'snagging'])
+    .orderBy('code')
+    .execute()
+}
+
+/* Leave ------------------------------------------------------------------- */
+
+export async function leaveTypeOptions(db: Queryable) {
+  return db
+    .selectFrom('leave_types')
+    .select([
+      'id',
+      'code',
+      'name',
+      'annual_quota',
+      'is_paid',
+      'requires_document',
+      'min_notice_days',
+    ])
+    .where('is_active', '=', 1)
+    .orderBy('code')
+    .execute()
+}
+
+/**
+ * Approved leave covering one date, by employee.
+ *
+ * The entry grid uses it to render "on EL (request 4)" instead of a status
+ * select. `recordAttendanceBulk` refuses that row anyway, but a supervisor who
+ * sees the reason before submitting does not have to work out which of ten
+ * people the 422 was about.
+ */
+export interface ApprovedLeaveDay {
+  employee_id: number
+  request_id: number
+  type_code: string
+  days: number
+}
+
+export async function approvedLeaveOn(db: Queryable, date: string): Promise<ApprovedLeaveDay[]> {
+  const rows = await db
+    .selectFrom('leave_requests')
+    .innerJoin('leave_types', 'leave_types.id', 'leave_requests.leave_type_id')
+    .select([
+      'leave_requests.employee_id',
+      'leave_requests.id as request_id',
+      'leave_types.code as type_code',
+      'leave_requests.days',
+    ])
+    .where('leave_requests.status', '=', 'approved')
+    .where('leave_requests.from_date', '<=', date)
+    .where('leave_requests.to_date', '>=', date)
+    .execute()
+  return rows.map((r) => ({
+    employee_id: Number(r.employee_id),
+    request_id: Number(r.request_id),
+    type_code: r.type_code,
+    days: Number(r.days),
+  }))
+}
+
+export interface LeaveRequestRow {
+  id: number
+  employee_id: number
+  employee_code: string
+  employee_name: string
+  leave_type_id: number
+  type_code: string
+  type_name: string
+  is_paid: number
+  requires_document: number
+  from_date: string
+  to_date: string
+  days: number
+  reason: string | null
+  status: string
+  approved_at: string | null
+  reject_reason: string | null
+  file_id: number | null
+  handover_name: string | null
+  decided_by_name: string | null
+}
+
+/**
+ * The leave list.
+ *
+ * `employeeId` is how "own" is enforced (spec 6.6 route table): the route passes
+ * it for a requester who does not hold `hr.leave_approve`, and omits it for one
+ * who does. The filter is in the query rather than applied to the result, so
+ * there is no shape of this function that reads out another employee's leave for
+ * a caller who should not see it.
+ */
+export async function listLeaveRequests(
+  db: Queryable,
+  opts: { employeeId?: number; status?: string; pendingFor?: number } = {}
+): Promise<LeaveRequestRow[]> {
+  let query = db
+    .selectFrom('leave_requests')
+    .innerJoin('employees', 'employees.id', 'leave_requests.employee_id')
+    .innerJoin('leave_types', 'leave_types.id', 'leave_requests.leave_type_id')
+    .leftJoin('employees as handover', 'handover.id', 'leave_requests.handover_to_employee_id')
+    .leftJoin('users as decider', 'decider.id', 'leave_requests.approved_by')
+    .select([
+      'leave_requests.id',
+      'leave_requests.employee_id',
+      'employees.employee_code',
+      'employees.full_name as employee_name',
+      'leave_requests.leave_type_id',
+      'leave_types.code as type_code',
+      'leave_types.name as type_name',
+      'leave_types.is_paid',
+      'leave_types.requires_document',
+      'leave_requests.from_date',
+      'leave_requests.to_date',
+      'leave_requests.days',
+      'leave_requests.reason',
+      'leave_requests.status',
+      'leave_requests.approved_at',
+      'leave_requests.reject_reason',
+      'leave_requests.file_id',
+      'handover.full_name as handover_name',
+      'decider.full_name as decided_by_name',
+    ])
+    .orderBy('leave_requests.from_date', 'desc')
+    .orderBy('leave_requests.id', 'desc')
+
+  if (opts.employeeId) query = query.where('leave_requests.employee_id', '=', opts.employeeId)
+  if (opts.status) query = query.where('leave_requests.status', '=', opts.status as 'pending')
+  // The approver's queue. Excluded by employee rather than by user because the
+  // request is filed against an employee record, which is the same reason the
+  // dashboard widget filters it that way.
+  if (opts.pendingFor) query = query.where('leave_requests.employee_id', '!=', opts.pendingFor)
+
+  return (await query.execute()) as unknown as LeaveRequestRow[]
+}
+
+export async function findLeaveRequest(db: Queryable, id: number) {
+  return db
+    .selectFrom('leave_requests')
+    .innerJoin('leave_types', 'leave_types.id', 'leave_requests.leave_type_id')
+    .innerJoin('employees', 'employees.id', 'leave_requests.employee_id')
+    .select([
+      'leave_requests.id',
+      'leave_requests.employee_id',
+      'leave_requests.leave_type_id',
+      'leave_requests.from_date',
+      'leave_requests.to_date',
+      'leave_requests.days',
+      'leave_requests.status',
+      'leave_requests.file_id',
+      'leave_types.code as type_code',
+      'leave_types.name as type_name',
+      'leave_types.is_paid',
+      'leave_types.requires_document',
+      'employees.employee_code',
+      'employees.full_name as employee_name',
+    ])
+    .where('leave_requests.id', '=', id)
+    .executeTakeFirst()
+}
+
+export interface LeaveBalanceRow {
+  leave_type_id: number
+  type_code: string
+  type_name: string
+  annual_quota: number | null
+  opening: number
+  accrued: number
+  availed: number
+  encashed: number
+  balance: number
+}
+
+/**
+ * Balances for one employee in one financial year.
+ *
+ * Left joined from `leave_types`, so a type the employee has never taken shows
+ * as zeroes rather than as a missing row -- `leave_balances` rows are created on
+ * first use, and a screen that only listed existing rows would show a new
+ * joiner an empty table.
+ */
+export async function leaveBalances(
+  db: Queryable,
+  employeeId: number,
+  financialYear: string
+): Promise<LeaveBalanceRow[]> {
+  const rows = await db
+    .selectFrom('leave_types')
+    .leftJoin('leave_balances', (join) =>
+      join
+        .onRef('leave_balances.leave_type_id', '=', 'leave_types.id')
+        .on('leave_balances.employee_id', '=', employeeId)
+        .on('leave_balances.financial_year', '=', financialYear)
+    )
+    .select([
+      'leave_types.id as leave_type_id',
+      'leave_types.code as type_code',
+      'leave_types.name as type_name',
+      'leave_types.annual_quota',
+      'leave_balances.opening',
+      'leave_balances.accrued',
+      'leave_balances.availed',
+      'leave_balances.encashed',
+      'leave_balances.balance',
+    ])
+    .where('leave_types.is_active', '=', 1)
+    .orderBy('leave_types.code')
+    .execute()
+
+  return rows.map((r) => ({
+    leave_type_id: Number(r.leave_type_id),
+    type_code: r.type_code,
+    type_name: r.type_name,
+    annual_quota: r.annual_quota === null ? null : Number(r.annual_quota),
+    opening: Number(r.opening ?? 0),
+    accrued: Number(r.accrued ?? 0),
+    availed: Number(r.availed ?? 0),
+    encashed: Number(r.encashed ?? 0),
+    balance: Number(r.balance ?? 0),
+  }))
 }
 
 /* The module dashboard --------------------------------------------------- */

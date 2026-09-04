@@ -21,19 +21,34 @@ import { requirePermission, requireAllPermissions } from '../../middleware/requi
 import { PERMISSIONS } from '../../lib/permissions.js'
 import { readBody } from '../../middleware/csrf.js'
 import { NotFoundError, isAppError } from '../../lib/errors.js'
-import { today } from '../../lib/dates.js'
+import {
+  datesBetween,
+  financialYear,
+  formatDate,
+  formatMonth,
+  isValidIsoDate,
+  monthBounds,
+  monthOf,
+  today,
+} from '../../lib/dates.js'
 import * as q from './queries.js'
 import * as svc from './service.js'
 import {
+  attendanceApproveSchema,
+  attendanceBulkSchema,
   compensationSchema,
   documentSchema,
   employeeSchema,
   exitSchema,
   firstError,
+  leaveDecisionSchema,
+  leaveRequestSchema,
+  ATTENDANCE_STATUSES,
   EMPLOYEE_STATUSES,
   EMPLOYMENT_TYPES,
   EXIT_TYPES,
   GENDERS,
+  LEAVE_REQUEST_STATUSES,
 } from './schemas.js'
 
 /**
@@ -130,13 +145,12 @@ hr.get('/app/hr', requirePermission(PERMISSIONS.HR_EMPLOYEE_VIEW), async (c) => 
           label="Attendance unapproved"
           value={String(data.unapprovedAttendance)}
           hint="Rows with no approved_at"
-          // Linked only for a holder of hr.attendance_record, because that is
-          // what /app/hr/attendance is guarded by. Spec line 1723 gives that GET
-          // to hr.employee_view, but the 002 role seed grants the two
-          // permissions to different roles -- hr_manager holds both, while an
-          // employee_view-only holder would follow this link into a 403. The
-          // count still shows; only the link is withheld.
-          href={c.get('perms').has(PERMISSIONS.HR_ATTENDANCE_RECORD) ? '/app/hr/attendance' : undefined}
+          // Always linked now. The attendance route guards on the OR of
+          // hr.employee_view, hr.attendance_record and hr.attendance_approve,
+          // and this card is already behind hr.employee_view, so the link cannot
+          // 403 from here. It used to be withheld because the route required
+          // hr.attendance_record, which the 002 seed gives to a different role.
+          href="/app/hr/attendance"
         />
         <KpiCard label="Open positions" value={String(data.openPositions)} hint="status = open" />
       </div>
@@ -914,65 +928,1083 @@ hr.post('/api/hr/employees/:employeeId/exit', requirePermission(PERMISSIONS.HR_E
   }
 })
 
-/* Still stubs: attendance, leave, contractors, recruiting ----------------- */
+/* Attendance (spec 6.6 rules 1 and 4) ------------------------------------- */
 
 /**
- * These four keep the shape the earlier phase left them in.
+ * The one-or-two letter marks a muster roll uses.
+ *
+ * A 31-column grid cannot carry the word "on_duty_travel" in a cell, and the
+ * codes are the ones the paper register already uses, so a supervisor reading
+ * the screen is reading a form they know. The legend is rendered under the grid
+ * rather than assumed.
+ */
+const MARKS: Record<string, { code: string; tone: 'ok' | 'warn' | 'danger' | 'muted' }> = {
+  present: { code: 'P', tone: 'ok' },
+  absent: { code: 'A', tone: 'danger' },
+  half_day: { code: '½', tone: 'warn' },
+  weekly_off: { code: 'WO', tone: 'muted' },
+  holiday: { code: 'H', tone: 'muted' },
+  paid_leave: { code: 'PL', tone: 'warn' },
+  unpaid_leave: { code: 'LWP', tone: 'danger' },
+  on_duty_travel: { code: 'OD', tone: 'ok' },
+  comp_off: { code: 'CO', tone: 'muted' },
+}
+
+function Mark(props: { status: string | undefined }) {
+  if (!props.status) return <span class="ncc-muted">·</span>
+  const m = MARKS[props.status]
+  if (!m) return <span class="ncc-muted">{props.status}</span>
+  return (
+    <span class={`ncc-badge ncc-badge-${m.tone}`} title={titleCase(props.status)}>
+      {m.code}
+    </span>
+  )
+}
+
+/** A 'YYYY-MM' from the query string, or the current month. */
+function monthParam(c: Ctx): string {
+  const raw = queryParam(c, 'month') ?? ''
+  return /^\d{4}-(0[1-9]|1[0-2])$/.test(raw) ? raw : monthOf(today())
+}
+
+/** A 'YYYY-MM-DD' from the query string, or today. */
+function dateParam(c: Ctx, name: string): string {
+  const raw = queryParam(c, name) ?? ''
+  return isValidIsoDate(raw) ? raw : today()
+}
+
+/**
+ * The entry grid for one day (spec 6.6 rule 1: one post per day per project).
+ *
+ * The posted date is a hidden field and the date picker is a separate GET, so
+ * the prefill and the date being written can never disagree -- changing the date
+ * in place would submit yesterday's marks against today.
+ *
+ * Three kinds of row carry no inputs at all rather than a disabled select:
+ * outside the employment dates, already covered by approved leave, and already
+ * approved. `recordAttendanceBulk` refuses all three, and omitting the whole row
+ * keeps the parallel arrays aligned -- every remaining row contributes exactly
+ * one entry to each of the six.
+ */
+function AttendanceEntry(props: {
+  csrf: string
+  date: string
+  month: string
+  projectId: number | undefined
+  locked: boolean
+  roster: q.RosterRow[]
+  recorded: q.AttendanceCell[]
+  leave: q.ApprovedLeaveDay[]
+  projects: Array<{ id: number; code: string; name: string }>
+}) {
+  const recordedBy = new Map(props.recorded.map((r) => [Number(r.employee_id), r]))
+  const leaveBy = new Map(props.leave.map((r) => [r.employee_id, r]))
+  const future = props.date > today()
+
+  const picker = (
+    <form class="ncc-toolbar" method="get" action="/app/hr/attendance">
+      <input type="hidden" name="month" value={props.month} />
+      {props.projectId ? <input type="hidden" name="projectId" value={String(props.projectId)} /> : null}
+      <FormField label="Entry date" name="date" type="date" value={props.date} max={today()} />
+      <button class="ncc-btn" type="submit">
+        Load that day
+      </button>
+    </form>
+  )
+
+  if (props.locked) {
+    return (
+      <Panel title="Mark a day">
+        {picker}
+        <Alert tone="warn">
+          {formatMonth(monthOf(props.date))} is closed, so no row in it can be added or changed. That needs{' '}
+          <code>finance.period_close</code>.
+        </Alert>
+      </Panel>
+    )
+  }
+  if (future) {
+    return (
+      <Panel title="Mark a day">
+        {picker}
+        <Alert tone="warn">{formatDate(props.date)} has not happened yet. Attendance is recorded for a day that has passed.</Alert>
+      </Panel>
+    )
+  }
+
+  const rows = props.roster.map((r) => {
+    const outside =
+      props.date < String(r.date_of_joining) ||
+      (r.date_of_exit !== null && props.date > String(r.date_of_exit))
+    return { employee: r, outside, prior: recordedBy.get(Number(r.id)), leave: leaveBy.get(Number(r.id)) }
+  })
+  const editable = rows.filter((r) => !r.outside && !r.leave && !(r.prior && r.prior.approved_at !== null))
+  const isEditable = new Set(editable)
+
+  const columns: Column<(typeof rows)[number]>[] = [
+    {
+      header: 'Employee',
+      cell: (r) => (
+        <>
+          <strong>{r.employee.full_name}</strong>
+          <div class="ncc-muted">
+            {r.employee.employee_code}
+            {r.employee.designation_name ? ` · ${r.employee.designation_name}` : ''}
+          </div>
+        </>
+      ),
+    },
+    {
+      header: 'Status',
+      cell: (r) => {
+        if (r.outside) {
+          return (
+            <span class="ncc-muted">
+              {r.employee.date_of_exit !== null && props.date > String(r.employee.date_of_exit)
+                ? `Left ${formatDate(r.employee.date_of_exit)}`
+                : `Joins ${formatDate(r.employee.date_of_joining)}`}
+            </span>
+          )
+        }
+        if (r.leave) {
+          return (
+            <>
+              <Mark status={r.prior?.status} />{' '}
+              <span class="ncc-muted">
+                on {r.leave.type_code}, request {r.leave.request_id}
+              </span>
+            </>
+          )
+        }
+        if (r.prior && r.prior.approved_at !== null) {
+          return (
+            <>
+              <Mark status={r.prior.status} /> <span class="ncc-badge ncc-badge-muted">approved</span>
+            </>
+          )
+        }
+        return (
+          <>
+            <input type="hidden" name="employeeId" value={String(r.employee.id)} />
+            <select name="status" aria-label={`Status for ${r.employee.full_name}`}>
+              <option value="" selected={!r.prior}>
+                not marked
+              </option>
+              {ATTENDANCE_STATUSES.map((s) => (
+                <option value={s} selected={r.prior?.status === s}>
+                  {MARKS[s]?.code} {titleCase(s)}
+                </option>
+              ))}
+            </select>
+          </>
+        )
+      },
+    },
+    {
+      header: 'In',
+      cell: (r) =>
+        isEditable.has(r) ? (
+          <input
+            type="time"
+            name="inTime"
+            value={(r.prior?.in_time ?? '').slice(0, 5)}
+            aria-label={`In time for ${r.employee.full_name}`}
+          />
+        ) : null,
+    },
+    {
+      header: 'Out',
+      cell: (r) =>
+        isEditable.has(r) ? (
+          <input
+            type="time"
+            name="outTime"
+            value={(r.prior?.out_time ?? '').slice(0, 5)}
+            aria-label={`Out time for ${r.employee.full_name}`}
+          />
+        ) : null,
+    },
+    {
+      header: 'OT hrs',
+      numeric: true,
+      cell: (r) =>
+        isEditable.has(r) ? (
+          <input
+            type="number"
+            name="overtimeHours"
+            step="0.5"
+            min="0"
+            max="24"
+            style="max-width:5.5rem"
+            value={r.prior ? String(Number(r.prior.overtime_hours)) : ''}
+            aria-label={`Overtime for ${r.employee.full_name}`}
+          />
+        ) : null,
+    },
+    {
+      header: 'Remarks',
+      cell: (r) =>
+        isEditable.has(r) ? (
+          <input
+            type="text"
+            name="remarks"
+            maxlength={255}
+            value={r.prior?.remarks ?? ''}
+            aria-label={`Remarks for ${r.employee.full_name}`}
+          />
+        ) : null,
+    },
+  ]
+
+  return (
+    <Panel title={`Mark ${formatDate(props.date)}`}>
+      {picker}
+      <form method="post" action="/api/hr/attendance/bulk">
+        <CsrfInput token={props.csrf} />
+        <input type="hidden" name="attendanceDate" value={props.date} />
+        <div class="ncc-toolbar">
+          <FormField
+            label="Charge the day to"
+            name="projectId"
+            options={[
+              { value: '', label: 'Overhead (no project)', selected: !props.projectId },
+              ...props.projects.map((p) => ({
+                value: String(p.id),
+                label: `${p.code} ${p.name}`,
+                selected: Number(p.id) === props.projectId,
+              })),
+            ]}
+            hint="One project for the whole post. A day split across two sites is two posts."
+          />
+        </div>
+        <DataTable
+          columns={columns}
+          rows={rows}
+          empty="Nobody was on the books on this date."
+          caption="Leave a status as 'not marked' to skip that person. Only the rows you set are written."
+        />
+        {editable.length > 0 ? (
+          <p style="margin-top:1rem">
+            <button class="ncc-btn ncc-btn-primary" type="submit">
+              Post {editable.length} row{editable.length === 1 ? '' : 's'}
+            </button>
+          </p>
+        ) : (
+          <Alert tone="warn">
+            Nothing on this date can be edited from here: every row is outside its employment dates, covered by
+            approved leave, or already approved.
+          </Alert>
+        )}
+      </form>
+    </Panel>
+  )
+}
+
+/**
+ * The attendance screen: a read grid for the month, and an entry grid for a day.
+ *
+ * Guarded by an OR rather than by the spec's `hr.employee_view` alone. The 002
+ * role seed grants the three permissions to different roles and the sidebar
+ * shows this item to holders of `hr.attendance_record` or
+ * `hr.attendance_approve`, so a guard on `hr.employee_view` alone would 403 a
+ * user who can see the link -- which breaks the repo's navigation invariant.
+ * The mismatch itself is a 4.3 matrix question and is in the 8.1 list.
+ *
+ * The entry date is a query parameter, not a client-side control, so the grid
+ * can be prefilled with what is already recorded for that day. Changing the
+ * date reloads. That is one round trip per correction and no Alpine: the spec's
+ * keyboard-entry matrix is not built, and is reported as not built.
+ */
+hr.get(
+  '/app/hr/attendance',
+  requirePermission(
+    PERMISSIONS.HR_EMPLOYEE_VIEW,
+    PERMISSIONS.HR_ATTENDANCE_RECORD,
+    PERMISSIONS.HR_ATTENDANCE_APPROVE
+  ),
+  async (c) => {
+    const db = c.get('db')
+    const session = c.get('session')!
+    const perms = c.get('perms')
+    const canRecord = perms.has(PERMISSIONS.HR_ATTENDANCE_RECORD)
+    const canApprove = perms.has(PERMISSIONS.HR_ATTENDANCE_APPROVE)
+    const canOverride = perms.has(PERMISSIONS.FINANCE_PERIOD_CLOSE)
+
+    const month = monthParam(c)
+    const entryDate = dateParam(c, 'date')
+    const entryMonth = monthOf(entryDate)
+    const projectId = Number(queryParam(c, 'projectId') ?? '') || undefined
+
+    const [roster, cells, state, projects, entryRoster, entryCells, entryLeave] = await Promise.all([
+      q.attendanceRoster(db, month),
+      q.attendanceMonth(db, month, { projectId }),
+      q.attendanceMonthState(db, month),
+      q.projectOptions(db),
+      entryMonth === month ? Promise.resolve(null) : q.attendanceRoster(db, entryMonth),
+      canRecord ? q.attendanceOn(db, entryDate) : Promise.resolve([]),
+      canRecord ? q.approvedLeaveOn(db, entryDate) : Promise.resolve([]),
+    ])
+    const entryState =
+      entryMonth === month ? state : await q.attendanceMonthState(db, entryMonth)
+
+    const bounds = monthBounds(month)
+    const days = datesBetween(bounds.start, bounds.end)
+    const byKey = new Map(cells.map((r) => [`${r.employee_id}|${r.attendance_date}`, r]))
+
+    const gridColumns: Column<q.RosterRow>[] = [
+      {
+        header: 'Employee',
+        cell: (r) => (
+          <>
+            <a href={`/app/hr/employees/${r.id}`}>{r.full_name}</a>
+            <div class="ncc-muted">{r.employee_code}</div>
+          </>
+        ),
+      },
+      ...days.map(
+        (date): Column<q.RosterRow> => ({
+          header: date.slice(8),
+          cell: (r) => {
+            const outside =
+              date < String(r.date_of_joining) ||
+              (r.date_of_exit !== null && date > String(r.date_of_exit))
+            if (outside) return <span class="ncc-muted" title="Not employed on this date">—</span>
+            const cell = byKey.get(`${r.id}|${date}`)
+            return (
+              <span title={cell?.project_code ? `Charged to ${cell.project_code}` : undefined}>
+                <Mark status={cell?.status} />
+              </span>
+            )
+          },
+        })
+      ),
+    ]
+
+    const marked = roster.reduce(
+      (sum, r) => sum + days.filter((d) => byKey.has(`${r.id}|${d}`)).length,
+      0
+    )
+
+    return page(
+      c,
+      {
+        title: 'Attendance',
+        path: '/app/hr/attendance',
+        subtitle: `${formatMonth(month)} — ${roster.length} on the roster, ${marked} day${marked === 1 ? '' : 's'} marked`,
+      },
+      <>
+        {banner(c)}
+        <div class="ncc-kpi-row">
+          <KpiCard label="Rows this month" value={String(state.total)} hint={formatMonth(month)} />
+          <KpiCard label="Approved" value={String(state.approved)} hint="Carry approved_at" />
+          <KpiCard
+            label="Awaiting approval"
+            value={String(state.total - state.approved)}
+            hint={state.locked ? 'Month is closed' : 'Month is open'}
+          />
+          <KpiCard label="On the roster" value={String(roster.length)} hint="Employed at any point in the month" />
+        </div>
+
+        {state.locked ? (
+          <Alert tone="warn">
+            {formatMonth(month)} is closed: {state.approved} of {state.total} rows are approved. Entry and
+            corrections for this month need <code>finance.period_close</code>, because rule 4 exists to stop a
+            payroll figure changing after the payment is made.
+            {canOverride ? ' You hold it, so your posts will go through and be audited as an override.' : ''}
+          </Alert>
+        ) : null}
+
+        <form class="ncc-toolbar" method="get" action="/app/hr/attendance">
+          <FormField label="Month" name="month" type="month" value={month} />
+          <FormField
+            label="Project"
+            name="projectId"
+            options={[
+              { value: '', label: 'All projects and overhead', selected: !projectId },
+              ...projects.map((p) => ({
+                value: String(p.id),
+                label: `${p.code} ${p.name}`,
+                selected: Number(p.id) === projectId,
+              })),
+            ]}
+          />
+          <input type="hidden" name="date" value={entryDate} />
+          <button class="ncc-btn" type="submit">
+            Show
+          </button>
+          <a class="ncc-btn" href={`/app/hr/reports/muster?month=${month}`}>
+            Muster roll
+          </a>
+        </form>
+
+        <Panel title={`Month grid — ${formatMonth(month)}`}>
+          <DataTable
+            columns={gridColumns}
+            rows={roster}
+            empty="Nobody was on the books in this month."
+            caption={
+              projectId
+                ? 'Filtered to one project, so a day charged elsewhere shows as unmarked.'
+                : undefined
+            }
+          />
+          <p class="ncc-hint">
+            P present · A absent · ½ half day · WO weekly off · H holiday · PL paid leave · LWP unpaid ·
+            OD on duty travel · CO comp off · · not marked · — not employed
+          </p>
+        </Panel>
+
+        {canApprove ? (
+          <Panel title="Close the month">
+            <form class="ncc-stack" method="post" action="/api/hr/attendance/approve">
+              <CsrfInput token={session.csrfToken} />
+              <p class="ncc-hint">
+                Stamps <code>approved_at</code> on every unapproved row in the month, for every employee and
+                every project. After that the month rejects entry and edits unless{' '}
+                <code>finance.period_close</code> is held. There is no screen that reopens it.
+              </p>
+              <FormField label="Month" name="month" type="month" required value={month} />
+              <button class="ncc-btn ncc-btn-primary" type="submit">
+                Approve {state.total - state.approved} row
+                {state.total - state.approved === 1 ? '' : 's'} and close
+              </button>
+            </form>
+          </Panel>
+        ) : null}
+
+        {canRecord ? (
+          <AttendanceEntry
+            csrf={session.csrfToken}
+            date={entryDate}
+            month={month}
+            projectId={projectId}
+            locked={entryState.locked && !canOverride}
+            roster={entryRoster ?? roster}
+            recorded={entryCells}
+            leave={entryLeave}
+            projects={projects}
+          />
+        ) : null}
+      </>
+    )
+  }
+)
+
+hr.post('/api/hr/attendance/bulk', requirePermission(PERMISSIONS.HR_ATTENDANCE_RECORD), async (c) => {
+  const body = await readBody(c)
+  const parsed = attendanceBulkSchema.safeParse(body)
+  // The date is echoed back into the redirect so a refused post returns to the
+  // grid for the day it was refused on, prefilled, rather than to today.
+  const rawDate = typeof body['attendanceDate'] === 'string' ? body['attendanceDate'] : today()
+  const date = isValidIsoDate(rawDate) ? rawDate : today()
+  const back = `/app/hr/attendance?month=${monthOf(date)}&date=${date}`
+  if (!parsed.success) return errRedirect(c, back, firstError(parsed.error))
+
+  return guard(c, `/app/hr/attendance?month=${monthOf(parsed.data.attendanceDate)}&date=${parsed.data.attendanceDate}`, async () => {
+    const result = await svc.recordAttendanceBulk(c.get('db'), actorOf(c), parsed.data, {
+      canOverridePeriod: c.get('perms').has(PERMISSIONS.FINANCE_PERIOD_CLOSE),
+    })
+    const parts = [
+      result.inserted > 0 ? `${result.inserted} recorded` : null,
+      result.updated > 0 ? `${result.updated} corrected` : null,
+    ].filter((p): p is string => p !== null)
+    return `${formatDate(parsed.data.attendanceDate)}: ${parts.join(', ')}.`
+  })
+})
+
+hr.post('/api/hr/attendance/approve', requirePermission(PERMISSIONS.HR_ATTENDANCE_APPROVE), async (c) => {
+  const parsed = attendanceApproveSchema.safeParse(await readBody(c))
+  if (!parsed.success) return errRedirect(c, '/app/hr/attendance', firstError(parsed.error))
+  const back = `/app/hr/attendance?month=${parsed.data.month}`
+
+  return guard(c, back, async () => {
+    const result = await svc.approveAttendanceMonth(c.get('db'), actorOf(c), parsed.data.month)
+    return `${formatMonth(parsed.data.month)} closed. ${result.approved} row${result.approved === 1 ? '' : 's'} approved${
+      result.alreadyApproved > 0 ? `, ${result.alreadyApproved} already were` : ''
+    }. Corrections from here need finance.period_close.`
+  })
+})
+
+/* Leave (spec 6.6 route table: own / hr.leave_approve) -------------------- */
+
+type LeaveType = Awaited<ReturnType<typeof q.leaveTypeOptions>>[number]
+type EmployeeOption = Awaited<ReturnType<typeof q.managerOptions>>[number]
+
+/**
+ * One pending request with both outcomes on one form.
+ *
+ * Two submit buttons sharing the name `decision` is how an HTML form offers a
+ * choice without JavaScript: only the clicked button posts. The reject reason
+ * sits in the same form because `leaveDecisionSchema` requires it for a
+ * rejection -- an employee escalates a rejection with no reason attached, so the
+ * field is refused at the boundary rather than left nullable.
+ */
+function LeaveDecision(props: { request: q.LeaveRequestRow; csrf: string }) {
+  const r = props.request
+  return (
+    <form class="ncc-card ncc-stack" method="post" action={`/api/hr/leave/${r.id}/approve`}>
+      <CsrfInput token={props.csrf} />
+      <DefinitionList
+        rows={[
+          [
+            'Employee',
+            <a href={`/app/hr/employees/${r.employee_id}`}>
+              {r.employee_name} <span class="ncc-muted">{r.employee_code}</span>
+            </a>,
+          ],
+          ['Type', `${r.type_code} ${r.type_name} (${Number(r.is_paid) === 1 ? 'paid' : 'unpaid'})`],
+          [
+            'Dates',
+            <>
+              <DateText value={r.from_date} />
+              {r.from_date === r.to_date ? null : (
+                <>
+                  {' to '}
+                  <DateText value={r.to_date} />
+                </>
+              )}
+              {` — ${Number(r.days)} day${Number(r.days) === 1 ? '' : 's'}`}
+            </>,
+          ],
+          ['Reason', r.reason ?? '-'],
+          ['Handover to', r.handover_name ?? '-'],
+          ...(Number(r.requires_document) === 1
+            ? ([
+                [
+                  'Document',
+                  <span class="ncc-badge ncc-badge-warn">
+                    {r.type_code} normally needs one; there is no upload route yet
+                  </span>,
+                ],
+              ] as Array<[string, ReturnType<typeof String>]>)
+            : []),
+        ]}
+      />
+      <p class="ncc-hint">
+        Approving writes the attendance rows for every working day in the range and adds the days to the balance,
+        in one transaction. If a month in the range is already closed, the approval is refused rather than
+        partly applied.
+      </p>
+      <FormField
+        label="Reason, if you are rejecting"
+        name="rejectReason"
+        rows={2}
+        hint="Required for a rejection. The employee sees it."
+      />
+      <div class="ncc-row">
+        <button class="ncc-btn ncc-btn-primary" type="submit" name="decision" value="approve">
+          Approve
+        </button>
+        <button class="ncc-btn ncc-btn-danger" type="submit" name="decision" value="reject">
+          Reject
+        </button>
+      </div>
+    </form>
+  )
+}
+
+/**
+ * The raise form.
+ *
+ * `employeeId` is offered only to a holder of `hr.leave_approve`. The spec says
+ * "any employee with a login raises their own", which leaves no route for site
+ * staff who have no login at all, and HR entering it for them is the only way
+ * those days reach `attendance` and therefore 6.8's staff cost. Raising on
+ * behalf of someone also waives `min_notice_days`, and both facts are audited.
+ *
+ * There is no file field. `leave_types.requires_document` is set on SL, MAT and
+ * PAT, but no upload route exists yet (DECISIONS 15.1) so the requirement is
+ * surfaced here and not enforced -- enforcing it would make the three most
+ * common types unrequestable.
+ */
+function LeaveRequestForm(props: {
+  csrf: string
+  leaveTypes: LeaveType[]
+  employees: EmployeeOption[]
+  canRaiseForOthers: boolean
+  selfEmployeeId: number | null
+}) {
+  const needsDoc = props.leaveTypes.filter((t) => Number(t.requires_document) === 1).map((t) => t.code)
+  if (props.selfEmployeeId === null && !props.canRaiseForOthers) {
+    return (
+      <Alert tone="warn">
+        Raising leave needs a login linked to an employee record. Ask HR to link yours.
+      </Alert>
+    )
+  }
+  return (
+    <form class="ncc-stack" method="post" action="/app/hr/leave">
+      <CsrfInput token={props.csrf} />
+      {props.canRaiseForOthers ? (
+        <FormField
+          label="For"
+          name="employeeId"
+          options={[
+            {
+              value: '',
+              label: props.selfEmployeeId === null ? 'Choose an employee' : 'Yourself',
+              selected: true,
+            },
+            ...props.employees.map((e) => ({
+              value: String(e.id),
+              label: `${e.employee_code} ${e.full_name}`,
+            })),
+          ]}
+          hint="Raising it for someone else waives the notice period and is recorded in the audit log."
+        />
+      ) : null}
+      <FormField
+        label="Leave type"
+        name="leaveTypeId"
+        required
+        options={[
+          { value: '', label: 'Choose a type', selected: true },
+          ...props.leaveTypes.map((t) => ({
+            value: String(t.id),
+            label: `${t.code} ${t.name} — ${Number(t.is_paid) === 1 ? 'paid' : 'unpaid'}, ${Number(
+              t.min_notice_days
+            )} day${Number(t.min_notice_days) === 1 ? '' : 's'} notice`,
+          })),
+        ]}
+      />
+      <div class="ncc-grid ncc-grid--form">
+        <FormField label="From" name="fromDate" type="date" required />
+        <FormField label="To" name="toDate" type="date" required />
+      </div>
+      <label class="ncc-field">
+        <span>
+          <input type="checkbox" name="halfDay" value="on" style="width:auto;margin-right:.45rem" />
+          Half day
+        </span>
+        <span class="ncc-hint">
+          A half day is a single date, so both dates have to be the same. It is recorded as ½ on the muster roll
+          and as 0.5 against the balance.
+        </span>
+      </label>
+      <FormField label="Reason" name="reason" rows={2} />
+      <FormField
+        label="Handover to"
+        name="handoverToEmployeeId"
+        options={[
+          { value: '', label: 'Nobody', selected: true },
+          ...props.employees.map((e) => ({ value: String(e.id), label: `${e.employee_code} ${e.full_name}` })),
+        ]}
+      />
+      <p class="ncc-hint">
+        Days are counted excluding Sundays, which are the weekly off. Public holidays are counted, because there
+        is no holiday calendar in the system yet — so a month with a festival in it counts one day more than the
+        employee actually took.
+        {needsDoc.length > 0
+          ? ` ${needsDoc.join(', ')} normally need a supporting document; there is no upload route yet, so attach it outside the system and note it in the reason.`
+          : ''}
+      </p>
+      <button class="ncc-btn ncc-btn-primary" type="submit">
+        Raise request
+      </button>
+    </form>
+  )
+}
+
+/**
+ * The leave screen, one route serving two readers.
+ *
+ * No `requirePermission`, because the spec's permission for this row is "own /
+ * `hr.leave_approve`" and "own" means any authenticated employee. `/app/*` is
+ * already behind `requireAuth`, so an unguarded route here is authenticated-only
+ * -- which is how this codebase expresses "own" (see the note in src/app.ts).
+ *
+ * What the reader sees is decided by `hr.leave_approve`, and by the query rather
+ * than by the template: an approver gets every request and the pending queue, a
+ * requester gets `listLeaveRequests(db, { employeeId })` and cannot widen it with
+ * a query parameter because the route never reads one for it.
+ *
+ * A login with no linked employee record gets the explanation rather than an
+ * empty table. `users.employee_id` is the only link and 14.8 already records
+ * that it is one of two unreconciled directions.
+ */
+hr.get('/app/hr/leave', async (c) => {
+  const db = c.get('db')
+  const session = c.get('session')!
+  const user = currentUser(c)
+  const selfEmployeeId = user.employeeId
+  const canApprove = c.get('perms').has(PERMISSIONS.HR_LEAVE_APPROVE)
+  const statusFilter = queryParam(c, 'status')
+  const status = (LEAVE_REQUEST_STATUSES as readonly string[]).includes(statusFilter ?? '')
+    ? statusFilter
+    : undefined
+
+  const fy = financialYear(today())
+  const [requests, pending, leaveTypes, balances, managers] = await Promise.all([
+    q.listLeaveRequests(db, {
+      employeeId: canApprove ? undefined : (selfEmployeeId ?? -1),
+      status,
+    }),
+    canApprove && selfEmployeeId !== null
+      ? q.listLeaveRequests(db, { status: 'pending', pendingFor: selfEmployeeId })
+      : canApprove
+        ? q.listLeaveRequests(db, { status: 'pending' })
+        : Promise.resolve([]),
+    q.leaveTypeOptions(db),
+    selfEmployeeId !== null ? q.leaveBalances(db, selfEmployeeId, fy) : Promise.resolve([]),
+    canApprove ? q.managerOptions(db) : Promise.resolve([]),
+  ])
+
+  const columns: Column<q.LeaveRequestRow>[] = [
+    ...(canApprove
+      ? [
+          {
+            header: 'Employee',
+            cell: (r: q.LeaveRequestRow) => (
+              <>
+                <a href={`/app/hr/employees/${r.employee_id}`}>{r.employee_name}</a>
+                <div class="ncc-muted">{r.employee_code}</div>
+              </>
+            ),
+          } satisfies Column<q.LeaveRequestRow>,
+        ]
+      : []),
+    {
+      header: 'Type',
+      cell: (r) => (
+        <>
+          {r.type_code}
+          <div class="ncc-muted">{Number(r.is_paid) === 1 ? 'paid' : 'unpaid'}</div>
+        </>
+      ),
+    },
+    {
+      header: 'Dates',
+      cell: (r) => (
+        <>
+          <DateText value={r.from_date} />
+          {r.from_date === r.to_date ? null : (
+            <>
+              {' to '}
+              <DateText value={r.to_date} />
+            </>
+          )}
+        </>
+      ),
+    },
+    { header: 'Days', numeric: true, cell: (r) => String(Number(r.days)) },
+    { header: 'Reason', cell: (r) => r.reason ?? <span class="ncc-muted">-</span> },
+    { header: 'Status', cell: (r) => <StatusBadge status={r.status} /> },
+    {
+      header: 'Outcome',
+      cell: (r) =>
+        r.status === 'rejected' ? (
+          <>
+            <div>{r.reject_reason}</div>
+            <div class="ncc-muted">{r.decided_by_name ?? ''}</div>
+          </>
+        ) : r.status === 'approved' ? (
+          <span class="ncc-muted">
+            {r.decided_by_name ?? ''} <DateText value={r.approved_at} />
+          </span>
+        ) : r.status === 'pending' && Number(r.employee_id) === selfEmployeeId ? (
+          <form method="post" action={`/api/hr/leave/${r.id}/withdraw`}>
+            <CsrfInput token={session.csrfToken} />
+            <button class="ncc-btn" type="submit">
+              Withdraw
+            </button>
+          </form>
+        ) : (
+          <span class="ncc-muted">-</span>
+        ),
+    },
+  ]
+
+  const balanceColumns: Column<q.LeaveBalanceRow>[] = [
+    { header: 'Type', cell: (r) => `${r.type_code} ${r.type_name}` },
+    {
+      header: 'Quota',
+      numeric: true,
+      cell: (r) =>
+        r.annual_quota === null ? <span class="ncc-muted">not set</span> : String(r.annual_quota),
+    },
+    { header: 'Opening', numeric: true, cell: (r) => String(r.opening) },
+    { header: 'Availed', numeric: true, cell: (r) => String(r.availed) },
+    { header: 'Balance', numeric: true, cell: (r) => String(r.balance) },
+  ]
+
+  return page(
+    c,
+    {
+      title: 'Leave',
+      path: '/app/hr/leave',
+      subtitle: canApprove
+        ? `${pending.length} awaiting your decision, ${requests.length} in all`
+        : `${requests.length} of your request${requests.length === 1 ? '' : 's'}`,
+    },
+    <>
+      {banner(c)}
+
+      {selfEmployeeId === null ? (
+        <Alert tone="warn">
+          This login is not linked to an employee record, so it cannot raise leave for itself.{' '}
+          {canApprove
+            ? 'You can still decide other people’s requests and raise leave on their behalf.'
+            : 'Ask HR to link the login to your employee record.'}
+        </Alert>
+      ) : null}
+
+      {canApprove && pending.length > 0 ? (
+        <Panel title={`Awaiting your decision (${pending.length})`}>
+          <p class="ncc-hint">
+            Your own request is not in this queue. Leave is approved against the employee record, so a request
+            filed for you cannot be decided by you whichever login you use.
+          </p>
+          <div class="ncc-stack">
+            {pending.map((r) => (
+              <LeaveDecision request={r} csrf={session.csrfToken} />
+            ))}
+          </div>
+        </Panel>
+      ) : null}
+
+      {selfEmployeeId !== null ? (
+        <Panel title={`Your balances, FY ${fy}`}>
+          <DataTable columns={balanceColumns} rows={balances} empty="No leave types are active." />
+          <p class="ncc-hint">
+            Balances are tracked, not enforced: every quota in the seed is unset pending the owner&rsquo;s figures,
+            so a request is never refused for want of balance. A negative balance is a fact for HR to look at.
+          </p>
+        </Panel>
+      ) : null}
+
+      <Panel title="Raise a request">
+        <LeaveRequestForm
+          csrf={session.csrfToken}
+          leaveTypes={leaveTypes}
+          canRaiseForOthers={canApprove}
+          employees={managers}
+          selfEmployeeId={selfEmployeeId}
+        />
+      </Panel>
+
+      <Panel title={canApprove ? 'All requests' : 'Your requests'}>
+        <form class="ncc-toolbar" method="get" action="/app/hr/leave">
+          <FormField
+            label="Status"
+            name="status"
+            options={[
+              { value: '', label: 'Any status', selected: !status },
+              ...LEAVE_REQUEST_STATUSES.map((s) => ({
+                value: s,
+                label: titleCase(s),
+                selected: s === status,
+              })),
+            ]}
+          />
+          <button class="ncc-btn" type="submit">
+            Filter
+          </button>
+        </form>
+        <DataTable columns={columns} rows={requests} empty="No leave requests to show." />
+      </Panel>
+    </>
+  )
+})
+
+/**
+ * Raising a request. POST to `/app/hr/leave`, which is the spec's own path for
+ * this row -- unlike the compensation and stage rows it names a verb an HTML
+ * form can actually send, so there is nothing to reconcile here.
+ */
+hr.post('/app/hr/leave', async (c) => {
+  const parsed = leaveRequestSchema.safeParse(await readBody(c))
+  if (!parsed.success) return errRedirect(c, '/app/hr/leave', firstError(parsed.error))
+
+  return guard(c, '/app/hr/leave', async () => {
+    const id = await svc.requestLeave(c.get('db'), actorOf(c), parsed.data, {
+      selfEmployeeId: currentUser(c).employeeId,
+      canRaiseForOthers: c.get('perms').has(PERMISSIONS.HR_LEAVE_APPROVE),
+    })
+    return `Leave request ${id} raised. It shows as pending until somebody holding hr.leave_approve decides it.`
+  })
+})
+
+hr.post('/api/hr/leave/:id/approve', requirePermission(PERMISSIONS.HR_LEAVE_APPROVE), async (c) => {
+  const id = idParam(c, 'id')
+  const parsed = leaveDecisionSchema.safeParse(await readBody(c))
+  if (!parsed.success) return errRedirect(c, '/app/hr/leave', firstError(parsed.error))
+
+  return guard(c, '/app/hr/leave', async () => {
+    const result = await svc.decideLeave(c.get('db'), actorOf(c), id, parsed.data, {
+      approverEmployeeId: currentUser(c).employeeId,
+      canOverridePeriod: c.get('perms').has(PERMISSIONS.FINANCE_PERIOD_CLOSE),
+    })
+    if (result.decision === 'reject') {
+      return `Request ${id} for ${result.employeeName} rejected. The reason is on the request.`
+    }
+    return `Request ${id} for ${result.employeeName} approved: ${result.attendanceRowsWritten} attendance row${
+      result.attendanceRowsWritten === 1 ? '' : 's'
+    } written, ${result.days} day${result.days === 1 ? '' : 's'} against the FY ${result.financialYear} balance, now ${result.balanceAfter}.`
+  })
+})
+
+/**
+ * Withdrawing your own pending request.
+ *
+ * Not in the 6.6 route table, but `leave_requests.status` carries a `withdrawn`
+ * member that nothing else could write, and a request raised for the wrong week
+ * otherwise sits in the approver's queue forever. Unguarded for the same reason
+ * the GET is: the service checks the row is yours and is pending.
+ */
+hr.post('/api/hr/leave/:id/withdraw', async (c) => {
+  const id = idParam(c, 'id')
+  return guard(c, '/app/hr/leave', async () => {
+    await svc.withdrawLeave(c.get('db'), actorOf(c), id, { selfEmployeeId: currentUser(c).employeeId })
+    return `Request ${id} withdrawn.`
+  })
+})
+
+/* The muster roll (spec 6.6 route table) ---------------------------------- */
+
+/**
+ * The statutory muster roll for a month.
+ *
+ * Form-shaped rather than dashboard-shaped: the columns are the ones the
+ * register wants beside the daily marks (father's or husband's name, sex,
+ * designation, date of joining), and the totals are counted from `attendance`
+ * rather than typed. It is a read screen with no filter but the month, because
+ * a muster roll for part of a workforce is not a muster roll.
+ *
+ * `approved` is shown on the page, unhidden: an unapproved month is a draft
+ * register and printing it as final is the mistake this line prevents.
+ */
+hr.get('/app/hr/reports/muster', requirePermission(PERMISSIONS.HR_EMPLOYEE_VIEW), async (c) => {
+  const db = c.get('db')
+  const month = monthParam(c)
+  const [roster, cells, state] = await Promise.all([
+    q.attendanceRoster(db, month),
+    q.attendanceMonth(db, month),
+    q.attendanceMonthState(db, month),
+  ])
+
+  const bounds = monthBounds(month)
+  const days = datesBetween(bounds.start, bounds.end)
+  const byKey = new Map(cells.map((r) => [`${r.employee_id}|${r.attendance_date}`, r]))
+
+  const rows = roster.map((r) => {
+    const own = days.map((d) => byKey.get(`${r.id}|${d}`))
+    const count = (test: (s: string) => boolean) =>
+      own.filter((cell) => cell !== undefined && test(cell.status)).length
+    return {
+      employee: r,
+      // A half day is half a day paid, which is the whole point of the status:
+      // counting it as one would overstate the register against the payroll.
+      payable:
+        count((s) => s === 'present' || s === 'on_duty_travel' || s === 'comp_off') +
+        count((s) => s === 'paid_leave') +
+        count((s) => s === 'half_day') * 0.5,
+      absent: count((s) => s === 'absent' || s === 'unpaid_leave'),
+      overtime: own.reduce((sum, cell) => sum + Number(cell?.overtime_hours ?? 0), 0),
+      marked: own.filter((cell) => cell !== undefined).length,
+    }
+  })
+
+  const columns: Column<(typeof rows)[number]>[] = [
+    {
+      header: 'Employee',
+      cell: (r) => (
+        <>
+          <strong>{r.employee.full_name}</strong>
+          <div class="ncc-muted">
+            {r.employee.employee_code}
+            {r.employee.designation_name ? ` · ${r.employee.designation_name}` : ''}
+          </div>
+        </>
+      ),
+    },
+    {
+      header: 'Father / spouse',
+      cell: (r) => r.employee.father_or_spouse_name ?? <span class="ncc-muted">not recorded</span>,
+    },
+    { header: 'Sex', cell: (r) => (r.employee.gender ? titleCase(r.employee.gender) : '-') },
+    { header: 'Joined', cell: (r) => <DateText value={r.employee.date_of_joining} /> },
+    ...days.map(
+      (date): Column<(typeof rows)[number]> => ({
+        header: date.slice(8),
+        cell: (r) => {
+          const outside =
+            date < String(r.employee.date_of_joining) ||
+            (r.employee.date_of_exit !== null && date > String(r.employee.date_of_exit))
+          if (outside) return <span class="ncc-muted">—</span>
+          return <Mark status={byKey.get(`${r.employee.id}|${date}`)?.status} />
+        },
+      })
+    ),
+    { header: 'Payable', numeric: true, cell: (r) => String(r.payable) },
+    { header: 'Absent', numeric: true, cell: (r) => String(r.absent) },
+    { header: 'OT hrs', numeric: true, cell: (r) => String(Math.round(r.overtime * 10) / 10) },
+    { header: 'Marked', numeric: true, cell: (r) => `${r.marked}/${days.length}` },
+  ]
+
+  const totalPayable = rows.reduce((sum, r) => sum + r.payable, 0)
+  const totalMarked = rows.reduce((sum, r) => sum + r.marked, 0)
+
+  return page(
+    c,
+    {
+      title: 'Muster roll',
+      path: '/app/hr/reports/muster',
+      subtitle: `${formatMonth(month)} — ${roster.length} on the roster, ${totalPayable} payable day${
+        totalPayable === 1 ? '' : 's'
+      }`,
+      actions: (
+        <a class="ncc-btn" href={`/app/hr/attendance?month=${month}`}>
+          Attendance entry
+        </a>
+      ),
+    },
+    <>
+      {banner(c)}
+      {state.locked ? (
+        <Alert tone="ok">
+          {formatMonth(month)} is closed: {state.approved} of {state.total} rows carry an approval. This register
+          is final unless somebody holding <code>finance.period_close</code> reopens it.
+        </Alert>
+      ) : (
+        <Alert tone="warn">
+          {formatMonth(month)} is not closed. {state.total - state.approved} of {state.total} rows are still
+          unapproved, so this register is a draft: do not file or pay against it until{' '}
+          <code>hr.attendance_approve</code> has closed the month.
+        </Alert>
+      )}
+      <form class="ncc-toolbar" method="get" action="/app/hr/reports/muster">
+        <FormField label="Month" name="month" type="month" value={month} />
+        <button class="ncc-btn" type="submit">
+          Show
+        </button>
+      </form>
+      <Panel title={`Muster roll — ${formatMonth(month)}`}>
+        <DataTable
+          columns={columns}
+          rows={rows}
+          empty="Nobody was on the books in this month."
+          caption={`${totalMarked} of ${roster.length * days.length} employee-days are marked. Unmarked days count as nothing, not as absent.`}
+        />
+        <p class="ncc-hint">
+          P present · A absent · ½ half day · WO weekly off · H holiday · PL paid leave · LWP unpaid ·
+          OD on duty travel · CO comp off · · not marked · — not employed. Payable counts present, on duty,
+          comp off and paid leave in full and a half day as 0.5. Sundays are the weekly off; public holidays are
+          not in the system, so a festival day shows as whatever it was marked.
+        </p>
+      </Panel>
+    </>
+  )
+})
+
+/* Still stubs: contractors, recruiting -------------------------------------- */
+
+/**
+ * These two keep the shape the earlier phase left them in.
  *
  * They are mounted, guarded by the permission their sidebar item names, and
  * report the real row count from their primary table, so no link a user can see
  * 404s or 403s while the rest of 6.6 is built out.
  */
-hr.get('/app/hr/attendance', requirePermission(PERMISSIONS.HR_ATTENDANCE_RECORD), async (c) => {
-  const db = c.get('db')
-  const row = await db
-    .selectFrom('attendance')
-    .select((eb) => eb.fn.countAll<number>().as('n'))
-    .executeTakeFirst()
-  const total = Number(row?.n ?? 0)
-  return page(
-    c,
-    { title: 'Attendance', path: '/app/hr/attendance' },
-    <>
-      {banner(c)}
-      <div class="ncc-kpi-row">
-        <KpiCard label="Records held" value={String(total)} hint="Live count from attendance" />
-      </div>
-      <Panel title="Attendance">
-        <Alert tone="warn">
-          The data model behind this screen is migrated. The entry and approval
-          forms are the next build phase.
-        </Alert>
-      </Panel>
-    </>
-  )
-})
-
-hr.get('/app/hr/leave', requirePermission(PERMISSIONS.HR_EMPLOYEE_VIEW), async (c) => {
-  const db = c.get('db')
-  const row = await db
-    .selectFrom('leave_requests')
-    .select((eb) => eb.fn.countAll<number>().as('n'))
-    .executeTakeFirst()
-  const total = Number(row?.n ?? 0)
-  return page(
-    c,
-    { title: 'Leave', path: '/app/hr/leave' },
-    <>
-      {banner(c)}
-      <div class="ncc-kpi-row">
-        <KpiCard label="Records held" value={String(total)} hint="Live count from leave_requests" />
-      </div>
-      <Panel title="Leave">
-        <Alert tone="warn">
-          The data model behind this screen is migrated. The entry and approval
-          forms are the next build phase.
-        </Alert>
-      </Panel>
-    </>
-  )
-})
-
 hr.get('/app/hr/contractors', requirePermission(PERMISSIONS.HR_LABOUR_CONTRACTOR_MANAGE), async (c) => {
   const db = c.get('db')
   const row = await db

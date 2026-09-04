@@ -124,6 +124,55 @@ export function previousWorkingDay(isoDate: string): string {
   return d
 }
 
+/** Every date from `fromIso` to `toIso` inclusive, ascending. */
+export function datesBetween(fromIso: string, toIso: string): string[] {
+  const out: string[] = []
+  for (let d = fromIso; d <= toIso; d = addDays(d, 1)) out.push(d)
+  return out
+}
+
+/**
+ * Working days in an inclusive range, which is how a leave request is counted.
+ *
+ * Sundays do not count, because `isWorkingDay` already says a Sunday is the
+ * weekly off on these sites and a leave applicant who is off on Sunday anyway
+ * should not spend a day of entitlement on it. Public holidays DO count, for
+ * the reason isWorkingDay gives: there is no holiday calendar table and
+ * inventing the company's holiday list would be inventing a business rule.
+ * That makes the figure a slight over-count in a month with a festival in it,
+ * in the direction that costs the employee, which is why it is flagged in
+ * DECISIONS rather than left as an implementation detail.
+ */
+export function workingDaysBetween(fromIso: string, toIso: string): number {
+  return datesBetween(fromIso, toIso).filter(isWorkingDay).length
+}
+
+/**
+ * First and last date of a 'YYYY-MM' month.
+ *
+ * Derived by stepping a month forward and a day back rather than from a table
+ * of month lengths, so February 2028 is right without a leap-year branch.
+ */
+export function monthBounds(month: string): { start: string; end: string } {
+  const start = `${month}-01`
+  return { start, end: addDays(addMonths(start, 1), -1) }
+}
+
+/** '2026-09' to 'September 2026', for a month heading. */
+export function formatMonth(month: string): string {
+  const { start } = monthBounds(month)
+  return new Date(`${start}T12:00:00Z`).toLocaleDateString('en-IN', {
+    month: 'long',
+    year: 'numeric',
+    timeZone: 'UTC',
+  })
+}
+
+/** The 'YYYY-MM' a date falls in. */
+export function monthOf(isoDate: string): string {
+  return isoDate.slice(0, 7)
+}
+
 /** '2026-09-02' to '2 Sep 2026', the format the dashboards display. */
 export function formatDate(isoDate: string | null | undefined): string {
   if (!isoDate) return ''

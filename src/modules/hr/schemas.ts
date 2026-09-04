@@ -264,3 +264,221 @@ export function firstError(err: z.ZodError): string {
   const issue = err.issues[0]
   return issue ? issue.message : 'That submission was not valid.'
 }
+
+/* Attendance (6.6 rules 1 and 4) ----------------------------------------- */
+
+export const ATTENDANCE_STATUSES = [
+  'present',
+  'absent',
+  'half_day',
+  'weekly_off',
+  'holiday',
+  'paid_leave',
+  'unpaid_leave',
+  'on_duty_travel',
+  'comp_off',
+] as const
+
+export const LEAVE_REQUEST_STATUSES = ['pending', 'approved', 'rejected', 'cancelled', 'withdrawn'] as const
+
+export const monthInput = z
+  .string()
+  .trim()
+  .regex(/^\d{4}-(0[1-9]|1[0-2])$/, 'Choose a month as YYYY-MM.')
+
+/**
+ * A repeated form field, normalised.
+ *
+ * `parseBody({ all: true })` hands back a string when a field appears once and
+ * an array when it appears more than once, so a grid submitted for a single
+ * employee has a different shape from the same grid submitted for two. Every
+ * row field goes through this so the zip below does not have to care.
+ */
+const repeated = z.preprocess(
+  (v) => (v === undefined || v === null ? [] : Array.isArray(v) ? v.map(String) : [String(v)]),
+  z.array(z.string())
+)
+
+/** 'HH:MM' from a time input, widened to the TIME column's 'HH:MM:SS'. */
+function toSqlTime(v: string): string | null {
+  const t = v.trim()
+  if (t === '') return null
+  return /^\d{2}:\d{2}$/.test(t) ? `${t}:00` : /^\d{2}:\d{2}:\d{2}$/.test(t) ? t : null
+}
+
+export interface AttendanceRowInput {
+  employeeId: number
+  status: (typeof ATTENDANCE_STATUSES)[number]
+  inTime: string | null
+  outTime: string | null
+  overtimeHours: number
+  remarks: string | null
+}
+
+export interface AttendanceBulkInput {
+  attendanceDate: string
+  projectId: number | null
+  rows: AttendanceRowInput[]
+}
+
+/**
+ * One post for a whole day across a project (spec 6.6, the bulk row).
+ *
+ * The grid renders every employee on the books and posts them all, so a blank
+ * status means "not marked today" and is dropped here rather than refused --
+ * otherwise marking four of ten people requires deleting six rows from the
+ * form. A row with a status but a junk employee id is a different thing and
+ * fails.
+ *
+ * `overtime_hours` is DECIMAL(4,1): 999.9 is the column's ceiling, and 24 is
+ * the day's, so the refusal is at 24.
+ */
+export const attendanceBulkSchema = z
+  .object({
+    attendanceDate: requiredDate,
+    projectId: optionalId,
+    employeeId: repeated,
+    status: repeated,
+    inTime: repeated,
+    outTime: repeated,
+    overtimeHours: repeated,
+    remarks: repeated,
+  })
+  .transform((v, ctx) => {
+    const rows: AttendanceRowInput[] = []
+    for (let i = 0; i < v.employeeId.length; i += 1) {
+      const status = (v.status[i] ?? '').trim()
+      if (status === '') continue
+
+      const employeeId = Number.parseInt(v.employeeId[i] ?? '', 10)
+      if (!Number.isInteger(employeeId) || employeeId < 1) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'That attendance grid posted an unreadable employee.' })
+        return z.NEVER
+      }
+      if (!(ATTENDANCE_STATUSES as readonly string[]).includes(status)) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: `'${status}' is not an attendance status.` })
+        return z.NEVER
+      }
+
+      const otRaw = (v.overtimeHours[i] ?? '').trim()
+      const overtimeHours = otRaw === '' ? 0 : Number(otRaw)
+      if (!Number.isFinite(overtimeHours) || overtimeHours < 0 || overtimeHours > 24) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Overtime is a number of hours between 0 and 24.' })
+        return z.NEVER
+      }
+
+      const inTime = toSqlTime(v.inTime[i] ?? '')
+      const outTime = toSqlTime(v.outTime[i] ?? '')
+      if ((v.inTime[i] ?? '').trim() !== '' && inTime === null) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Enter a time as HH:MM.' })
+        return z.NEVER
+      }
+      if ((v.outTime[i] ?? '').trim() !== '' && outTime === null) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Enter a time as HH:MM.' })
+        return z.NEVER
+      }
+      if (inTime !== null && outTime !== null && outTime <= inTime) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'The out time has to fall after the in time.' })
+        return z.NEVER
+      }
+
+      const remarks = (v.remarks[i] ?? '').trim()
+      rows.push({
+        employeeId,
+        status: status as AttendanceRowInput['status'],
+        inTime,
+        outTime,
+        overtimeHours: Math.round(overtimeHours * 10) / 10,
+        remarks: remarks === '' ? null : remarks.slice(0, 255),
+      })
+    }
+
+    if (rows.length === 0) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Nothing was marked. Set a status on at least one person.' })
+      return z.NEVER
+    }
+
+    const seen = new Set<number>()
+    for (const row of rows) {
+      if (seen.has(row.employeeId)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'That grid marks the same employee twice for one day.',
+        })
+        return z.NEVER
+      }
+      seen.add(row.employeeId)
+    }
+
+    return { attendanceDate: v.attendanceDate, projectId: v.projectId, rows } satisfies AttendanceBulkInput
+  })
+
+/**
+ * Closing a month (6.6 rule 4).
+ *
+ * The month is the whole unit and there is no project scope, because a lock
+ * that covered one project's rows and not another's would leave the same month
+ * both closed and open, and rule 4 speaks of "`attendance` rows for that
+ * period".
+ */
+export const attendanceApproveSchema = z.object({
+  month: monthInput,
+})
+
+/* Leave (spec 6.6 route table, and 561 for self-approval) ----------------- */
+
+/** An unchecked checkbox is absent from the body, not 'off'. */
+const checkbox = z
+  .string()
+  .optional()
+  .transform((v) => v === 'on' || v === '1' || v === 'true')
+
+/**
+ * A leave request.
+ *
+ * `employeeId` is optional and defaults to the requester's own employee record.
+ * When it is present and different, the service demands `hr.leave_approve`:
+ * "any employee with a login raises their own" leaves no route for the site
+ * staff who have no login at all, and HR entering it for them is the only way
+ * those days reach `attendance` and therefore 6.8's staff cost.
+ *
+ * `halfDay` is restricted to a single date. Half of a five-day range is not a
+ * thing the `days DECIMAL(4,1)` column can express usefully, and the two-way
+ * split people actually take is a half day on one date.
+ */
+export const leaveRequestSchema = z
+  .object({
+    employeeId: optionalId,
+    leaveTypeId: z.coerce.number().int().positive('Choose a leave type.'),
+    fromDate: requiredDate,
+    toDate: requiredDate,
+    halfDay: checkbox,
+    reason: optionalText(255),
+    handoverToEmployeeId: optionalId,
+    fileId: optionalId,
+  })
+  .refine((v) => v.toDate >= v.fromDate, {
+    message: 'The last day cannot fall before the first.',
+    path: ['toDate'],
+  })
+  .refine((v) => !v.halfDay || v.fromDate === v.toDate, {
+    message: 'A half day is a single date. Clear the half-day box or make both dates the same.',
+    path: ['halfDay'],
+  })
+
+/**
+ * The approver's decision, one route for both outcomes.
+ *
+ * A rejection with no reason is the thing an employee escalates, so the reason
+ * is required for that branch and refused at this boundary rather than left to
+ * a nullable column.
+ */
+export const leaveDecisionSchema = z
+  .object({
+    decision: z.enum(['approve', 'reject']),
+    rejectReason: optionalText(255),
+  })
+  .refine((v) => v.decision !== 'reject' || v.rejectReason !== null, {
+    message: 'Give the reason for the rejection. The employee sees it.',
+    path: ['rejectReason'],
+  })
