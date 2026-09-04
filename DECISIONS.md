@@ -958,6 +958,23 @@ divide by 100 on the way into a `DECIMAL(5,2)` column; that conversion belongs i
 `approval_limits` is still empty pending open question 8.2 — the representation of a limit is
 settled, the numbers are not.
 
+### 13.6 Deferred to phase 9: a range check on the rate settings
+`data_type` stays `int` with the unit in the label. The gap that leaves is an editor showing
+`1800` for a field labelled a GST rate: someone types `18`, saves, and GST is 0.18 percent. It
+looks like a typo and behaves like a money bug, and nothing in the save path would refuse it
+today.
+
+Deferred deliberately, not overlooked. The fix belongs with the rest of the input hardening in
+**spec phase 9**, and it is a validation rule rather than a schema change: reject a value below
+100 for `finance.gst_default_pct`, `finance.tds_default_pct` and
+`finance.retention_default_pct`, with a message that names the unit — "GST rate is in basis
+points: 1800 is 18 percent. 18 would be 0.18 percent." A `pct` data_type with its own editor
+branch was considered and rejected for now: it changes 6.2's type-driven render for one module's
+three keys, mid-flight, before the module that reads them exists.
+
+The consequence of waiting is bounded. The three keys have no readers until finance is built,
+and a wrong value is visible in the field it was typed into.
+
 
 
 
