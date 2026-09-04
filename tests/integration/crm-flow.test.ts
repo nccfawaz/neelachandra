@@ -361,9 +361,16 @@ describe('the sale, end to end against MariaDB', () => {
       .where('id', '=', quoteId)
       .executeTakeFirst()
     const stored = raw?.payment_schedule_json as unknown
-    expect(typeof stored).toBe('object')
-    expect(Array.isArray(stored)).toBe(true)
-    const rows = stored as Array<Record<string, unknown>>
+    // MariaDB 11.4 reports this column as JSON and mysql2 parses it into an
+    // Array; a server that reported it as plain text would hand back the string.
+    // Both readers accept either, so this accepts either too — pinning the
+    // driver's choice here would fail the build on a version difference that is
+    // not a defect. What must hold is the content, and that the conversion below
+    // can read it: three milestones, named, summing to 100.
+    const rows = (typeof stored === 'string' ? JSON.parse(stored) : stored) as Array<
+      Record<string, unknown>
+    >
+    expect(Array.isArray(rows)).toBe(true)
     expect(rows.map((m) => m.name)).toEqual(['Advance on signing', 'Roof slab cast', 'Handover'])
     expect(rows.reduce((n, m) => n + Number(m.percent), 0)).toBe(100)
   })
