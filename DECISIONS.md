@@ -2099,3 +2099,126 @@ validates the table as it stands and would have failed loudly if a row had used 
 which is the proof they passed it. The integration test now asserts the clause text contains
 `quantity` IS NOT NULL as a tripwire, because "the constraint exists" is exactly the assertion that was
 true while the constraint was broken.
+
+## 20. Constraints made real, 2026-09-05
+
+19.3 fixed one CHECK constraint. This section is what followed from asking whether the mistake it
+recorded was an incident or a class, and then closing the two places where the schema states a rule it
+does not enforce. Same day, same tables, before finance is built on either.
+
+### 20.1 The CHECK sweep found one bug, already fixed, so the deliverable is a rule
+
+**Fourteen migrations were written before three-valued logic was understood**, so every CHECK in the
+schema was swept. The inventory, from `information_schema.CHECK_CONSTRAINTS` against the migrated dev
+database rather than from reading the migrations:
+
+| Constraint | Table | Columns it references | Nullable? | Vacuous for some row shape? |
+| --- | --- | --- | --- | --- |
+| `chk_ca_quantity` | `contractor_attendance` | `uom`, `quantity` | `quantity` yes | No, since 014. Yes as 013 wrote it |
+| `value_json` | `settings` | `value_json` | No | No — NULL cannot arise |
+| `content_json` | `site_pages` | `content_json` | No | No — NULL cannot arise |
+| `schema_types` | `site_pages` | `schema_types` | No | No — NULL cannot arise |
+| `content_json` | `site_page_revisions` | `content_json` | No | No — NULL cannot arise |
+| `after_json` | `audit_log` | `after_json` | Yes | Permissive over NULL, by design |
+| `before_json` | `audit_log` | `before_json` | Yes | Permissive over NULL, by design |
+| `detail_json` | `dashboard_daily_snapshot` | `detail_json` | Yes | Permissive over NULL, by design |
+| `response_json` | `email_log` | `response_json` | Yes | Permissive over NULL, by design |
+| `visible_to_roles` | `project_documents` | `visible_to_roles` | Yes | Permissive over NULL, by design |
+| `payment_schedule_json` | `quotes` | `payment_schedule_json` | Yes | Permissive over NULL, by design |
+| `schema_types` | `site_page_revisions` | `schema_types` | Yes | Permissive over NULL, by design |
+| `body_json` | `site_services` | `body_json` | Yes | Permissive over NULL, by design |
+
+**Twelve of the thirteen are not in any migration.** MariaDB implements a `JSON` column as `LONGTEXT`
+plus an automatic `CHECK (json_valid(col))` named after the column, so a grep for the word CHECK across
+all fourteen files finds two non-comment lines, both `chk_ca_quantity` — 013 creating it and 014
+replacing it. Anyone auditing the schema by reading the migrations sees one constraint and there are
+thirteen.
+
+**The eight nullable `json_valid` constraints are permissive over NULL and are left alone.**
+`json_valid(NULL)` is NULL, so the CHECK admits the row — the same rule that made 013 vacuous, wanted
+here, because a nullable JSON column means the document may be absent. The constraint still bites on
+every other shape: `json_valid('')` is 0, and the empty string is the one that matters, because a form
+field submits `''` rather than NULL and `src/lib/json.ts` is what turns that into a NULL. So: correct as
+they stand, and **the repair list from the sweep is empty**. No sweep migration was written.
+
+**What was added instead is the rule, as a test.** `tests/integration/schema-constraints.test.ts`
+enumerates the constraints, separates the auto-generated ones from the explicit ones by shape, requires
+the explicit set to equal a list the file classifies, and fails when any explicit constraint compares a
+nullable column without an `IS NOT NULL` guard in its clause — unless the constraint is recorded in that
+file as deliberately permissive with a reason. A new CHECK in a migration cannot land without the NULL
+question being answered, which is the part of 19.3 that generalises. The file also runs the 19.3 truth
+table as SQL and proves on `dashboard_daily_snapshot.detail_json` that a nullable JSON column takes a
+NULL and refuses malformed text with `errno 4025`.
+
+**The rule was verified by regression, not by reading.** 013's clause was put back on the table by hand:
+the test fails naming `chk_ca_quantity` and `quantity`. 014's clause: it passes. A tripwire nobody has
+seen fail is a tripwire nobody knows is connected.
+
+**Side finding, reported and left.** `site_pages.schema_types` is `JSON NOT NULL` (007:27) while
+`site_page_revisions.schema_types` is `JSON NULL` (007:51), uncommented, and spec :1387 says "every
+publish snapshots the previous state". A snapshot column that can be NULL where the column it snapshots
+cannot be is not a faithful snapshot. §7 marketing is unbuilt and nothing writes either table, changing
+nullability is not a CHECK repair, and it is a second instance of the prose-and-DDL disagreement recorded
+in 21.3 — so it is logged here rather than fixed.
+
+### 20.2 A UNIQUE index cannot say "both or neither" — the expenses source pair
+
+**What was open.** 012 made `expenses (source_table, source_id)` UNIQUE and both columns nullable, and
+19.1 records why the nullability is deliberate: a UNIQUE index treats a row with a NULL in an indexed
+column as distinct from every other such row, so the manual expenses — both NULL, and the majority of
+the table — do not collide with each other. That reasoning stands. What it also admits is
+
+```
+source_table = 'contractor_bills', source_id = NULL
+```
+
+a row that claims to be the posting of an upstream document and points at no row.
+
+**The index structurally cannot refuse it, and no version of it can.** A UNIQUE index constrains rows
+*against each other*; this row is wrong *on its own*. It is not a duplicate of anything — two of them do
+not even collide, because for indexing purposes one NULL is not equal to another. Making the columns
+`NOT NULL` would close it and break direct entry, which is the larger half of the table. So the choice is
+not between index designs. **A CHECK is the only mechanism that closes it**, and `chk_exp_source_pair` in
+migration 015 is that CHECK:
+
+```sql
+CHECK ((source_table IS NULL AND source_id IS NULL)
+   OR (source_table IS NOT NULL AND source_table <> ''
+       AND source_id IS NOT NULL AND source_id > 0))
+```
+
+**Written so the 014 mistake cannot recur, by construction rather than by a guard bolted on.** `IS NULL`
+and `IS NOT NULL` are the two predicates in SQL that never return UNKNOWN, so a clause built only from
+them has no third outcome to leak through. The two comparisons that are not null predicates — `<> ''`
+and `> 0` — sit behind the `IS NOT NULL` test in the same conjunct, so neither can be reached with a NULL
+operand.
+
+**Why it matters more than an edge case.** 6.8 rule 1 is "actuals are never typed where another module
+already produced them", and the pair is the evidence of which document produced the money.
+`source_table IS NOT NULL` is the natural way to ask "is this a posted actual or a manual entry", and a
+half-populated row answers *posted* while being unreconcilable to anything. The mirror shape, an id with
+no table, is an orphan no join can resolve.
+
+**The sentinel values are in the same constraint deliberately**, and this is wider than the instruction
+that prompted it, which said both-or-neither. `source_table = ''` with an id, or a real table with
+`source_id = 0`, satisfies both-or-neither and still refers to nothing: `''` is not a table name and 0 is
+not an `AUTO_INCREMENT` id. Same defect, same constraint, no second migration later. Flagged in the
+report rather than done quietly.
+
+**`source_type` is deliberately not tied in.** Requiring `source_type = 'manual'` to imply a NULL pair,
+and each other member to imply its own table name, means writing the map from ENUM member to table into
+the constraint: six branches to edit whenever a posting path lands, and two members (`campaign_spend`,
+`payroll`) have no posting path yet. The pair constraint holds whatever `source_type` says, which is what
+makes it the one that closes the hole. Considered and rejected, not overlooked.
+
+**Preconditions counted before applying:** `expenses` held 0 rows — 0 half-populated by table, 0 by id,
+0 carrying a sentinel. The `ALTER` validates the table as it stands, so it would have failed loudly on a
+row that used the hole. Nothing under `src/` inserts into `expenses` yet (0 hits for
+`insertInto('expenses')`); `hr/service.ts:2316` records in an audit payload what the finance posting
+*will* write, which is where the shape came from.
+
+**Asserted against the server:** both NULL inserts and is read back; `('contractor_bills', NULL)` and
+`(NULL, 4242)` come back `errno 4025` naming `chk_exp_source_pair`; so do `('', 4242)` and
+`('contractor_bills', 0)`; two different documents in the same table both insert; and the same document
+twice is refused `errno 1062` naming `uq_exp_source` — the two mechanisms separable in one test, which is
+this section's argument stated as an assertion.

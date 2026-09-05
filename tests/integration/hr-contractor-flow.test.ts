@@ -1028,10 +1028,23 @@ describe('the double-posting constraint 6.8 rule 1 promises', () => {
     // Direct entry: statutory fees, professional fees, site overheads, travel.
     // There is no upstream row to be unique against and there are many of them.
     for (let i = 0; i < 3; i += 1) await insertExpense({ source_type: 'manual' })
-    // Half a pair is exempt by the same NULL rule. Nothing writes one, but the
-    // migration comment claims it, so it is asserted rather than assumed.
-    await insertExpense({ source_table: 'contractor_bills' })
-    await insertExpense({ source_table: 'contractor_bills' })
+
+    // Half a pair used to be exempt by the same NULL rule, and this test used to
+    // assert that it was -- the 012 comment claimed it, so it was pinned rather
+    // than assumed. Migration 015 closed it: a row naming a source table with no
+    // id claims to be a posting and points at nothing, which a UNIQUE index
+    // cannot refuse because the row is wrong on its own rather than a duplicate
+    // of another. See DECISIONS.md 20.2. The exemption that remains is the one
+    // that was wanted: any number of rows with the whole pair NULL.
+    for (let i = 0; i < 2; i += 1) {
+      const err = await insertExpense({ source_table: 'contractor_bills' }).then(
+        () => null,
+        (e: { message?: string; errno?: number }) => e
+      )
+      expect(err, 'a half-populated source pair was admitted').not.toBe(null)
+      expect(err?.message).toMatch(/chk_exp_source_pair/)
+      expect(err?.errno).toBe(4025)
+    }
 
     const n = await db
       .selectFrom('expenses')
@@ -1039,7 +1052,7 @@ describe('the double-posting constraint 6.8 rule 1 promises', () => {
       .where('source_id', 'is', null)
       .where('expense_no', 'like', 'FIXEXP/%')
       .executeTakeFirstOrThrow()
-    expect(Number(n.n)).toBe(5)
+    expect(Number(n.n)).toBe(3)
   })
 
   it('refuses a second post of the same document in the database, not in code', async () => {

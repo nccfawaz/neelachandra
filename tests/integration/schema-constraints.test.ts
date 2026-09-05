@@ -50,7 +50,10 @@ const db = getDb()
  * adding it here fails the first test, which is the point: the failure is where
  * the NULL question gets asked.
  */
-const EXPLICIT_CHECKS = ['contractor_attendance.chk_ca_quantity'] as const
+const EXPLICIT_CHECKS = [
+  'contractor_attendance.chk_ca_quantity',
+  'expenses.chk_exp_source_pair',
+] as const
 
 /**
  * Explicit constraints that are deliberately permissive over NULL, with the
@@ -76,6 +79,25 @@ const NULLABLE_JSON_COLUMNS = [
 /** The sentinel row the json_valid proof writes and removes. */
 const SENTINEL_KEY = 'zz_schema_constraints_probe'
 const SENTINEL_DATE = '2099-12-31'
+
+/** Sentinel identifiers for the expenses rows the source-pair tests write. */
+const SENTINEL_EMAIL = 'fixture.schema.constraints@example.invalid'
+const SENTINEL_EXPENSE_PREFIX = 'ZZSC-'
+
+/** A row that satisfies every NOT NULL column of `expenses` without a default. */
+function expenseRow(no: string, source: { table: string | null; id: number | null }) {
+  return {
+    expense_no: `${SENTINEL_EXPENSE_PREFIX}${no}`,
+    expense_date: '2026-06-30',
+    expense_type: 'statutory_fee' as const,
+    payee_type: 'authority' as const,
+    source_table: source.table,
+    source_id: source.id,
+    created_by: sentinelUserId,
+  }
+}
+
+let sentinelUserId = 0
 
 type CheckRow = { table_name: string; constraint_name: string; check_clause: string }
 type ColumnRow = { table_name: string; column_name: string; is_nullable: string }
@@ -118,10 +140,29 @@ beforeAll(async () => {
   // sets, and an empty set makes all of them pass.
   expect(checks.length, 'no CHECK constraints found -- did the migrations run?').toBeGreaterThan(0)
   expect(nullable.size, 'no columns found -- wrong database?').toBeGreaterThan(100)
+
+  // One login, because expenses.created_by is NOT NULL and a foreign key. The
+  // source-pair tests need a row that is valid in every respect except the pair,
+  // or a refusal proves nothing about which constraint refused it.
+  await sql`delete from expenses where expense_no like ${`${SENTINEL_EXPENSE_PREFIX}%`}`.execute(db)
+  await sql`delete from users where email = ${SENTINEL_EMAIL}`.execute(db)
+  const user = await db
+    .insertInto('users')
+    .values({
+      email: SENTINEL_EMAIL,
+      full_name: 'Fixture Schema Constraints',
+      status: 'active',
+      must_change_password: 0,
+    })
+    .executeTakeFirst()
+  sentinelUserId = Number(user.insertId ?? 0)
+  expect(sentinelUserId).toBeGreaterThan(0)
 })
 
 afterAll(async () => {
   await sql`delete from dashboard_daily_snapshot where metric_key = ${SENTINEL_KEY}`.execute(db)
+  await sql`delete from expenses where expense_no like ${`${SENTINEL_EXPENSE_PREFIX}%`}`.execute(db)
+  await sql`delete from users where email = ${SENTINEL_EMAIL}`.execute(db)
   await closePool()
 })
 
@@ -260,5 +301,80 @@ describe('the three-valued rule that made 013 vacuous', () => {
     expect(Number(probe.rows[0]?.f_and_n)).toBe(0)
     expect(probe.rows[0]?.t_and_n).toBe(null)
     expect(probe.rows[0]?.f_or_n).toBe(null)
+  })
+})
+
+describe('the expenses source pair (migration 015)', () => {
+  /** The insert, with everything valid except whatever the case is testing. */
+  const insert = (no: string, table: string | null, id: number | null) =>
+    db.insertInto('expenses').values(expenseRow(no, { table, id })).executeTakeFirst()
+
+  const refusal = (promise: Promise<unknown>) =>
+    promise.then(
+      () => null,
+      (e: { message?: string; errno?: number }) => e
+    )
+
+  it('names both columns of the pair in an IS NOT NULL guard', () => {
+    const clause = checks.find((row) => row.constraint_name === 'chk_exp_source_pair')?.check_clause
+    // TRIPWIRE, and the reason 015 exists in the form it does: the clause must
+    // test presence rather than compare, because a comparison against a NULL is
+    // UNKNOWN and a CHECK admits UNKNOWN. See DECISIONS.md 19.3 and 20.
+    expect(clause).toMatch(/`source_table` is not null/i)
+    expect(clause).toMatch(/`source_id` is not null/i)
+  })
+
+  it('keeps direct entry working: both NULL inserts and persists', async () => {
+    // The majority shape. 6.8 rule 1: "Manual expenses are for things with no
+    // upstream document." If this fails the constraint has broken the common
+    // case to close an edge one.
+    const written = await insert('MANUAL', null, null)
+    expect(Number(written.numInsertedOrUpdatedRows ?? 0)).toBe(1)
+
+    const back = await sql<{ n: number }>`
+      select count(*) as n from expenses
+      where expense_no = ${`${SENTINEL_EXPENSE_PREFIX}MANUAL`}
+        and source_table is null and source_id is null
+    `.execute(db)
+    expect(Number(back.rows[0]?.n)).toBe(1)
+  })
+
+  it('refuses both half-populated shapes, with no application code involved', async () => {
+    const cases: Array<[string, string | null, number | null]> = [
+      ['HALFTABLE', 'contractor_bills', null],
+      ['HALFID', null, 4242],
+    ]
+    for (const [no, table, id] of cases) {
+      const err = await refusal(insert(no, table, id))
+      expect(err, `a half-populated pair was admitted: (${table}, ${id})`).not.toBe(null)
+      expect(err?.message).toMatch(/chk_exp_source_pair/)
+      expect(err?.errno).toBe(4025)
+    }
+  })
+
+  it('refuses the sentinel values that satisfy both-or-neither and refer to nothing', async () => {
+    for (const [no, table, id] of [
+      ['EMPTYTABLE', '', 4242],
+      ['ZEROID', 'contractor_bills', 0],
+    ] as Array<[string, string, number]>) {
+      const err = await refusal(insert(no, table, id))
+      expect(err, `a pair pointing at nothing was admitted: ('${table}', ${id})`).not.toBe(null)
+      expect(err?.message).toMatch(/chk_exp_source_pair/)
+      expect(err?.errno).toBe(4025)
+    }
+  })
+
+  it('admits a real posting and still refuses the same document twice', async () => {
+    expect(Number((await insert('SRC1', 'contractor_bills', 4242)).numInsertedOrUpdatedRows ?? 0)).toBe(1)
+    // A different document in the same table is a different actual.
+    expect(Number((await insert('SRC2', 'contractor_bills', 4243)).numInsertedOrUpdatedRows ?? 0)).toBe(1)
+
+    // And uq_exp_source is what stops the double posting -- 1062, not 4025. The
+    // two mechanisms are separable, which is the whole argument of DECISIONS 20:
+    // the index constrains rows against each other, the CHECK constrains a row
+    // on its own, and neither can do the other's job.
+    const err = await refusal(insert('SRC3', 'contractor_bills', 4242))
+    expect(err?.errno).toBe(1062)
+    expect(err?.message).toMatch(/uq_exp_source/)
   })
 })
