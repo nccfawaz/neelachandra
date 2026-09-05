@@ -1117,9 +1117,10 @@ export async function poRateWarnings(
 /**
  * Creates a draft PO (spec 6.4 rule 7).
  *
- * Returns the rate warnings alongside the id rather than throwing, because
- * rule 7 is explicit that a variance surfaces in the form and does not block.
- * The caller renders them; nothing here depends on the buyer reading them.
+ * Returns the rate warnings alongside the id rather than throwing, because rule 7
+ * at NCC_BUILD_SPEC.md:1345 is explicit — above 10 percent "it does not block, it
+ * surfaces ... inline in the form". The caller renders them; nothing here depends
+ * on the buyer reading them.
  *
  * Totals are recomputed here from the line rates. The form computes them in
  * Alpine for feedback, and spec 6.4's component note says the server side is

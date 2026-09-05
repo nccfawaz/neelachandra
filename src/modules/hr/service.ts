@@ -540,8 +540,8 @@ export async function runExit(
 /**
  * The month lock, in one place (6.6 rule 4).
  *
- * Rule 4 says approved months "reject updates unless `finance.period_close` is
- * held". Two things follow that are easy to get wrong:
+ * Rule 4 at NCC_BUILD_SPEC.md:1747 says approved months "reject updates unless
+ * `finance.period_close` is held". Two things follow that are easy to get wrong:
  *
  *   - It has to block INSERTS too, not just updates. A month closed with
  *     twenty days entered and the twenty-first added afterwards changes the
@@ -1795,13 +1795,13 @@ export interface ContractorAttendanceResult {
 /**
  * The compliance gate of rule 3, as a list of reasons rather than a boolean.
  *
- * Read against the day worked, not against today. Rule 3 says the check is on a
- * date that "has passed", and for a licence that expired last week both
- * readings agree; they differ only when a day from BEFORE the expiry is entered
- * late, and refusing that would refuse to record labour that was on site while
- * the cover was live. Cost that happened is recorded. DECISIONS 18.4 carries
- * this reading and the fact that a NULL date does not block, because a column
- * that was never filled has not "passed".
+ * Read against the day worked, not against today. Rule 3 at
+ * NCC_BUILD_SPEC.md:1745 says the check is on a date that "has passed", and for
+ * a licence that expired last week both readings agree; they differ only when a
+ * day from BEFORE the expiry is entered late, and refusing that would refuse to
+ * record labour that was on site while the cover was live. Cost that happened is
+ * recorded. DECISIONS 18.4 carries this reading and the fact that a NULL date
+ * does not block, because a column that was never filled has not "passed".
  */
 function complianceFailures(
   contractor: {
@@ -2168,10 +2168,13 @@ export interface ContractorPeriodInput {
  * Approving a period's contractor attendance.
  *
  * Not in the 6.6 route table, and that is a gap in the spec rather than a
- * design choice here: rule 2 bills only rows whose `approved_at` is set and no
- * route in the table can set it. The permission is `hr.attendance_approve`, the
- * one rule 4 already uses to close an employee month, because it is the same
- * act on the other population.
+ * design choice here. The table has POST /api/hr/attendance/approve for
+ * employees (NCC_BUILD_SPEC.md:1725) and POST /api/hr/contractor-attendance to
+ * enter contractor rows (:1728), but no route to approve them — while :1729 has
+ * the bill generator "build the bill from approved attendance" and rule 2
+ * (:1743) sums only rows with `approved_at IS NOT NULL`. The permission is
+ * `hr.attendance_approve`, the one rule 4 names for closing an employee month
+ * (:1747), because it is the same act on the other population.
  *
  * There is deliberately no self-approval refusal, matching
  * `approveAttendanceMonth`. The money control on this chain is the bill
@@ -2497,10 +2500,11 @@ export interface ContractorBillApprovalResult {
 /**
  * Approving a bill (6.6 route table, "+ limit").
  *
- * This is the last step HR takes. 6.8 rule 1 says approving the bill creates the
- * `expenses` row; that posting is 6.8's and is deliberately not written here.
- * What this function guarantees is that the row it leaves behind carries the
- * identity finance will key on:
+ * This is the last step HR takes. 6.8 rule 1 at NCC_BUILD_SPEC.md:2137 says
+ * approving a contractor bill creates an `expenses` row with
+ * `source_type = 'contractor_bill'`; that posting is 6.8's and is deliberately
+ * not written here. What this function guarantees is that the row it leaves
+ * behind carries the identity finance will key on:
  *
  *     expenses.source_type = 'contractor_bill'
  *     expenses.source_table = 'contractor_bills'

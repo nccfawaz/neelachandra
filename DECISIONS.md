@@ -3134,6 +3134,108 @@ rotating the weekday array turns three of the date cases red.
 **Both suites at this slice: 281 unit, 224 integration.** Typecheck clean over 71 files under `src/`; the
 client component is not one of them, which is 22.1.
 
+## 23. The `src/`-wide citation sweep, 2026-09-05
+
+CLAUDE.md's third clause — the rule that a comment justifying a business rule by rule number is owed the
+same scrutiny in `src/` as in `tests/` — recorded that the sweep it asks for was owed and had not been
+done. It has now been done, and this section is what it found. Nothing here changes behaviour: every edit
+was to a comment, and the three gates were identical before and after (71 files, 281 unit, 224
+integration).
+
+The shape of the result is worth stating first, because it is not what the clause's own instance
+predicted. `grep -rInE "rule[s]? [0-9]" src/` returns 169 lines across 19 files, and the overwhelming
+majority are locators — `(spec 6.6 rule 7)` over the function that implements rule 7 — which claim nothing
+and are fine. Nineteen used a rule number as the *basis* for an ordering, a refusal or a quotation. Of
+those, fourteen turned out to be accurate: the quoted fragments are in the spec verbatim, and the one
+claim about an absence (that the 6.6 route table has no route to approve contractor attendance) is true of
+`NCC_BUILD_SPEC.md:1725-1737`. Eight of the fourteen are comments justifying a rule and now carry the spec
+line; three are in rendered copy and are 23.3; three needed nothing — a local ordering label in
+`legacyRedirects.ts`, a locator that gives its own reason beside the number, and `computeLeadScore`'s
+docstring, which already says which part of the scoring is rule 1's and which part is the author's and is
+the model the rest were edited towards. **A citation by number is not wrong, it is unfalsifiable at a
+glance, and that is the whole cost.**
+
+### 23.1 Four citations were doing work the cited rule does not do
+
+**A quotation that is not in the spec.** `loseLead`'s docstring attributed to 6.7 rule 8 the phrase
+*"lost reason breakdown, and which competitor won"*, in quotation marks. That string does not occur in
+`NCC_BUILD_SPEC.md` in any casing or word order. The substance is right — rule 8 at `:1938` does want a
+closed enum feeding `competitors.typical_rate_per_sqft_paise` — but a reader checking the quote finds
+nothing and cannot tell whether the rule moved or the quote was invented. It now quotes the words the rule
+actually has, *"free-text loss notes produce no analysis"*, and cites the line.
+
+**A rule that names five things, cited for nine.** `STAGE_PROBABILITY` said it was *"verbatim from the
+rule"* (6.7 rule 2) and that *"stages the rule does not name get null rather than a guess"*. Rule 2 at
+`:1926` names exactly five — `qualified` 20, `site_visit_done` 35, `quote_sent` 50, `negotiation` 70,
+`verbal_agreement` 85. The map also gives `won` 100, `lost` 0, `dormant` 0 and `disqualified` 0, so four of
+its thirteen entries contradicted the policy the docstring stated one line above them. The numbers are
+right and are unchanged; the docstring now says which five are the rule's and which four are this
+repository's. This is CLAUDE.md's second clause exactly — a citation covers the shape it names and no
+adjacent shape — found in `src/` rather than in a test.
+
+**A schema strictness justified by a sibling function.** `quoteSchema` required the payment schedule to
+sum to 100 and gave as its reason *"rule 6: conversion generates the project's milestones from this JSON
+through generateMilestones(), which throws unless the weightages sum to exactly 100."* The first half is
+real: rule 6 at `:1934` does generate `project_milestones` from `payment_schedule_json`. The second half
+is not the spec's at all. `project_milestones.percent_of_contract` is nullable at `:1018`, the *"must sum
+to 100"* at `:999` is `stage_template_items` — physical progress weighting, a different table — and no
+rule requires a payment schedule to total anything. What throws is
+`src/modules/projects/service.ts:1102`, and that function's own docstring gives the honest reason: a
+schedule summing to 95 leaves 5 percent of a contract permanently unbillable. The requirement stands, the
+citation now points at the function that imposes it and the reason that motivates it, and the true half no
+longer lends its credibility to the invented half.
+
+**A rule cited for a mechanism rather than for the property it requires.** `createQuote` said reading the
+inclusion list from `package_spec_lines` at print time *"is rule 4 as written"*. Rule 4 at `:1930`
+requires the property — the list *"cannot drift from what the site advertises"* — and says `createQuote`
+reads the package row and its spec lines. Reading at print rather than snapshotting is this module's
+mechanism for the property, and the same over-attribution was in the print route's comment. Both now
+separate the two. The paragraph also had a bare "rule 4" and a qualified "6.5 rule 4" three sentences
+apart, both now qualified.
+
+### 23.2 One file used "rule N" in two senses inside one function
+
+`applicableRate` in `src/modules/hr/queries.ts` is the function CLAUDE.md's third clause was written
+about: its return-value comment records that an earlier version justified rate precedence by "rule 3",
+which in §6.6 is contractor compliance blocking deployment and has nothing to do with rates. The
+docstring above it still said *"Rule 3 sits above rule 4 deliberately"* — meaning items 3 and 4 of its own
+numbered list, in the one function in this tree where that exact token had already been misread once. Two
+further problems in the same sentence: it gave as the basis *"scope is the distinction the spec builds
+into the schema"*, which the corrected comment fifty lines below explicitly calls an inference from the
+nullable columns at `:1644` and puts on the blocking owner list at 17.3; and *"it was the existing
+behaviour for day rates before measured work existed"*, which justifies an ordering by what the code used
+to do. The docstring now says **step**, states the basis as an inference, and points at 17.3. The two
+comments in that function no longer disagree about whether the spec settles the precedence.
+
+### 23.3 Fifteen rule numbers are in text a user reads, and were left alone
+
+Nine in `src/modules/hr/routes.tsx` and six in `src/modules/crm/routes.tsx` sit inside rendered copy —
+an Alert saying corrections *"need `finance.period_close`, because rule 4 exists to stop a payroll figure
+changing after the payment is made"*, a table caption saying *"what rule 3 requires before a quote can be
+sent"*, a flash message saying a bill *"does not reach finance until 6.8 rule 1 is built"*. Every one is
+accurate. Every one also asks a site supervisor to look up a document they do not have, and one of them
+tells them a section number of a build spec as though it were a release note.
+
+They are recorded here and **not changed**, because rendered copy is output: editing it is a behaviour
+change, and this task was citations only. The fix when it is taken is to keep the reason and drop the
+number — the Alert already says why the month is closed, which is the part that helps. It can be taken
+without a red test: grepping `tests/` for those phrases returns one line, a comment in
+`hr-contractor-flow.test.ts:967`, and no assertion. That nothing pins fifteen strings a user reads is its
+own small finding.
+
+### 23.4 What the sweep does not establish
+
+Nothing executable holds any of this. A citation is a tripwire on prose, in the sense of the CLAUDE.md
+section above it: it either still matches the spec line it names, or somebody had to edit one of the two
+and re-read the other. Fourteen of the nineteen were accurate for months while being unfalsifiable at a
+glance, so the sweep's value is not that it found four defects — it is that the next reader of any of the
+nineteen can check the claim in one jump instead of grepping §6.6 for a rule that turns out to be about
+something else.
+
+The one class this sweep cannot see is a comment that cites nothing at all and asserts a business rule as
+though it were obvious. There is no grep for that.
+
+
 
 
 

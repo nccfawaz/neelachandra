@@ -417,9 +417,10 @@ export const visitScheduleSchema = z.object({
  * The completed site visit.
  *
  * These are the fields that decide whether the plot can be built on at the
- * quoted rate, which is why rule 3 will not let a quote go out without one.
- * feasibility is required on completion: a visit that recorded no verdict is
- * the same as no visit for the purposes of that gate.
+ * quoted rate, which is why rule 3 at NCC_BUILD_SPEC.md:1928 will not let a lead
+ * reach `quote_sent` without "a `site_visits` row with `status = 'completed'` and
+ * a non-null `feasibility`". feasibility is required on completion: a visit that
+ * recorded no verdict is the same as no visit for the purposes of that gate.
  */
 export const visitCompleteSchema = z.object({
   visitedAt: requiredDateTime,
@@ -476,11 +477,17 @@ export interface MilestoneInput {
  * percentage and the lines — the inputs to the arithmetic, never its result.
  *
  * The payment schedule is required and must sum to 100, which is stricter than
- * the column (payment_schedule_json is NULL-able). The reason is rule 6:
- * conversion generates the project's milestones from this JSON through
- * generateMilestones(), which throws unless the weightages sum to exactly 100.
- * The only person who can fix a bad schedule is the sales executive writing the
- * quote, so this is the last boundary where the error is actionable.
+ * the column (payment_schedule_json is NULL-able). Two different things hold
+ * that, and only the first is the spec's. Rule 6 at NCC_BUILD_SPEC.md:1934 says
+ * conversion generates the project's milestones from this JSON, so this is the
+ * document those rows come from. The sum-to-100 requirement is not in the spec
+ * at all: `project_milestones.percent_of_contract` is nullable at :1018, and the
+ * "must sum to 100" at :999 is `stage_template_items`, which is physical
+ * progress weighting and a different table. It is generateMilestones() in
+ * src/modules/projects/service.ts that throws, for the reason stated there — a
+ * schedule summing to 95 leaves 5 percent of a contract permanently unbillable.
+ * This schema is where that becomes actionable: the only person who can fix a
+ * bad schedule is the sales executive writing the quote.
  */
 export const quoteSchema = z
   .object({
@@ -605,11 +612,13 @@ export const reasonSchema = z.object({
 /**
  * Losing a lead (spec 6.7 rule 8).
  *
- * The reason is a closed list because the whole point of rule 8 is the report
- * built from it, and a free-text reason produces ten spellings of "price". The
- * competitor's rate is optional and in rupees per square foot: it is the one
- * number that populates competitors.typical_rate_per_sqft_paise, and it is only
- * ever known when the client volunteers it.
+ * The reason is a closed list because rule 8 at NCC_BUILD_SPEC.md:1938 makes the
+ * enum closed so it can feed pricing, and says of the alternative that
+ * "free-text loss notes produce no analysis". A free-text reason produces ten
+ * spellings of "price". The competitor's rate is optional and in rupees per
+ * square foot: it is the one number that populates
+ * competitors.typical_rate_per_sqft_paise, and it is only ever known when the
+ * client volunteers it.
  */
 export const loseSchema = z.object({
   lostReason: z.enum(LOST_REASONS),

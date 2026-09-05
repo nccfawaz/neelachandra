@@ -1961,9 +1961,10 @@ inventory.get('/app/inventory/grn', requirePermission(PERMISSIONS.INVENTORY_VIEW
     {
       header: 'Match',
       // The three-way match in one column: a receipt whose challan and counted
-      // quantity disagree is the one someone has to chase before the invoice is
-      // paid (rule 3), so the list says so rather than leaving it to be found
-      // on the detail page.
+      // quantity disagree is the one someone has to chase, because rule 3 at
+      // NCC_BUILD_SPEC.md:1337 wants it so "the vendor invoice is queried before
+      // payment rather than after", so the list says so rather than leaving it to
+      // be found on the detail page.
       cell: (r) =>
         Number(r.mismatch_count ?? 0) > 0 ? (
           <strong>{Number(r.mismatch_count)} short</strong>

@@ -76,7 +76,16 @@ assertions.** The 20.3 sweep that triaged six comment-justified assertions searc
 missed `queries.ts:1020` — `applicableRate`'s own comment justifying rate precedence by "rule 3", which is
 contractor compliance blocking deployment and has nothing to do with rates. A wrong citation in a module
 is worse than one in a test, because it is what the next person reads before changing the behaviour and
-nothing runs it. **A `src/`-wide sweep for rule-number citations is owed and has not been done.**
+nothing runs it.
+
+The `src/`-wide sweep this clause asked for was done on 2026-09-05 and is DECISIONS 23. Of 169 lines in
+`src/` mentioning a rule by number, nineteen used one as the basis for an ordering, a refusal or a
+quotation; five of those nineteen were wrong. **The most useful thing it found, for the next sweep: four
+of the five were wrong about the *scope* of a real rule rather than about which rule it was.** A quoted
+fragment that is not in the spec at all, a rule naming five stages cited for nine, a schema strictness
+that belongs to a sibling function, a rule cited for a mechanism when it only requires the property. Only
+one was the `queries.ts` shape of citing the wrong number outright. So the grep that finds these is not
+"is there a rule number here" — it is **read the cited line and ask what it does not say**.
 
 Two consequences worth stating:
 

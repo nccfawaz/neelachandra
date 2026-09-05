@@ -1010,12 +1010,21 @@ export async function contractorRates(db: Queryable, contractorId: number): Prom
  *      `contractor_attendance.skill_level` is NOT NULL and always says who.
  *   5. Then the latest `effective_from` that has begun, then the highest id.
  *
- * Rule 3 sits above rule 4 deliberately: scope is the distinction the spec builds
- * into the schema, and it was the existing behaviour for day rates before
- * measured work existed. Rule 5 is deterministic but not unambiguous, and the
- * caller is told so through `ambiguous` rather than being refused, because a
- * refusal would stop a site gate at 8am over a data condition nobody there can
- * fix. The service records the chosen `rate_id` in the audit log for that reason.
+ * Those five are numbered steps of this function, not rules of §6.6. In §6.6 a
+ * "rule 3" is contractor compliance blocking deployment (NCC_BUILD_SPEC.md:1745)
+ * and a "rule 4" is the attendance month lock (:1747), neither of which has
+ * anything to do with rates -- and citing "rule 3" for the precedence below is
+ * the mistake the comment at the return statement records. Step is the word
+ * here for that reason.
+ *
+ * Step 3 sits above step 4 deliberately, and the basis is an inference rather
+ * than a rule: `contractor_rates.project_id` and `.skill_level` are both
+ * nullable at NCC_BUILD_SPEC.md:1644 and nothing in §6.6 says which nullable
+ * beats which, so the ordering is on the blocking owner list at DECISIONS 17.3
+ * for confirmation. Step 5 is deterministic but not unambiguous, and the caller
+ * is told so through `ambiguous` rather than being refused, because a refusal
+ * would stop a site gate at 8am over a data condition nobody there can fix. The
+ * service records the chosen `rate_id` in the audit log for that reason.
  */
 export async function applicableRate(
   db: Queryable,

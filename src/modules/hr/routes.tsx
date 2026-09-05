@@ -2327,9 +2327,10 @@ hr.get('/app/hr/reports/muster', requirePermission(PERMISSIONS.HR_EMPLOYEE_VIEW)
  * The route table gives four routes and the page list gives five screens, so the
  * GETs for attendance entry and for bills are additions -- a page cannot exist
  * without a route to reach it. `POST /api/hr/contractor-attendance/approve` is
- * the other addition, and the load-bearing one: rule 2 bills only rows whose
- * `approved_at` is set, and nothing in the table can set it. Both are flagged in
- * DECISIONS 18.3 rather than treated as licence to redesign the table.
+ * the other addition, and the load-bearing one: rule 2 at NCC_BUILD_SPEC.md:1743
+ * bills only rows whose `approved_at IS NOT NULL`, and nothing in the table at
+ * :1725-1737 can set it for a contractor row. Both are flagged in DECISIONS 18.3
+ * rather than treated as licence to redesign the table.
  */
 function canApproveAttendance(c: Ctx): boolean {
   return c.get('perms').has(PERMISSIONS.HR_ATTENDANCE_APPROVE)

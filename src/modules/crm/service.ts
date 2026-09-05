@@ -216,10 +216,19 @@ export function temperatureFor(
 }
 
 /**
- * The default probability for a stage (spec 6.7 rule 2), verbatim from the
- * rule. Stages the rule does not name get null rather than a guess: a lead at
- * 'contacted' has no forecastable probability, and inventing 10 percent for it
- * would put money in the pipeline figure that nobody has any basis for.
+ * The default probability for a stage.
+ *
+ * Five of these are verbatim from spec 6.7 rule 2 at NCC_BUILD_SPEC.md:1926,
+ * which names `qualified` 20, `site_visit_done` 35, `quote_sent` 50,
+ * `negotiation` 70 and `verbal_agreement` 85 and stops there. The other four
+ * are this repository's and the rule does not mention them: `won` 100 and
+ * `lost` 0 are forced by what the words mean, and `dormant` and `disqualified`
+ * follow `lost` because rule 9 (:1940) already excludes dormant from pipeline
+ * value, so the figure here is never what decides that.
+ *
+ * Every remaining stage gets null rather than a guess: a lead at 'contacted'
+ * has no forecastable probability, and inventing 10 percent for it would put
+ * money in the pipeline figure that nobody has any basis for.
  */
 export const STAGE_PROBABILITY: Record<string, number | null> = {
   new: null,
@@ -1305,10 +1314,14 @@ export function computeQuoteTotals(opts: {
  * Creates a quote (spec 6.7 routes: POST /app/crm/quotes).
  *
  * The rate comes from the effective site_packages row unless the form overrode
- * it, which is rule 4's "prices off the live package". The inclusion list is not
- * copied onto the quote: it is read from package_spec_lines at print time so it
- * is exactly what the public site advertises. That is rule 4 as written, and it
- * has a known consequence — see the uq_packages_slug entry in DECISIONS.md,
+ * it, which is 6.7 rule 4's "prices off the live package"
+ * (NCC_BUILD_SPEC.md:1930). The inclusion list is not copied onto the quote: it
+ * is read from package_spec_lines at print time. What rule 4 requires is the
+ * property — the list is "exactly the published specification" and "cannot
+ * drift from what the site advertises" — and reading at print time is this
+ * module's mechanism for it, chosen because the alternative of snapshotting the
+ * lines onto the quote is the drift the rule rules out. It has a known
+ * consequence — see the uq_packages_slug entry in DECISIONS.md,
  * where a unique key on slug alone prevents 6.5 rule 4's "close the row and
  * insert a new one" from working, so a rate change edits the row a sent quote
  * points at. The priced numbers are snapshotted on the quote row, so the money
@@ -2334,9 +2347,11 @@ export async function reviseQuote(
 /**
  * Loses a lead, with a reason (spec 6.7 rule 8).
  *
- * The reason is a closed list and the competitor is upserted, because rule 8's
- * whole point is the report: "lost reason breakdown, and which competitor won".
- * A free-text reason gives ten spellings of "price" and a report nobody trusts.
+ * The reason is a closed list and the competitor is upserted, because rule 8 at
+ * NCC_BUILD_SPEC.md:1938 exists for the pricing picture built from it: a closed
+ * enum feeds `competitors.typical_rate_per_sqft_paise`, and the rule's own words
+ * for the alternative are that "free-text loss notes produce no analysis". A
+ * free-text reason gives ten spellings of "price" and a report nobody trusts.
  *
  * A lost lead is not reopened. A client who comes back six months later is a new
  * lead with its own source, its own first-response clock and its own quote. The

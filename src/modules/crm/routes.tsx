@@ -2603,12 +2603,15 @@ crm.get('/api/crm/quotes/:id/print', requirePermission(...QUOTE_READ), async (c)
     getSetting(db, 'company.email_enquiry', ''),
   ])
   /*
-   * Rule 4: the inclusion list is read live from package_spec_lines at print
-   * time, not copied onto the quote, so the printed sheet says what the public
-   * site advertises today. The consequence is recorded in DECISIONS.md under
-   * uq_packages_slug — a spec edit changes the wording on a quote already sent.
-   * The money cannot move that way: every priced figure is snapshotted on the
-   * quotes row and read from there.
+   * The inclusion list is read live from package_spec_lines at print time, not
+   * copied onto the quote, so the printed sheet says what the public site
+   * advertises today. Rule 4 at NCC_BUILD_SPEC.md:1930 requires the property --
+   * the list "cannot drift from what the site advertises" -- and reading it here
+   * rather than snapshotting it is this module's mechanism for that, the same
+   * choice createQuote's docstring records. The consequence is recorded in
+   * DECISIONS.md under uq_packages_slug — a spec edit changes the wording on a
+   * quote already sent. The money cannot move that way: every priced figure is
+   * snapshotted on the quotes row and read from there.
    */
   const spec = quote.package_id === null ? [] : await q.packageSpec(db, Number(quote.package_id))
   const specGroups: Array<{ name: string; lines: typeof spec }> = []
