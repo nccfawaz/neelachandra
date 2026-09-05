@@ -38,6 +38,26 @@ import { closePool } from '../../src/db/pool.js'
  * Nothing here writes to a table any module reads. The one INSERT is into
  * dashboard_daily_snapshot -- chosen because it has no foreign keys and two
  * NOT NULL columns -- under a sentinel metric_key that afterAll removes.
+ *
+ * WHAT THIS FILE DOES NOT COVER, AND WHERE THAT LIVES. The schema now enforces
+ * row rules by three mechanisms, and only two of them are visible from here:
+ * explicit CHECKs (EXPLICIT_CHECKS) and the automatic json_valid ones
+ * (AUTO_JSON_CHECKS). The third is TRIGGERS -- `trg_ca_basis_bi` and
+ * `trg_ca_basis_bu` on contractor_attendance, added by migration 017, which
+ * refuse a day rate and a measured rate for one skill level on one date. Their
+ * inventory tripwire and their refusals are in hr-contractor-flow.test.ts,
+ * asserted off information_schema.TRIGGERS beside the fixtures that make the
+ * INSERTs possible.
+ *
+ * They are not here and are not moving here, because a trigger is not a variant
+ * of a CHECK -- it exists precisely where a CHECK and a UNIQUE index both fail.
+ * A CHECK sees one row, an index compares rows through a per-row expression, and
+ * 017's header proves no such expression exists for this rule. So the sweep that
+ * produced this file could not have found them: nothing in
+ * information_schema.check_constraints mentions a trigger, and every assertion
+ * in this file is over that view. This paragraph is the pointer, so a reader who
+ * takes the inventory above for the whole of the schema's enforcement finds out
+ * here rather than by shipping a write path that a trigger rejects.
  */
 
 const db = getDb()

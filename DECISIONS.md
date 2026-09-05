@@ -1625,10 +1625,13 @@ primary entry surface is not hardening, and deferring it there would also mean t
 component gets designed under cutover pressure, which is the worst moment to set a pattern that
 five later components inherit.
 
-### 17.3 Two blocking data items, logged rather than invented
+### 17.3 The blocking owner list: inputs and answers only the business can supply
 
 Both of these are inputs only the business can supply. Nothing in the codebase guesses at either,
 and neither is worked around.
+
+**Retitled on 2026-09-05.** It was "Two blocking data items"; it holds five now, and a title that
+counts them is a title that goes stale every time one is added. The section number has not moved.
 
 **The Karnataka public holiday list for the current year.** `isWorkingDay` treats Sunday as the
 only non-working day, so every national and state holiday — 26 January, 15 August, 2 October,
@@ -1675,6 +1678,74 @@ for the same argument about writing enforcement ahead of the writer that feeds i
 `contractor_bills` design in 6.6 assumes yes. If site labour is directly employed instead, that
 part of the module changes shape substantially." Slice 3 is built to the spec's design, which
 assumes yes. If the answer is no, that slice is dead weight rather than wrong.
+
+**Which rate wins when a contractor has overlapping cards. Nowhere in the numbered rules, and it
+decides what is paid.** `contractor_rates` is effective-dated and its `project_id` and `skill_level`
+are both nullable (`NCC_BUILD_SPEC.md:1644`), so one contractor can hold four lines that all apply
+to one day of mason work on one project: a company-wide skill-agnostic line, a company-wide mason
+line, a project skill-agnostic line and a project mason line. §6.6's business logic says nothing
+about which of them prices the row. Rules 1 to 4 are attendance's cost allocation key, bills
+generated from approved attendance, compliance blocking deployment, and the month lock — **not one of
+them is about rate precedence.** The only thing in the spec that bears on it is that `project_id`
+and `skill_level` are nullable at all, from which precedence follows by inference and not by
+statement.
+
+The behaviour currently implemented, in `applicableRate` (`src/modules/hr/queries.ts:970`), stated so
+the owner can confirm or correct it rather than having to read the sort:
+
+1. **A project-specific line beats a company-wide one.** A rate written for T Begur wins on T Begur.
+2. **Then a skill-specific line beats a skill-agnostic one.** A `mason` line beats one with
+   `skill_level` NULL.
+3. **Then the later `effective_from` wins.** A revision dated 1 July beats the same line from 1 April.
+4. **Then the higher `id`** — and only this last step is reported as `ambiguous: true`, which the entry
+   screen surfaces instead of presenting one figure as the only one. Ties on scope, skill and start
+   date are the one case the code admits it is guessing.
+
+Each step is defensible and none is written down. The plausible alternative is not exotic: **the
+dearest applicable line**, which is what a contractor would argue for and what some firms actually
+operate, and it disagrees with step 1 whenever a company-wide rate was raised without the project
+card being updated. There is no error either way — a bill is produced, the gross is summed from
+`rate_paise` snapshots and it reconciles with itself. The failure is that it reconciles with the
+wrong number, and the snapshot means the wrong number is then permanent on the row.
+
+Two smaller things fall out of the same answer. Whether `effective_to` should be closed
+automatically when a dearer line is added mid-period (supersession is currently keyed on
+`(contractor_id, work_type, uom, skill_level, project_id)`, so a line differing only in scope does
+**not** close the other one — that is what produces the overlap in the first place). And whether a
+company-wide line should be reachable at all once a project card exists for that work, or whether its
+absence should refuse the day instead of falling back.
+
+**Not invented, and specifically not resolved by writing it down here as though it were settled.**
+20.3 records two instances of rate precedence being justified by a citation to a §6.6 rule that says
+something else — once in a test comment, once in `applicableRate`'s own comment, both now corrected
+to say plainly that the basis is an inference from `:1644`. A third such citation is what this entry
+exists to prevent.
+
+**A clerk who mis-enters a contractor day cannot correct it, and since migration 017 that is
+reachable.** There is no path to remove a `contractor_attendance` row through the application — no
+`deleteFrom` on that table anywhere in `src/modules/hr/service.ts`. Re-posting a day updates rows by
+the key `(skill_level, work_type)` and inserts anything new; it never deletes, and a row that is no
+longer wanted has no way out. Until 017 that was survivable, because every wrong row could at least
+be overwritten with the right values. It is not survivable now: `work_type` is part of `uq_ca` and
+`chk_ca_work_type` forces `''` on a day row, so **a day row can never be turned into a measured row
+in place**, and 21.5's triggers refuse a measured row for that skill on that date while the day row
+stands. A supervisor who records four masons on a day rate and then learns the work was priced per
+sqft is stopped, with no correction path and nothing to do but ask someone with database access.
+
+**The current behaviour, plainly: refusal, with no correction path.** The refusal is deliberate and
+21.5 argues for it — admitting the pair is a payment, refusing it is a complaint. What is *not*
+decided is what the complaint resolves to. A void or delete path is the obvious answer and it is not
+built, because voiding attendance is its own unmade decision: a row may already carry `approved_at`,
+and it may already be summed into a bill through `bill_id`, at which point removing it silently
+changes a document that has been sent. §6.8 rule 7 and §6.6 rule 4 both say a closed period stops
+changing, so a void path has to decide whether it is an attendance correction (allowed before
+approval, refused after) or a finance adjustment (a reversing entry, never a deletion) — and that is
+a finance question, arriving with §6.9 rather than ahead of it.
+
+What is needed from the owner is narrow: **whether a supervisor may withdraw an unapproved
+contractor attendance row, and what happens to an approved but unbilled one.** The billed case needs
+no answer here — 18.5 already refuses to touch a billed row and calls it a finance adjustment. Until
+then the gap is stated rather than papered over with a delete route nobody has scoped.
 
 ## 18. HR, third slice: contractor labour and bills, 2026-09-05
 
@@ -2316,6 +2387,20 @@ This is the third distinct failure mode in one grep: a comment as basis (20.2), 
 an adjacent shape (`:989`), and now a citation to the wrong rule that read as authoritative because it had a
 number in it. The number is what did the work. None of the three would have been caught by reading the
 citation for plausibility.
+
+**And the same wrong citation was in `src/`, which the grep for it did not reach.** Found on 2026-09-05 while
+writing up rate precedence for 17.3: `applicableRate` in `src/modules/hr/queries.ts` carried *"a project rate
+sitting above a company-wide one is not ambiguous: **rule 3** decides it"*. §6.6 rule 3 is contractor
+compliance blocking deployment. The test comment said rule 2 and this one said rule 3, for the same claim,
+neither of them right — which is what a number attached to a plausible sentence does: it stops the reader
+checking, and it does not even have to be the same number twice. Both now state that the precedence is an
+inference from `:1644` and point at 17.3.
+
+The lesson is about the grep and not about the two comments. The 20.3 sweep searched the *test* suite for
+assertions justified by comments, because a test comment justifying a test assertion is the circular shape
+CLAUDE.md names. A comment in `src/` justifying the behaviour it sits on is the same circle with one fewer
+participant, and it was outside the search. **A citation sweep that covers only tests covers the cheaper
+half.**
 
 **The sixth is a policy claim, not a test problem, and is now on the §8.6 blocking list in 17.**
 `hr-attendance-flow.test.ts:911` asserts that a write is permitted over a day covered by approved leave.

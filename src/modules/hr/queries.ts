@@ -1017,10 +1017,15 @@ export async function applicableRate(
     workType: best.work_type,
     uom: String(best.uom),
     ratePaise: Number(best.rate_paise),
-    // A project rate sitting above a company-wide one is not ambiguous: rule 3
-    // decides it, and nor is a skill-specific one above a NULL-skill one. A tie
-    // on scope, skill and start date is, and the entry screen says so rather
-    // than presenting one figure as the only one.
+    // A project rate sitting above a company-wide one is not ambiguous, and nor is
+    // a skill-specific one above a NULL-skill one -- but nothing in §6.6 says so.
+    // The comment here used to cite "rule 3", which is compliance blocking
+    // deployment and has nothing to do with rates; the precedence above is an
+    // inference from `contractor_rates.project_id ... NULL` and `skill_level ...
+    // NULL` at NCC_BUILD_SPEC.md:1644, and it is on the blocking owner list at
+    // DECISIONS 17.3 for confirmation. A tie on scope, skill and start date is
+    // genuinely ambiguous, and the entry screen says so rather than presenting one
+    // figure as the only one.
     ambiguous:
       runnerUp !== undefined &&
       (runnerUp.project_id === null) === (best.project_id === null) &&
