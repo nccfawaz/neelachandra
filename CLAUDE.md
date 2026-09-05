@@ -38,6 +38,37 @@ non-zero, and that the number of files or tests is the number you expect. Prefer
 over bare binaries — they carry `-p tsconfig.json` and the config path with them, so
 they fail loudly from the wrong directory instead of quietly.
 
+## An exemption cites the spec or DECISIONS, never a comment
+
+**A test may not justify a permitted row shape with a code or migration comment.** If an
+assertion says some shape is permitted, exempt, intentional, by design, or deliberately
+allowed, its stated basis must be `NCC_BUILD_SPEC.md` by line number or a `DECISIONS.md`
+section. A comment in the code under test is not a basis.
+
+This is not style. On 2026-09-05 a test in `hr-contractor-flow.test.ts` asserted that an
+`expenses` row with `source_table` set and `source_id` NULL was permitted — a row claiming
+to be the posting of an upstream document while pointing at nothing — and justified it with
+*"the migration comment claims it, so it is asserted rather than assumed."* The comment and
+the test were written in the same session by the same author. The circle closed on itself:
+nothing outside the change confirmed the shape was wanted, and for a full slice the suite
+**defended the defect against repair**. When migration 015 closed the hole, the suite went
+red for doing the right thing, which is worse than having no test there at all — a red test
+is an instruction to revert.
+
+A spec line or a DECISIONS section can be wrong, but it was written before the code and by
+a different act, so citing one is a real check. The test for whether a citation is load
+bearing: **if the cited text vanished, would the assertion still look justified?** If yes,
+it was decoration.
+
+Two consequences worth stating:
+
+- Prefer asserting the *refusal*. A test that pins what the database rejects fails when the
+  rule weakens. A test that pins what it permits fails when the rule strengthens, and the
+  cheapest way to make it pass again is to undo the strengthening.
+- A registry of reasons is the same hazard, slower. `AUTO_JSON_CHECKS` in
+  `tests/integration/schema-constraints.test.ts` carries a provenance header saying which
+  of its reasons are inferred and which is grounded, for exactly this reason.
+
 ## The database is not optional to verification
 
 `npm test` opens no connection: it is evidence about pure functions and form contracts
