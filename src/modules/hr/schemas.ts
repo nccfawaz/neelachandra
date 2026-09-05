@@ -678,7 +678,12 @@ export const contractorRateSchema = z
 export interface ContractorAttendanceRowInput {
   skillLevel: (typeof SKILL_LEVELS)[number]
   uom: (typeof RATE_UOMS)[number]
-  workType: string | null
+  // '' means "no work type", which is the only thing a day row can mean. One
+  // representation, not a null and an empty string for the same fact: migration
+  // 016 made the column NOT NULL DEFAULT '' because uq_ca contains it, and a
+  // form that posted null while the column held '' would need a coalesce at
+  // every layer between them.
+  workType: string
   headcount: number
   quantity: number | null
   overtimeHours: number
@@ -785,7 +790,7 @@ export const contractorAttendanceSchema = z
       if (workRaw.length > 120) {
         return refuse('A work type is at most 120 characters.')
       }
-      const workType = workRaw === '' ? null : workRaw
+      const workType = workRaw
 
       let quantity: number | null = null
       if (uom === 'per_day') {
@@ -794,13 +799,23 @@ export const contractorAttendanceSchema = z
             `A per-day row is priced by headcount, so it takes no quantity. Remove the ${qtyRaw} beside ${skill.replace(/_/g, ' ')}, or change the unit.`
           )
         }
+        // A day row names no work, and since 016 that is enforced by
+        // chk_ca_work_type rather than left to the form. It matters because
+        // work_type is now part of uq_ca: two day rows for one skill level
+        // annotated differently would be distinct rows in the key, so they would
+        // both insert and both bill. Refuse the annotation, not the row.
+        if (workType !== '') {
+          return refuse(
+            `The ${skill.replace(/_/g, ' ')} line is priced per day, which is decided by the skill level, so it cannot also name a work type. Remove '${workType}', or quote the line in the unit that work is measured in.`
+          )
+        }
       } else {
         // A measured row names its work type, and this is not decoration. Skill
         // level picks a day rate; it cannot pick between plastering and tiling
         // when a contractor holds a per-sqft rate for both. Without the name the
         // resolution falls back to "latest effective_from wins", which is an
         // arbitrary choice between two very different amounts.
-        if (workType === null) {
+        if (workType === '') {
           return refuse(
             `A ${uomLabel(uom)} row has to say what work it is for, so that one rate card line prices it.`
           )
@@ -842,14 +857,42 @@ export const contractorAttendanceSchema = z
       return refuse('No headcount was entered. Fill in at least one skill row.')
     }
 
+    // The form-level mirror of uq_ca, which migration 016 widened to
+    // (contractor_id, project_id, attendance_date, skill_level, work_type). Two
+    // work types at one skill level on one day -- masons plastering 300 sqft and
+    // tiling 40 -- is ordinary interiors work and is now recordable. Two rows for
+    // the same skill AND the same work type is still one thing counted twice.
     const seen = new Set<string>()
     for (const row of rows) {
-      if (seen.has(row.skillLevel)) {
+      // The pair is the key, and it is built by JSON.stringify rather than by
+      // joining on a separator: a skill level comes from a closed list but a work
+      // type is free text, so any printable separator is a character a work type
+      // could contain and be made to key as a different pair. Quoting both is the
+      // cheap way to be certain, and it stays greppable.
+      const key = JSON.stringify([row.skillLevel, row.workType])
+      if (seen.has(key)) {
+        const what = row.workType === '' ? 'a day rate' : row.workType
         return refuse(
-          `That form counts ${row.skillLevel.replace(/_/g, ' ')} twice for one day. One row per skill level per date, whatever the unit.`
+          `That form counts ${row.skillLevel.replace(/_/g, ' ')} on ${what} twice for one day. One row per skill level per work type per date.`
         )
       }
-      seen.add(row.skillLevel)
+      seen.add(key)
+    }
+
+    // Refused, and not because the database refuses it -- since 016 it does not.
+    // A day row and a measured row at one skill level on one date may be two
+    // disjoint gangs or one gang billed twice, and the rows do not say which. No
+    // unique key containing work_type can tell them apart, so the judgement stays
+    // here where a person can be told what the problem is. DECISIONS 21.5 holds
+    // it open as an owner question; if the answer is that it is legitimate, this
+    // block is what comes out, and the schema will already permit it.
+    const dayRowSkills = new Set(rows.filter((r) => r.uom === 'per_day').map((r) => r.skillLevel))
+    for (const row of rows) {
+      if (row.uom !== 'per_day' && dayRowSkills.has(row.skillLevel)) {
+        return refuse(
+          `That form puts ${row.skillLevel.replace(/_/g, ' ')} on a day rate and on ${row.workType} for the same date. If those are the same people, the day rate already pays for the ${uomLabel(row.uom)} work; if they are two gangs, record the second one under its own skill level or on its own date.`
+        )
+      }
     }
 
     return {

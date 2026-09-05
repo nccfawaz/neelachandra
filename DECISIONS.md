@@ -2301,9 +2301,156 @@ argument for a query's shape, written with the test. It may well be right.
 number rather than by line. Substantively correct; the line number goes in the next time that file is open
 for another reason.
 
+**Tightened the same day, and it was not sound.** That file was next open for migration 016, and the
+citation was replaced (it is now at `:430`, the file having grown above it). Two things were wrong rather
+than one. Rule 2 of §6.6 (`NCC_BUILD_SPEC.md:1743`) is *"Contractor bills are generated from approved
+attendance, never typed"* — the bill-generation rule, which says nothing about rate precedence. And §6.6's
+numbered rules **do not state that a project rate outranks a company-wide one at all**; the only basis in
+the spec is `contractor_rates.project_id BIGINT UNSIGNED NULL` at `:1644`, from which it follows by
+inference. The assertion is still the right assertion — a project-specific rate that loses to the
+company-wide one would price nothing — but "sound in substance" above was too generous: the substance was an
+inference from a DDL line, presented as a numbered rule. The comment now says which, and says it is an
+inference.
+
+This is the third distinct failure mode in one grep: a comment as basis (20.2), a real citation stretched to
+an adjacent shape (`:989`), and now a citation to the wrong rule that read as authoritative because it had a
+number in it. The number is what did the work. None of the three would have been caught by reading the
+citation for plausibility.
+
 **The sixth is a policy claim, not a test problem, and is now on the §8.6 blocking list in 17.**
 `hr-attendance-flow.test.ts:911` asserts that a write is permitted over a day covered by approved leave.
 That is a statement about attendance overriding leave, which nobody has ratified, and the reason it is on
 the blocking list rather than in this triage is that **if it is wrong the error is silent**: the leave stays
 approved, the attendance row says the person was present, and payroll sees both. Same conversation as the
 quotas, and the same answer decides both.
+
+## 21. Preconditions and conflicts carried out of slice 6, 2026-09-05
+
+Not a list of choices. Most entries here are a **precondition on work that has not started**, and the rest
+record a **conflict with the spec that was resolved in the tree** and must not be found later as a surprise.
+Each one was already cited by name from a migration header, a service comment or a test before this section
+existed — which is the reason the section is being written now rather than when the work lands: a citation
+to a section that does not exist is decoration, and CLAUDE.md's rule against decorated citations is the rule
+this repository has spent the most time on.
+
+21.2 and 21.3 are reserved and named rather than absent: **21.2** is the reclassification of the
+second-approval refusal, and **21.3** the general caution about the spec's DDL blocks. Both are written in
+the same pass as the finance-facing entries they belong with. The numbering gap is deliberate so that the
+citations already in the tree do not move.
+
+### 21.1 Leave enforcement and an accrual writer arrive together, or neither does
+
+`leave_balances.accrued DECIMAL(5,1) NOT NULL DEFAULT 0` exists (migration `006_hr.sql:187`) and **nothing
+in the codebase ever accrues into it**. The only write is the literal `accrued: 0` that
+`src/modules/hr/service.ts:1201` puts in a balance row when it creates one. There is no monthly job, no
+joining-date proration, no opening-balance import: the column is a shape with no producer.
+
+What stands in for it today is one line, `service.ts:968`:
+
+```ts
+const entitlement = Math.max(bal.accrued, bal.quota)
+```
+
+`accrued` is 0 for every row that exists, so the entitlement is always `annual_quota` — the *whole year's*
+quota, available on day one. That is deliberately generous and it is a **stopgap, not a policy**: the
+alternative reading of an unwritten `accrued` is that nobody has any leave at all, which would refuse every
+request in the system and be discovered as a bug rather than as a rule.
+
+The precondition, and the reason this is a precondition and not a to-do: **§8.6's numbers must not be
+switched on before an accrual writer exists.** Once real per-type quotas are entered, `max(accrued, quota)`
+stops being generous and starts being wrong in a specific direction — it grants the full annual entitlement
+in April to somebody who joins in January, and the balance the screen shows is the number payroll will
+later have to argue with. The failure is silent, which is the family of failure this file keeps recording:
+nothing errors, a figure is simply too large. So the two ship together, or the enforcement stays off and
+`max()` keeps standing in honestly.
+
+See 17's §8.6 blocking list, which asks the owner question this depends on, and 20.3 on the attendance
+override, which the same answer decides.
+
+### 21.4 A snapshot column nullable where its source is not, as a precondition on §7
+
+Cited from `tests/integration/schema-constraints.test.ts` in `AUTO_JSON_CHECKS`, and recorded here because
+that citation had nowhere to point.
+
+The two columns, verified in the tree:
+
+- `migrations/007_marketing.sql:27` — `site_pages.schema_types JSON NOT NULL`
+- `migrations/007_marketing.sql:51` — `site_page_revisions.schema_types JSON NULL`
+
+The revisions table exists for one purpose, and the spec states it in the comment on the table itself,
+`NCC_BUILD_SPEC.md:1387`: *"every publish snapshots the previous state."* A snapshot of a NOT NULL column
+into a nullable one means a revision can hold a NULL where the page it came from could not, and a revision
+that holds a NULL there **cannot be rolled back into the page** — the restore would violate the source
+column's own NOT NULL. So the row is not a usable snapshot, and it is the rollback path, the only reason to
+keep revisions at all, that stops working.
+
+This is filed as a **precondition on the §7 CMS work rather than as a citation** for a specific reason: it
+is not a tidiness question about a column definition. Whichever code first writes a revision decides
+whether the divergence becomes real rows, and after that the fix needs a data migration and a decision
+about revisions that are already unusable. Before that code exists it is a one-line `MODIFY COLUMN`. The
+whole cost of getting this wrong is in the ordering.
+
+Nothing in the tree writes `site_page_revisions` yet, so no unusable revision exists today. Deliberately
+**not** recorded as intentional: the spec's own DDL sketch at :1387 shows `schema_types JSON` with no
+nullability at all, which is the sketch being a sketch rather than a decision that it may be NULL — see
+21.3 on why the DDL blocks are read that way.
+
+### 21.5 A day rate and a measured rate for one skill level on one date: open
+
+Cited from `migrations/016_ca_unique_work_type.sql`, `src/modules/hr/schemas.ts` and
+`tests/hr-schemas.test.ts`. **This is an owner question, and the code currently refuses the shape.**
+
+Since 016 widened `uq_ca` to `(contractor_id, project_id, attendance_date, skill_level, work_type)`, the
+database permits two rows like these on one day:
+
+| skill_level | uom | work_type | headcount | quantity |
+| --- | --- | --- | --- | --- |
+| `mason` | `per_day` | `''` | 4 | NULL |
+| `mason` | `per_sqft` | `Plastering` | 4 | 300 |
+
+They are different rows in the key, because `''` and `'Plastering'` are different values. What they are in
+the world is unknown from the rows themselves: **either two gangs of masons on one site, one on daywork and
+one on piecework — which is ordinary — or one gang of four billed twice**, once for the day and again for
+the plastering it did during that day. The rows are identical in the second case and the second case is a
+double payment.
+
+`contractorAttendanceSchema` refuses the pair, and `recordContractorAttendance` does not — the schema is the
+only gate. That asymmetry is deliberate and is the shape of the open question: the refusal is at the layer
+that can be removed in one block when the answer comes, and the layers underneath it are already correct
+either way. If the answer is that the pair is legitimate, the block named in the comment at
+`src/modules/hr/schemas.ts` comes out and nothing else changes. If the answer is that it is a double
+payment, the same rule has to be added to the service so that no future caller can post it.
+
+**What would settle it:** whether a contractor's gang can be on two rate bases on one date at all, and if
+so whether the headcount on the measured row is the same people. Not asked yet.
+
+### 21.6 `uq_ca` now has five columns and the spec's DDL says four — flagged, not silently resolved
+
+`NCC_BUILD_SPEC.md:1659`, inside the `contractor_attendance` sketch:
+
+```
+UNIQUE KEY uq_ca (contractor_id, project_id, attendance_date, skill_level)
+```
+
+Migration 016 made it `(contractor_id, project_id, attendance_date, skill_level, work_type)`. The tree and
+that spec line disagree, and the disagreement is deliberate. **Recorded here because the spec outranks any
+instruction in a prompt, so a divergence from it is reportable whether or not it is right.**
+
+Why the tree is where it is:
+
+1. **The prose is satisfied.** §6.6 rule 2 (`:1743`) says *"the unique key plus the `bill_id` stamp is what
+   closes it"*, of double-billed labour days. It does not enumerate the key. A key with `work_type` in it
+   closes double-billing at least as tightly as one without — every pair the old key refused, the new one
+   still refuses, which is the assertion `hr-contractor-flow.test.ts` now makes against the live index.
+2. **The same sketch is already superseded, by a recorded decision.** `:1650-1659` has no `uom`, no
+   `work_type` and no `quantity`; migration 013 added all three under 19.2, because four fifths of the rate
+   card was otherwise unreachable. The line that declares the key is in the block that 013 already outgrew.
+3. **The four-column key is provably wrong once 013 exists.** With `work_type` required on a measured row,
+   a four-column key refuses one gang of masons plastering *and* tiling on one date. That is ordinary
+   interiors work, and refusing to record it is not a conservative reading of the spec, it is a defect.
+
+So this follows the standing rule for the spec's DDL blocks — prefer the prose, treat the block as a sketch,
+and say so — and it is the **third** instance of that pattern, after `:2013` vs `:2137` and `007:51` vs
+`:1387`. 21.3 gathers the three when it is written. What is *not* claimed: that the spec author intended the
+widening. Nobody has been asked. If the answer is that the four-column key was meant literally, 016 is
+reversible only by refusing measured work, and that is the conversation to have.

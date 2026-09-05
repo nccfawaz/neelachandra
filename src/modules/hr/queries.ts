@@ -975,6 +975,10 @@ export async function applicableRate(
     skillLevel: string
     onDate: string
     uom?: string
+    // Empty or absent means "do not filter by work type", which is what a day row
+    // wants: skill level picks a day rate. Migration 016 made
+    // `contractor_attendance.work_type` NOT NULL DEFAULT '', so callers now pass ''
+    // for a day row where they used to pass null. Both still mean the same here.
     workType?: string | null
   }
 ) {
@@ -990,8 +994,9 @@ export async function applicableRate(
     .where((eb) =>
       eb.or([eb('skill_level', 'is', null), eb('skill_level', '=', opts.skillLevel as 'skilled')])
     )
-  if (opts.workType !== undefined && opts.workType !== null) {
-    query = query.where('work_type', '=', opts.workType)
+  const workType = (opts.workType ?? '').trim()
+  if (workType !== '') {
+    query = query.where('work_type', '=', workType)
   }
   const rows = await query.execute()
   if (rows.length === 0) return undefined
@@ -1031,7 +1036,8 @@ export interface ContractorAttendanceRow {
   attendance_date: string
   skill_level: string
   uom: string
-  work_type: string | null
+  // '' on a day row since 016, never null.
+  work_type: string
   headcount: number
   quantity: number | null
   overtime_hours: number

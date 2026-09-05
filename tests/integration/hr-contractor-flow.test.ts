@@ -21,10 +21,16 @@ import {
  *
  * What is here that tsc and the pure suite cannot reach:
  *
- *   - `uq_ca (contractor_id, project_id, attendance_date, skill_level)`.
- *     recordContractorAttendance chooses insert or update from a prior SELECT,
- *     and choosing wrong is a duplicate-key 500 on the second post of a day --
- *     which is the ordinary case, a gate clerk correcting a headcount.
+ *   - `uq_ca (contractor_id, project_id, attendance_date, skill_level, work_type)`,
+ *     widened by migration 016. recordContractorAttendance chooses insert or
+ *     update from a prior SELECT, and choosing wrong is a duplicate-key 500 on the
+ *     second post of a day -- which is the ordinary case, a gate clerk correcting a
+ *     headcount. Since 016 the prior SELECT is keyed on the PAIR, so a day holding
+ *     two measured rows at one skill level is where getting it wrong now shows.
+ *     Every member of the key is NOT NULL, and that is load bearing rather than
+ *     tidy: a UNIQUE index treats a row with NULL in an indexed column as distinct
+ *     from every other row, so a nullable member would not widen the key, it would
+ *     punch a hole in it.
  *   - The rate resolution is four SQL predicates and a JS sort. Whether a project
  *     rate really outranks a company-wide one, and whether an `effective_to` a
  *     day in the past really drops out, is a question only the server answers.
@@ -90,6 +96,8 @@ const M_FROM = '2026-06-08'
 const M_TO = '2026-06-13'
 const M_DAY_1 = '2026-06-08'
 const M_DAY_2 = '2026-06-09'
+/** The day two work types share one skill level, which 016 made recordable. */
+const M_DAY_3 = '2026-06-10'
 
 let actor = { userId: 0, ip: '127.0.0.1' as string | null }
 let otherActor = { userId: 0, ip: '127.0.0.1' as string | null }
@@ -190,8 +198,33 @@ function serialOf(billNo: string): number {
   return Number(billNo.split('/').pop())
 }
 
-/** The one attendance row for a contractor, day and skill, or undefined. */
+/**
+ * The one attendance row for a contractor, day and skill, or undefined.
+ *
+ * Since migration 016 a skill level is no longer unique within a day -- masons
+ * plastering and masons tiling are two rows -- so this returns the ONLY row where
+ * there is one and throws where there is more than one, rather than quietly
+ * returning whichever the server listed first. Callers that mean a particular line
+ * use `line()` and name the work type.
+ */
 async function cell(contractorId: number, date: string, skill: string) {
+  const rows = await lines(contractorId, date, skill)
+  if (rows.length > 1) {
+    throw new Error(
+      `cell(${date}, ${skill}) matched ${rows.length} rows (${rows
+        .map((r) => `'${r.work_type}'`)
+        .join(', ')}); name the work type with line() instead`
+    )
+  }
+  return rows[0]
+}
+
+/** The row for a contractor, day, skill AND work type: the whole key of uq_ca. */
+async function line(contractorId: number, date: string, skill: string, workType: string) {
+  return (await lines(contractorId, date, skill)).find((r) => r.work_type === workType)
+}
+
+async function lines(contractorId: number, date: string, skill: string) {
   return db
     .selectFrom('contractor_attendance')
     .select([
@@ -211,7 +244,8 @@ async function cell(contractorId: number, date: string, skill: string) {
     .where('contractor_id', '=', contractorId)
     .where('attendance_date', '=', date)
     .where('skill_level', '=', skill as 'mason')
-    .executeTakeFirst()
+    .orderBy('id')
+    .execute()
 }
 
 /** The newest audit entry for an action, with its JSON payload parsed. */
@@ -393,8 +427,17 @@ describe('contractor labour is structurally separate from the employee master', 
  */
 describe('the rate card', () => {
   it('accepts a company-wide per-day rate and a dearer one for one project', async () => {
-    // 500/day everywhere, 620/day on the fixture project. Rule 2: the project
-    // rate wins where it applies.
+    // 500/day everywhere, 620/day on the fixture project, and the claim under test
+    // is that the project rate wins where it applies.
+    //
+    // Its basis is spec :1644, `contractor_rates.project_id BIGINT UNSIGNED NULL`,
+    // and it is an inference from that column rather than a stated rule: a rate
+    // whose project scope may be NULL is one that can be company-wide, and a
+    // project-specific rate would price nothing if the company-wide one outranked
+    // it. §6.6's numbered rules do not say which wins. This comment cited "Rule 2"
+    // by number until 2026-09-05; rule 2 (:1743) is the bill-generation rule and
+    // says nothing about rate precedence, so the citation was wrong about which
+    // rule as well as being a number rather than a line. DECISIONS 20.3.
     await svc.addContractorRate(
       db,
       actor,
@@ -1109,6 +1152,11 @@ describe('the double-posting constraint 6.8 rule 1 promises', () => {
  *     something mysql2 typed as text.
  *   - `chk_ca_quantity` is a CHECK constraint. It is the only one of the three
  *     gates on this rule that no application code can be bypassed to reach.
+ *   - `uq_ca` as migration 016 widened it, which is a consequence of 013 rather
+ *     than a separate subject: once a measured row must name its work type, a key
+ *     without work_type refuses one gang plastering and tiling on one day. The two
+ *     tests before the bill are the permitted pair and the refused duplicate, and
+ *     both are statements about an index that only the server holds.
  *
  * Its own contractor, its own dates and its own project-free rates, so that none
  * of the period counts asserted above move.
@@ -1129,6 +1177,15 @@ describe('a measured rate reaches a bill (migration 013)', () => {
   const PCC_PAISE = 675075
   const PCC_QTY = 3.5
   const PCC_AMOUNT = 2_362_763
+
+  /* The two lines one gang of masons works on M_DAY_3, which is the pair migration
+     016 exists for. Both are whole numbers of paise, because rounding is the
+     subject of the test above and not of this one. */
+  const CEILING_PAISE = 9600
+  const CEILING_QTY = 42.5
+  const CEILING_AMOUNT = 408_000
+  const PLASTER_QTY_2 = 100
+  const PLASTER_AMOUNT_2 = 455_000
 
   /** One ordinary day row in the same period, so the bill mixes both kinds. */
   const HELPER_DAY_AMOUNT = 3 * 40000
@@ -1257,9 +1314,11 @@ describe('a measured rate reaches a bill (migration 013)', () => {
     expect(Number(mason?.amount_paise)).toBe(PLASTER_AMOUNT)
 
     // The day row beside it is untouched by any of that, and still carries no
-    // quantity at all rather than a 0 that would look like a measure.
+    // quantity at all rather than a 0 that would look like a measure. Its work type
+    // is '' rather than NULL since 016, because it is a member of uq_ca and a key
+    // member that can be NULL is not a key member.
     const helper = await cell(chitId, M_DAY_1, 'helper')
-    expect(helper).toMatchObject({ uom: 'per_day', work_type: null, quantity: null, headcount: 3 })
+    expect(helper).toMatchObject({ uom: 'per_day', work_type: '', quantity: null, headcount: 3 })
     expect(Number(helper?.amount_paise)).toBe(HELPER_DAY_AMOUNT)
 
     const audit = await lastAudit('hr.contractor_attendance_record')
@@ -1305,12 +1364,14 @@ describe('a measured rate reaches a bill (migration 013)', () => {
     expect(await cell(chitId, M_FROM, 'painter')).toBeUndefined()
 
     // And the mirror: a day row carrying a quantity states a multiplier nothing
-    // reads, so it is refused rather than ignored.
+    // reads, so it is refused rather than ignored. The work type goes back to ''
+    // for this one, because since 016 a day row that names work is refused by an
+    // earlier gate and would answer the wrong question here.
     await expect(
       svc.recordContractorAttendance(
         db,
         actor,
-        { ...input, rows: [{ ...input.rows[0]!, uom: 'per_day', workType: null, quantity: 12 }] },
+        { ...input, rows: [{ ...input.rows[0]!, uom: 'per_day', workType: '', quantity: 12 }] },
         { canManageContractors: true }
       )
     ).rejects.toThrow(/quoted per day/)
@@ -1321,7 +1382,7 @@ describe('a measured rate reaches a bill (migration 013)', () => {
       svc.recordContractorAttendance(
         db,
         actor,
-        { ...input, rows: [{ ...input.rows[0]!, workType: null, quantity: 30 }] },
+        { ...input, rows: [{ ...input.rows[0]!, workType: '', quantity: 30 }] },
         { canManageContractors: true }
       )
     ).rejects.toThrow(/does not say what work it is for/)
@@ -1391,24 +1452,186 @@ describe('a measured rate reaches a bill (migration 013)', () => {
     expect(Number(left.n)).toBe(0)
   })
 
+  it('records two work types at one skill level on one day (migration 016)', async () => {
+    // One gang of masons, one date, two rate-card lines. Before 016 uq_ca was
+    // (contractor, project, date, skill_level) and this post was a duplicate-key
+    // 500 on its second row: the table could not record ordinary interiors work.
+    const result = await svc.recordContractorAttendance(
+      db,
+      actor,
+      day(
+        M_DAY_3,
+        chitId,
+        [
+          { skill: 'mason', headcount: '4', uom: 'per_sqft', work: PLASTER, qty: String(PLASTER_QTY_2) },
+          { skill: 'mason', headcount: '2', uom: 'per_sqft', work: CEILING, qty: String(CEILING_QTY) },
+        ],
+        { projectId }
+      ),
+      { canManageContractors: true }
+    )
+    expect(result).toMatchObject({ inserted: 2, updated: 0, headcount: 6 })
+    expect(result.grossPaise).toBe(PLASTER_AMOUNT_2 + CEILING_AMOUNT)
+
+    // Each line keeps its OWN rate and its own measure. This is the assertion that
+    // would fail if either the prior-row map or the rate lookup still keyed on
+    // skill level alone: both rows would price off whichever line won.
+    const plaster = await line(chitId, M_DAY_3, 'mason', PLASTER)
+    expect(plaster).toMatchObject({ uom: 'per_sqft', headcount: 4, bill_id: null })
+    expect(Number(plaster?.quantity)).toBe(PLASTER_QTY_2)
+    expect(Number(plaster?.rate_paise)).toBe(PLASTER_PAISE)
+    expect(Number(plaster?.amount_paise)).toBe(PLASTER_AMOUNT_2)
+
+    const ceiling = await line(chitId, M_DAY_3, 'mason', CEILING)
+    expect(ceiling).toMatchObject({ uom: 'per_sqft', headcount: 2, bill_id: null })
+    expect(Number(ceiling?.quantity)).toBe(CEILING_QTY)
+    expect(Number(ceiling?.rate_paise)).toBe(CEILING_PAISE)
+    expect(Number(ceiling?.amount_paise)).toBe(CEILING_AMOUNT)
+    expect(plaster?.id).not.toBe(ceiling?.id)
+
+    // The second post of the day is the ordinary case, and it is the case the
+    // widened key makes delicate: the update branch chooses by (skill, work type),
+    // so correcting the plastering headcount must leave the ceiling row alone.
+    const again = await svc.recordContractorAttendance(
+      db,
+      actor,
+      day(
+        M_DAY_3,
+        chitId,
+        [
+          { skill: 'mason', headcount: '5', uom: 'per_sqft', work: PLASTER, qty: String(PLASTER_QTY_2) },
+          { skill: 'mason', headcount: '2', uom: 'per_sqft', work: CEILING, qty: String(CEILING_QTY) },
+        ],
+        { projectId }
+      ),
+      { canManageContractors: true }
+    )
+    expect(again).toMatchObject({ inserted: 0, updated: 2, headcount: 7 })
+    expect(await line(chitId, M_DAY_3, 'mason', PLASTER)).toMatchObject({ id: plaster?.id, headcount: 5 })
+    expect(await line(chitId, M_DAY_3, 'mason', CEILING)).toMatchObject({ id: ceiling?.id, headcount: 2 })
+    // Still two rows: an update that had picked the wrong row would have left the
+    // count right and the rows wrong, so the count alone is not the check.
+    expect((await lines(chitId, M_DAY_3, 'mason')).length).toBe(2)
+
+    const audit = await lastAudit('hr.contractor_attendance_record')
+    expect(audit?.payload['rows']).toEqual([
+      `mason:5 @${PLASTER_QTY_2} per_sqft (${PLASTER})`,
+      `mason:2 @${CEILING_QTY} per_sqft (${CEILING})`,
+    ])
+  })
+
+  it('still refuses the same skill level and work type twice, in the key itself', async () => {
+    // TRIPWIRE, and the reason it is asserted rather than assumed: a UNIQUE index
+    // treats a row with NULL in an indexed column as distinct from every other row.
+    // Had 016 added `work_type` while it was still nullable, the key would have
+    // stopped refusing two identical per-day rows -- the commonest shape in the
+    // table -- in the course of permitting the pair above, and both would bill. If
+    // this list or the NOT NULL fails, none of the refusals below mean anything.
+    const key = await sql<{ COLUMN_NAME: string; NULLABLE: string }>`
+      select COLUMN_NAME, NULLABLE from information_schema.STATISTICS
+      where TABLE_SCHEMA = database() and TABLE_NAME = 'contractor_attendance'
+        and INDEX_NAME = 'uq_ca'
+      order by SEQ_IN_INDEX
+    `.execute(db)
+    expect(key.rows.map((r) => r.COLUMN_NAME)).toEqual([
+      'contractor_id',
+      'project_id',
+      'attendance_date',
+      'skill_level',
+      'work_type',
+    ])
+    expect(key.rows.map((r) => r.NULLABLE)).toEqual(['', '', '', '', ''])
+
+    // No service call: the same statement as the row that is already there, and the
+    // refusal comes off the wire. 1062 with the key name in the message is the
+    // proof of which layer said no.
+    let err: (Error & { code?: string; errno?: number }) | undefined
+    try {
+      await db
+        .insertInto('contractor_attendance')
+        .values({
+          contractor_id: chitId,
+          project_id: projectId,
+          attendance_date: M_DAY_3,
+          skill_level: 'mason',
+          uom: 'per_sqft',
+          work_type: PLASTER,
+          headcount: 1,
+          quantity: 1,
+          rate_paise: PLASTER_PAISE,
+          amount_paise: PLASTER_PAISE,
+          recorded_by: actor.userId,
+        })
+        .executeTakeFirst()
+    } catch (caught) {
+      err = caught as Error & { code?: string; errno?: number }
+    }
+    expect(err?.code).toBe('ER_DUP_ENTRY')
+    expect(err?.errno).toBe(1062)
+    expect(err?.message).toMatch(/uq_ca/)
+
+    // The form refuses the pair before any of that, which is what a clerk meets.
+    const posted = contractorAttendanceSchema.safeParse({
+      contractorId: String(chitId),
+      projectId: String(projectId),
+      attendanceDate: M_DAY_3,
+      skillLevel: ['mason', 'mason'],
+      uom: ['per_sqft', 'per_sqft'],
+      workType: [PLASTER, PLASTER],
+      headcount: ['4', '4'],
+      quantity: [String(PLASTER_QTY_2), '10'],
+      overtimeHours: ['', ''],
+    })
+    expect(posted.success).toBe(false)
+
+    // And the service, reached with the same pair the form would have refused: the
+    // prior-row map is a SELECT taken before the loop, so the second row does not
+    // see the first one's insert and the database is the only thing left to catch
+    // it. The whole post is one transaction, so it rolls back rather than leaving
+    // the first row of a pair behind.
+    let svcErr: (Error & { errno?: number }) | undefined
+    try {
+      await svc.recordContractorAttendance(
+        db,
+        actor,
+        {
+          contractorId: chitId,
+          projectId,
+          attendanceDate: M_DAY_3,
+          rows: [
+            { skillLevel: 'mason', uom: 'per_cum', workType: PCC, headcount: 3, quantity: PCC_QTY, overtimeHours: 0 },
+            { skillLevel: 'mason', uom: 'per_cum', workType: PCC, headcount: 3, quantity: PCC_QTY, overtimeHours: 0 },
+          ],
+          overrideCompliance: false,
+        },
+        { canManageContractors: true }
+      )
+    } catch (caught) {
+      svcErr = caught as Error & { errno?: number }
+    }
+    expect(svcErr?.errno).toBe(1062)
+    expect(await line(chitId, M_DAY_3, 'mason', PCC)).toBeUndefined()
+    expect((await lines(chitId, M_DAY_3, 'mason')).length).toBe(2)
+  })
+
   it('bills the period, mixing a measured amount with a day-rate one', async () => {
     expect(
       await svc.approveContractorAttendance(db, otherActor, period(chitId, { from: M_FROM, to: M_TO }))
-    ).toMatchObject({ approved: 3, alreadyApproved: 0 })
+    ).toMatchObject({ approved: 5, alreadyApproved: 0 })
 
-    const gross = PLASTER_AMOUNT + HELPER_DAY_AMOUNT + PCC_AMOUNT
+    const gross = PLASTER_AMOUNT + HELPER_DAY_AMOUNT + PCC_AMOUNT + PLASTER_AMOUNT_2 + CEILING_AMOUNT
     expect(
       await q.unbilledSummary(db, { contractorId: chitId, projectId, from: M_FROM, to: M_TO })
-    ).toMatchObject({ rows: 3, days: 2, grossPaise: gross, unapproved: 0 })
+    ).toMatchObject({ rows: 5, days: 3, grossPaise: gross, unapproved: 0 })
 
     const bill = await svc.generateContractorBill(db, actor, billInput(chitId, { from: M_FROM, to: M_TO }))
     expect(bill.billNo).toMatch(/^NCC\/CB\/2026-27\/\d{3,}$/)
-    expect(bill).toMatchObject({ rows: 3, days: 2, retentionBp: 500, tdsBp: 200, noPan: false })
+    expect(bill).toMatchObject({ rows: 5, days: 3, retentionBp: 500, tdsBp: 200, noPan: false })
     expect(bill.grossPaise).toBe(gross)
-    // 5% of 35,77,038 paise is 1,78,851.9 and 2% is 71,540.76; both round.
-    expect(bill.retentionPaise).toBe(178852)
-    expect(bill.tdsPaise).toBe(71541)
-    expect(bill.netPayablePaise).toBe(gross - 178852 - 71541)
+    // 5% of 44,40,038 paise is 2,22,001.9 and 2% is 88,800.76; both round up.
+    expect(bill.retentionPaise).toBe(222002)
+    expect(bill.tdsPaise).toBe(88801)
+    expect(bill.netPayablePaise).toBe(gross - 222002 - 88801)
 
     // Read back through the query the bill page uses, so the DECIMAL and BIGINT
     // round trips are inside the assertion.
@@ -1417,16 +1640,21 @@ describe('a measured rate reaches a bill (migration 013)', () => {
     expect(stored!.gross_paise - stored!.retention_paise - stored!.tds_paise).toBe(stored!.net_payable_paise)
 
     const lines = await q.contractorAttendance(db, { billId: bill.billId })
-    expect(lines).toHaveLength(3)
+    expect(lines).toHaveLength(5)
     expect(lines.reduce((sum, l) => sum + l.amount_paise, 0)).toBe(gross)
     // The bill stores one gross figure and nothing else about the mix, so the
-    // audit entry is the only trace that two of these three were measured.
+    // audit entry is the only trace that four of these five were measured -- two of
+    // them at the same skill level on the same day, which is what 016 permits.
     const audit = await lastAudit('hr.contractor_bill_generate')
-    expect(audit?.payload).toMatchObject({ attendance_rows: 3, measured_rows: 2, gross_paise: gross })
+    expect(audit?.payload).toMatchObject({ attendance_rows: 5, measured_rows: 4, gross_paise: gross })
 
     // A measured row is billed exactly once, like any other: bill_id is stamped
-    // under the same WHERE bill_id IS NULL guard.
+    // under the same WHERE bill_id IS NULL guard. Both of the M_DAY_3 lines are
+    // stamped, and with their own ids -- billing the pair as one row would have
+    // left the gross short by the amount of whichever it dropped.
     expect(Number((await cell(chitId, M_DAY_1, 'mason'))?.bill_id)).toBe(bill.billId)
+    expect(Number((await line(chitId, M_DAY_3, 'mason', PLASTER))?.bill_id)).toBe(bill.billId)
+    expect(Number((await line(chitId, M_DAY_3, 'mason', CEILING))?.bill_id)).toBe(bill.billId)
     expect(
       await q.unbilledSummary(db, { contractorId: chitId, projectId, from: M_FROM, to: M_TO })
     ).toMatchObject({ rows: 0, grossPaise: 0 })

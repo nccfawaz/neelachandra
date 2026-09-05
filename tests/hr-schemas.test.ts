@@ -280,7 +280,7 @@ describe('contractorAttendanceSchema, the day and measured split', () => {
     })
     expect(parsed.success).toBe(true)
     expect(parsed.success && parsed.data.rows).toEqual([
-      { skillLevel: 'mason', uom: 'per_day', workType: null, headcount: 4, quantity: null, overtimeHours: 0 },
+      { skillLevel: 'mason', uom: 'per_day', workType: '', headcount: 4, quantity: null, overtimeHours: 0 },
     ])
   })
 
@@ -298,7 +298,7 @@ describe('contractorAttendanceSchema, the day and measured split', () => {
     // The helper line is blank in both measurable cells and is dropped; the
     // painter line keeps ITS OWN quantity rather than the hole above it.
     expect(parsed.success && parsed.data.rows).toEqual([
-      { skillLevel: 'mason', uom: 'per_day', workType: null, headcount: 4, quantity: null, overtimeHours: 3 },
+      { skillLevel: 'mason', uom: 'per_day', workType: '', headcount: 4, quantity: null, overtimeHours: 3 },
       {
         skillLevel: 'painter',
         uom: 'per_sqft',
@@ -385,7 +385,61 @@ describe('contractorAttendanceSchema, the day and measured split', () => {
     }
   })
 
-  it('refuses one skill twice across the two grids, which is what uq_ca refuses', () => {
+  // uq_ca is (contractor_id, project_id, attendance_date, skill_level, work_type)
+  // since migration 016. These four tests are the form-level mirror of that key,
+  // and the basis for what each one asserts is the key itself plus
+  // chk_ca_work_type -- both in 016, and 016's header says why each holds. The
+  // first two are what the widened key permits and refuses; the third and fourth
+  // are refusals the key cannot express, so the schema owns them.
+  it('accepts two work types at one skill level on one day, which the old key refused', () => {
+    const parsed = contractorAttendanceSchema.safeParse({
+      ...base,
+      skillLevel: ['mason', 'mason'],
+      uom: ['per_sqft', 'per_sqft'],
+      workType: ['Plastering', 'Tiling'],
+      headcount: ['4', '4'],
+      quantity: ['300', '40'],
+      overtimeHours: ['', ''],
+    })
+    expect(parsed.success).toBe(true)
+    expect(parsed.success && parsed.data.rows.map((r) => r.workType)).toEqual(['Plastering', 'Tiling'])
+  })
+
+  it('refuses the same skill and the same work type twice, which the key still refuses', () => {
+    expect(
+      reject({
+        skillLevel: ['mason', 'mason'],
+        uom: ['per_sqft', 'per_sqft'],
+        workType: ['Plastering', 'Plastering'],
+        headcount: ['4', '4'],
+        quantity: ['300', '40'],
+        overtimeHours: ['', ''],
+      })
+    ).toMatch(/counts mason on Plastering twice for one day/)
+  })
+
+  it('refuses a day row that also names a work type, because two of them would not collide', () => {
+    // chk_ca_work_type refuses this at the database too. Both exist because a
+    // named day row is not a duplicate of an unnamed one in the widened key, so
+    // two of them would insert and both bill -- 016's header has the reasoning.
+    expect(
+      reject({
+        skillLevel: 'mason',
+        uom: 'per_day',
+        workType: 'Plastering',
+        headcount: '4',
+        quantity: '',
+        overtimeHours: '',
+      })
+    ).toMatch(/cannot also name a work type/)
+  })
+
+  it('refuses a day row and a measured row for one skill, which the schema no longer can', () => {
+    // Permitted by uq_ca since 016 ('' and 'Plastering' are different key values)
+    // and refused here instead. It may be two gangs or one gang billed twice and
+    // the rows do not say which; DECISIONS 21.5 holds it open as an owner
+    // question. This is the one assertion in this block whose basis is a recorded
+    // open question rather than a constraint.
     expect(
       reject({
         skillLevel: ['mason', 'mason'],
@@ -395,7 +449,7 @@ describe('contractorAttendanceSchema, the day and measured split', () => {
         quantity: ['', '300'],
         overtimeHours: ['', ''],
       })
-    ).toMatch(/counts mason twice for one day/)
+    ).toMatch(/on a day rate and on Plastering for the same date/)
   })
 
   it('refuses a unit that is not on the rate card', () => {

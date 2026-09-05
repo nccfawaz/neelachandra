@@ -2334,7 +2334,7 @@ function contractorAttendanceColumns(opts: { showContractor?: boolean } = {}): C
       cell: (r) => (
         <>
           {titleCase(r.skill_level)}
-          {r.work_type === null ? null : <div class="ncc-muted">{r.work_type}</div>}
+          {r.work_type === '' ? null : <div class="ncc-muted">{r.work_type}</div>}
         </>
       ),
     },
@@ -2727,11 +2727,12 @@ hr.get('/app/hr/contractor-attendance', requirePermission(PERMISSIONS.HR_ATTENDA
     contractor && projectId !== null
       ? await q.contractorAttendance(db, { contractorId: Number(contractor.id), projectId, from: date, to: date })
       : []
-  const priorBySkill = new Map(prior.map((r) => [r.skill_level, r]))
+  const priorBySkill = new Map(prior.filter((r) => r.uom === 'per_day').map((r) => [r.skill_level, r]))
   const billed = prior.filter((r) => r.bill_id !== null).length
   // A measured row belongs to the line that priced it, which is the (work type,
-  // unit) pair -- not the skill, since two work types can share one.
-  const workKey = (uom: string, workType: string | null) => [uom, workType ?? ''].join(' ')
+  // unit) pair -- not the skill, since two work types can share one. `work_type`
+  // is NOT NULL since 016, so there is no coalesce left to do here.
+  const workKey = (uom: string, workType: string) => [uom, workType].join(' ')
   const priorByWork = new Map(
     prior.filter((r) => r.uom !== 'per_day').map((r) => [workKey(r.uom, r.work_type), r])
   )

@@ -277,7 +277,10 @@ export interface ContractorAttendanceTable {
   attendance_date: SqlDate
   skill_level: 'skilled' | 'semi_skilled' | 'unskilled' | 'mason' | 'carpenter' | 'barbender' | 'plumber' | 'electrician' | 'painter' | 'helper'
   uom: Generated<'per_day' | 'per_sqft' | 'per_cum' | 'per_kg' | 'lumpsum'>
-  work_type: Generated<string | null>
+  // NOT NULL DEFAULT '' since migration 016, because uq_ca contains it and a key
+  // member that can be NULL is not a key member. '' is a day row; the CHECK
+  // chk_ca_work_type makes it unreachable on a measured one.
+  work_type: Generated<string>
   headcount: number
   quantity: Generated<number | null>
   overtime_hours: Generated<number>

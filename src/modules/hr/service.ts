@@ -1704,13 +1704,22 @@ export async function recordContractorAttendance(
 
     const priorRows = await trx
       .selectFrom('contractor_attendance')
-      .select(['id', 'skill_level', 'headcount', 'amount_paise', 'approved_at', 'bill_id'])
+      .select(['id', 'skill_level', 'work_type', 'headcount', 'amount_paise', 'approved_at', 'bill_id'])
       .where('contractor_id', '=', input.contractorId)
       .where('project_id', '=', input.projectId)
       .where('attendance_date', '=', input.attendanceDate)
       .forUpdate()
       .execute()
-    const priorBySkill = new Map(priorRows.map((r) => [String(r.skill_level), r]))
+    // Keyed on the pair, because migration 016 widened uq_ca to include
+    // work_type. Keyed on skill level alone -- which is what this was until 016 --
+    // a day holding two measured rows for one skill level would collapse them to
+    // one map entry, the second overwriting the first, and editing the plastering
+    // row would silently rewrite the tiling row instead. The map has to hold the
+    // same key the database does or the update branch picks the wrong row.
+    const lineKey = (skillLevel: string, workType: string) => JSON.stringify([skillLevel, workType])
+    const priorByLine = new Map(
+      priorRows.map((r) => [lineKey(String(r.skill_level), String(r.work_type)), r])
+    )
 
     let inserted = 0
     let updated = 0
@@ -1722,7 +1731,7 @@ export async function recordContractorAttendance(
       const readable = row.skillLevel.replace(/_/g, ' ')
       const unit = uomLabel(row.uom)
       const measured = row.uom !== 'per_day'
-      const prior = priorBySkill.get(row.skillLevel)
+      const prior = priorByLine.get(lineKey(row.skillLevel, row.workType))
 
       if (prior && prior.bill_id !== null) {
         // The bill number, not the id: whoever hits this has to go and find the
@@ -1751,9 +1760,17 @@ export async function recordContractorAttendance(
       }
       // And it names its work type, for the reason the schema gives: skill level
       // cannot choose between two piece rates the same gang can be paid under.
-      if (measured && row.workType === null) {
+      if (measured && row.workType === '') {
         throw new UnprocessableError(
           `The ${readable} line is quoted ${unit} and does not say what work it is for, so the rate card line that prices it cannot be identified.`
+        )
+      }
+      if (!measured && row.workType !== '') {
+        // uq_ca contains work_type since 016, so a named day row is not a
+        // duplicate of an unnamed one in the key: two of them would both insert
+        // and both bill. The schema refuses this first; this holds for any caller.
+        throw new UnprocessableError(
+          `The ${readable} line is priced per day, which the skill level decides, so it cannot also name '${row.workType}' as its work. Clear the work type, or quote the line in the unit that work is measured in so the measure prices it.`
         )
       }
       if (!measured && row.quantity !== null) {
@@ -1773,7 +1790,7 @@ export async function recordContractorAttendance(
       if (!rate) {
         throw new UnprocessableError(
           `${contractor.name} has no ${unit} ${readable} rate${
-            row.workType === null ? '' : ` for ${row.workType}`
+            row.workType === '' ? '' : ` for ${row.workType}`
           } effective on ${input.attendanceDate}. Add it to the rate card before recording the day.`
         )
       }
@@ -1849,7 +1866,7 @@ export async function recordContractorAttendance(
         rows: input.rows.map((r) =>
           r.uom === 'per_day'
             ? `${r.skillLevel}:${r.headcount}`
-            : `${r.skillLevel}:${r.headcount} @${r.quantity} ${r.uom}${r.workType === null ? '' : ` (${r.workType})`}`
+            : `${r.skillLevel}:${r.headcount} @${r.quantity} ${r.uom}${r.workType === '' ? '' : ` (${r.workType})`}`
         ),
         // The override and the ambiguity are the two facts that cannot be
         // reconstructed from the rows afterwards, so they are recorded here.

@@ -52,6 +52,7 @@ const db = getDb()
  */
 const EXPLICIT_CHECKS = [
   'contractor_attendance.chk_ca_quantity',
+  'contractor_attendance.chk_ca_work_type',
   'expenses.chk_exp_source_pair',
 ] as const
 
