@@ -594,6 +594,73 @@ code {
   gap: 0.75rem 1rem;
 }
 
+/*
+ * The month attendance matrix (spec 1761), and the only client-component styling
+ * in the sheet.
+ *
+ * [x-cloak] belongs to Alpine, not to this screen. Alpine removes the attribute
+ * when it initialises a component, so a rule hiding cloaked elements hides them
+ * only while Alpine has not run — including forever, on a page with JavaScript
+ * off. That is how a paragraph about keyboard shortcuts stays off a page where
+ * there are no keyboard shortcuts. It is declared here rather than in a module
+ * stylesheet because the second client component will want it too, and a rule
+ * nobody can find gets re-declared.
+ */
+
+[x-cloak] {
+  display: none !important;
+}
+
+/*
+ * 31 day columns do not fit a laptop, so the matrix is the one table in the app
+ * that expects to scroll sideways. Everything below serves that: the padding is
+ * tight enough to keep a fortnight on screen, the day headers are centred over
+ * their controls, and the employee column stays put so a mark ten days along
+ * still has a name attached to it.
+ */
+
+.ncc-matrix .ncc-table th,
+.ncc-matrix .ncc-table td {
+  padding: 0.3rem 0.35rem;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.ncc-matrix .ncc-table th:not(:first-child) {
+  text-align: center;
+  letter-spacing: 0;
+  font-size: 0.7rem;
+  line-height: 1.15;
+}
+
+.ncc-matrix .ncc-table th:first-child,
+.ncc-matrix .ncc-table td:first-child {
+  position: sticky;
+  left: 0;
+  background: var(--ncc-surface);
+  border-right: 1px solid var(--ncc-border);
+  z-index: 1;
+}
+
+.ncc-matrix .ncc-table select {
+  width: 3.4rem;
+  padding: 0.15rem 0.2rem;
+  font-size: 0.82rem;
+  text-align: center;
+}
+
+/*
+ * An unsaved cell is outlined, not coloured in. A background change on a
+ * <select> fights the platform's own focus and open-list styling on at least
+ * one browser, and the outline reads the same on both. It is the client
+ * component's only visual claim, and it says "not saved yet" — never "accepted".
+ */
+
+.ncc-matrix .ncc-table select.is-dirty {
+  outline: 2px solid var(--ncc-accent);
+  outline-offset: -1px;
+}
+
 @media (max-width: 900px) {
   .ncc-shell {
     grid-template-columns: 1fr;

@@ -21,6 +21,7 @@ import {
   relativeDays,
   sqlDateTimeIn,
   today,
+  weekdayShort,
   workingDaysBetween,
   yesterday,
 } from '../src/lib/dates.js'
@@ -300,5 +301,46 @@ describe('formatMonth', () => {
   it('reads as a heading, not as a key', () => {
     expect(formatMonth('2026-09')).toBe('September 2026')
     expect(formatMonth('2027-01')).toBe('January 2027')
+  })
+})
+
+/*
+ * The month matrix's column headers (DECISIONS 22). Two properties matter and
+ * neither is about formatting.
+ */
+describe('weekdayShort', () => {
+  it('agrees with isWorkingDay about which column is a Sunday', () => {
+    // The one assertion that would catch an off-by-one or a timezone slip: the
+    // matrix greys a column by weekdayShort and the service refuses a leave day
+    // by isWorkingDay, so a disagreement between them is a grid that greys the
+    // wrong column while payroll counts a different one.
+    const { start, end } = monthBounds('2026-09')
+    for (const date of datesBetween(start, end)) {
+      expect(weekdayShort(date) === 'Su').toBe(!isWorkingDay(date))
+    }
+  })
+
+  it('gives the seven labels in week order', () => {
+    // 2026-09-06 is a Sunday, so this walk starts on one.
+    expect(datesBetween('2026-09-06', '2026-09-12').map(weekdayShort)).toEqual([
+      'Su',
+      'Mo',
+      'Tu',
+      'We',
+      'Th',
+      'Fr',
+      'Sa',
+    ])
+  })
+
+  it('does not shift across a month or a year boundary', () => {
+    // 2025-12-31 is a Wednesday and 2026-01-01 a Thursday. A parse at midnight
+    // local time rather than noon UTC is the way this goes wrong, and it goes
+    // wrong only on a host west of UTC — which is not this one, so the value of
+    // the assertion is that it pins the noon parse rather than that it fails here.
+    expect(weekdayShort('2025-12-31')).toBe('We')
+    expect(weekdayShort('2026-01-01')).toBe('Th')
+    expect(weekdayShort('2026-02-28')).toBe('Sa')
+    expect(weekdayShort('2024-02-29')).toBe('Th')
   })
 })

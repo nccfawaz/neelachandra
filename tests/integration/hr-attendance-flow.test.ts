@@ -6,7 +6,7 @@ import { addDays, isWorkingDay, today } from '../../src/lib/dates.js'
 import { parseJsonColumn } from '../../src/lib/json.js'
 import * as q from '../../src/modules/hr/queries.js'
 import * as svc from '../../src/modules/hr/service.js'
-import { attendanceBulkSchema, employeeSchema, leaveRequestSchema } from '../../src/modules/hr/schemas.js'
+import { attendanceBulkSchema, attendanceGridSchema, employeeSchema, exitSchema, leaveRequestSchema } from '../../src/modules/hr/schemas.js'
 
 /*
  * HR attendance and leave (spec 6.6 rules 1 and 4), executed against MariaDB.
@@ -1328,5 +1328,537 @@ describe('what the entry grid prefills from, and what the dashboard counts', () 
     const data = await q.hrDashboard(db)
     expect(data.unapprovedAttendance).toBe(unapproved.length)
     expect(data.headcount.find((h) => h.status === 'active')!.n).toBeGreaterThanOrEqual(3)
+  })
+})
+
+/*
+ * The month matrix (spec 1761), which is `recordAttendanceGrid` and not the day
+ * form above it.
+ *
+ * IT GETS ITS OWN MONTH. June 2026 is untouched by every test above, so the
+ * counts below are the matrix's own writes and not a residue of the day form,
+ * the leave approvals or the August close. June has 30 days, which is where the
+ * `-30` in `matrixRows` comes from.
+ *
+ * The property under test is not really validation -- the wire shape is pinned
+ * without a database in tests/hr-schemas.test.ts. It is that WHICH CELLS THE
+ * CLIENT CHOSE TO SEND CANNOT CHANGE WHAT LANDS. A page with JavaScript off
+ * posts every editable cell in the month; a keyboard user posts the same thing;
+ * neither has a way to say "only these three changed". So the server compares
+ * each cell against what is stored and writes only the difference, and that
+ * comparison is the whole of the claim that the client holds no authority over
+ * an attendance value. A returned count of zero is not evidence of it -- the
+ * counts are computed by the same function under test -- so the no-op post
+ * below is made by a DIFFERENT user and the assertion is that every row still
+ * names the first one. `marked_by` cannot be faked by a miscounted loop.
+ */
+describe('the month matrix, one post for a whole month (spec 1761)', () => {
+  const GRID_MONTH = '2026-06'
+
+  /* A second officer, whose only job is to prove a no-op wrote nothing. */
+  let officer = { userId: 0, ip: '127.0.0.1' as string | null }
+  /* Joined with the others and left mid-June, so the post-exit refusal has a
+     real leaver rather than a contrived date. */
+  let deltaId = 0
+
+  /** The matrix as the browser posts it: one self-identifying string per cell. */
+  function matrix(
+    month: string,
+    cells: Array<{ employeeId: number; day: number; status: string }>,
+    opts: { projectId?: number } = {}
+  ) {
+    return attendanceGridSchema.parse({
+      month,
+      projectId: opts.projectId === undefined ? '' : String(opts.projectId),
+      cell: cells.map((c) => `${c.employeeId}|${c.day}|${c.status}`),
+    })
+  }
+
+  /** Every attendance row inside the matrix month, with the stamps a no-op must not move. */
+  async function matrixRows() {
+    return db
+      .selectFrom('attendance')
+      .select([
+        'employee_id',
+        'attendance_date',
+        'status',
+        'project_id',
+        'marked_by',
+        'marked_at',
+        'approved_at',
+      ])
+      .where('attendance_date', '>=', `${GRID_MONTH}-01`)
+      .where('attendance_date', '<=', `${GRID_MONTH}-30`)
+      .orderBy('employee_id')
+      .orderBy('attendance_date')
+      .execute()
+  }
+
+  const at = (rows: Awaited<ReturnType<typeof matrixRows>>, employeeId: number, date: string) =>
+    rows.find((r) => Number(r.employee_id) === employeeId && String(r.attendance_date) === date)
+
+  /**
+   * The whole editable page, as a browser with JavaScript off posts it back:
+   * every cell, whether or not it changed. A function and not a constant because
+   * the employee ids are not known until `beforeAll` has run.
+   */
+  function wholePage(over: Record<string, string> = {}) {
+    const base: Array<{ employeeId: number; day: number; status: string }> = [
+      { employeeId: alphaId, day: 1, status: 'present' },
+      { employeeId: alphaId, day: 2, status: 'present' },
+      { employeeId: alphaId, day: 3, status: 'absent' },
+      { employeeId: betaId, day: 1, status: 'present' },
+      { employeeId: betaId, day: 2, status: 'half_day' },
+      { employeeId: betaId, day: 3, status: 'present' },
+    ]
+    return base.map((c) => ({ ...c, status: over[`${c.employeeId}|${c.day}`] ?? c.status }))
+  }
+
+  beforeAll(async () => {
+    const user = await db
+      .insertInto('users')
+      .values({
+        email: 'fixture.matrix.officer@example.invalid',
+        full_name: 'Fixture Matrix Officer',
+        status: 'active',
+        must_change_password: 0,
+      })
+      .executeTakeFirst()
+    officer = { userId: Number(user.insertId ?? 0), ip: '127.0.0.1' }
+
+    deltaId = await svc.createEmployee(
+      db,
+      actor,
+      employeeInput({ fullName: 'Fixture Leaver Delta', gender: 'female' })
+    )
+    // No override passed on purpose: a blocker would fail this beforeAll with the
+    // blocker's own message, which is a better fixture failure than an exit
+    // forced through for reasons nobody wrote down.
+    const exit = await svc.runExit(
+      db,
+      actor,
+      deltaId,
+      exitSchema.parse({ dateOfExit: '2026-06-15', exitType: 'resigned', exitReason: 'Fixture exit' })
+    )
+    expect(exit.overridden).toBe(false)
+  })
+
+  it('starts from a month nothing else in this file writes to', async () => {
+    // If a crashed run left rows in June, every count below shifts and the
+    // failure would look like a bug in the service. Say it here instead.
+    expect(await q.attendanceMonthState(db, GRID_MONTH)).toEqual({
+      month: GRID_MONTH,
+      total: 0,
+      approved: 0,
+      locked: false,
+    })
+    expect(officer.userId).toBeGreaterThan(0)
+    expect(officer.userId).not.toBe(actor.userId)
+    expect(deltaId).toBeGreaterThan(0)
+  })
+
+  it('inserts every marked cell and charges the new rows to the posted project', async () => {
+    const result = await svc.recordAttendanceGrid(db, actor, matrix(GRID_MONTH, wholePage(), { projectId }), {
+      canOverridePeriod: false,
+    })
+    expect(result).toEqual({ inserted: 6, updated: 0, unchanged: 0 })
+
+    const rows = await matrixRows()
+    expect(rows).toHaveLength(6)
+    expect(at(rows, betaId, '2026-06-02')).toMatchObject({
+      status: 'half_day',
+      project_id: projectId,
+      marked_by: actor.userId,
+      approved_at: null,
+    })
+
+    // The matrix writes a status and nothing else. Times, overtime and remarks
+    // belong to the day form, and a cell the matrix inserted leaves them as the
+    // column defaults rather than inventing a working day around the mark.
+    const row = await cell(betaId, '2026-06-02')
+    expect(row).toMatchObject({ in_time: null, out_time: null, remarks: null })
+    expect(Number(row!.overtime_hours)).toBe(0)
+  })
+
+  it('writes nothing when the whole page is posted back unchanged', async () => {
+    const before = await matrixRows()
+    // Posted by the SECOND officer. If any row were rewritten -- even to the
+    // value it already held -- `marked_by` would move to them, so this is a
+    // claim about statements executed rather than about the returned counts.
+    const result = await svc.recordAttendanceGrid(
+      db,
+      officer,
+      matrix(GRID_MONTH, wholePage(), { projectId }),
+      { canOverridePeriod: false }
+    )
+    expect(result).toEqual({ inserted: 0, updated: 0, unchanged: 6 })
+
+    const after = await matrixRows()
+    expect(after).toEqual(before)
+    expect(after.every((r) => Number(r.marked_by) === actor.userId)).toBe(true)
+  })
+
+  it('lands the same row whether the post carries one cell or the whole page', async () => {
+    // The same kind of correction made two ways. Alpha's 3rd changes inside a
+    // post carrying all six cells; Beta's 3rd changes in a post carrying only
+    // itself. Both rows end up in the same shape, which is what "no client-side
+    // authority" means once it is a row rather than a sentence.
+    const full = await svc.recordAttendanceGrid(
+      db,
+      officer,
+      matrix(GRID_MONTH, wholePage({ [`${alphaId}|3`]: 'weekly_off' }), { projectId }),
+      { canOverridePeriod: false }
+    )
+    expect(full).toEqual({ inserted: 0, updated: 1, unchanged: 5 })
+
+    const one = await svc.recordAttendanceGrid(
+      db,
+      officer,
+      matrix(GRID_MONTH, [{ employeeId: betaId, day: 3, status: 'weekly_off' }], { projectId }),
+      { canOverridePeriod: false }
+    )
+    expect(one).toEqual({ inserted: 0, updated: 1, unchanged: 0 })
+
+    const rows = await matrixRows()
+    for (const id of [alphaId, betaId]) {
+      expect(at(rows, id, '2026-06-03')).toMatchObject({
+        status: 'weekly_off',
+        project_id: projectId,
+        marked_by: officer.userId,
+      })
+    }
+    // And the four cells neither post was trying to change still name the
+    // original officer, so a correction is not a re-marking of the month.
+    expect(at(rows, alphaId, '2026-06-01')).toMatchObject({ marked_by: actor.userId })
+    expect(at(rows, betaId, '2026-06-02')).toMatchObject({ marked_by: actor.userId })
+  })
+
+  it('never moves an existing row off the project it was charged to', async () => {
+    // The matrix's project select is labelled "Charge new rows to" and this is
+    // why: a supervisor correcting one status in a month must not silently
+    // re-cost the days they left alone. 6.8 reads attendance.project_id, so a
+    // grid that moved a charge would move money.
+    const result = await svc.recordAttendanceGrid(
+      db,
+      actor,
+      matrix(GRID_MONTH, [
+        { employeeId: alphaId, day: 3, status: 'absent' },
+        { employeeId: alphaId, day: 4, status: 'present' },
+      ]),
+      { canOverridePeriod: false }
+    )
+    expect(result).toEqual({ inserted: 1, updated: 1, unchanged: 0 })
+
+    const rows = await matrixRows()
+    // Corrected through a post charged to overhead, and still on the project.
+    expect(at(rows, alphaId, '2026-06-03')).toMatchObject({ status: 'absent', project_id: projectId })
+    // Inserted by the same post, so the charge applied to it and only to it.
+    expect(at(rows, alphaId, '2026-06-04')).toMatchObject({ status: 'present', project_id: null })
+  })
+
+  /*
+   * Every refusal below is one the rendered matrix must not have offered a
+   * control for. `cellOptions` in the HR routes returns null for exactly this
+   * list, in this order, and these tests are the other half of that pairing:
+   * they say the service really does refuse what the grid declines to offer, so
+   * a cell the client CAN post is a cell the database will take. Add a refusal
+   * to recordAttendanceGrid and both halves owe a case.
+   */
+  describe('the refusals the matrix must not offer a cell for', () => {
+    const post = (input: ReturnType<typeof matrix>, canOverridePeriod = false) =>
+      svc.recordAttendanceGrid(db, actor, input, { canOverridePeriod })
+
+    it('refuses a day that has not happened yet', async () => {
+      // A month with nothing in it, so the month lock cannot be what refuses
+      // this and pass the test for the wrong reason.
+      await expect(post(matrix('2027-01', [{ employeeId: alphaId, day: 4, status: 'present' }]))).rejects.toThrow(
+        /2027-01-04 has not happened yet/
+      )
+    })
+
+    it('refuses a cell before the joining date, and names the person', async () => {
+      await expect(post(matrix(GRID_MONTH, [{ employeeId: gammaId, day: 1, status: 'present' }]))).rejects.toThrow(
+        /Fixture Joiner Gamma joined on 2026-09-03 and cannot be marked on 2026-06-01/
+      )
+    })
+
+    it('refuses a cell after the exit date, and takes the day before it', async () => {
+      await expect(post(matrix(GRID_MONTH, [{ employeeId: deltaId, day: 20, status: 'present' }]))).rejects.toThrow(
+        /Fixture Leaver Delta left on 2026-06-15 and cannot be marked on 2026-06-20/
+      )
+      // The boundary is the date and not the person: a leaver's last days are
+      // still markable, which is exactly the month payroll needs.
+      expect(await post(matrix(GRID_MONTH, [{ employeeId: deltaId, day: 15, status: 'present' }]))).toEqual({
+        inserted: 1,
+        updated: 0,
+        unchanged: 0,
+      })
+    })
+
+    it('refuses marking an approved leave day as worked, and names the request', async () => {
+      // September, because that is where the leave tests above left an approved
+      // request. The bulk path has the same refusal; this is the matrix's, and
+      // the pair with the test below it is the whole point.
+      expect((await q.attendanceMonthState(db, OPEN_MONTH)).locked).toBe(false)
+      await expect(post(matrix(OPEN_MONTH, [{ employeeId: betaId, day: 1, status: 'present' }]))).rejects.toThrow(
+        new RegExp(`approved leave covering 2026-09-01 \\(request ${betaLeaveId}\\)`)
+      )
+    })
+
+    it('refuses the whole post when the month is closed', async () => {
+      // One check for the month rather than one per cell, which is sound because
+      // no cell can name a day outside the posted month.
+      await expect(post(matrix(LOCK_MONTH, [{ employeeId: alphaId, day: 3, status: 'present' }]))).rejects.toThrow(
+        /August 2026 is closed/
+      )
+    })
+
+    it('refuses a project that no longer exists, before the FK gets a chance to', async () => {
+      await expect(
+        post(matrix(GRID_MONTH, [{ employeeId: alphaId, day: 5, status: 'present' }], { projectId: 999999999 }))
+      ).rejects.toThrow(/project no longer exists/i)
+    })
+
+    it('refuses an employee id that resolves to nothing', async () => {
+      await expect(post(matrix(GRID_MONTH, [{ employeeId: 999999999, day: 5, status: 'present' }]))).rejects.toThrow(
+        /employees no longer exists/i
+      )
+    })
+  })
+
+  /*
+   * WHY THE UNCHANGED COMPARISON RUNS BEFORE EVERY REFUSAL IN THE LOOP.
+   *
+   * The page a supervisor is looking at was rendered at some earlier moment.
+   * Between then and the save, a leave request covering one of its cells can be
+   * approved -- and the save carries that cell too, because a page with
+   * JavaScript off posts all of them. With the refusals ordered first, one
+   * approved leave day makes the WHOLE MONTH unsavable over a cell the post was
+   * not trying to change, and three real corrections are lost to a message about
+   * a fourth.
+   *
+   * The cell used here is reachable through nothing but the app's own paths, and
+   * that is the point. `datesBetween` in approvedLeaveMonth expands a request
+   * over every CALENDAR day, while decideLeave writes attendance for WORKING
+   * days only -- so a Sunday inside an approved range is leave-covered and keeps
+   * whatever status it already had. A supervisor who marked that Sunday
+   * `weekly_off` before the leave was approved now holds a page with a
+   * leave-covered cell storing a non-leave status, which is the one shape that
+   * makes the ordering observable.
+   *
+   * These two tests are a pair: the same cell, the same request, and the only
+   * difference is whether the posted status is the one already stored. Swap the
+   * order in recordAttendanceGrid and the second one goes red.
+   */
+  describe('a stale page, and the cell it is not trying to change', () => {
+    /** A Sunday: 2026 has Sundays on June 7, 14, 21 and 28. */
+    const SUNDAY = '2026-06-07'
+    let requestId = 0
+
+    beforeAll(async () => {
+      // Marked FIRST, as a supervisor marking the week would. Doing it after the
+      // approval is refused, which is the refusal this pair is about.
+      const marked = await svc.recordAttendanceGrid(
+        db,
+        actor,
+        matrix(GRID_MONTH, [{ employeeId: betaId, day: 7, status: 'weekly_off' }], { projectId }),
+        { canOverridePeriod: false }
+      )
+      expect(marked).toEqual({ inserted: 1, updated: 0, unchanged: 0 })
+
+      // Raised on behalf, which waives EL's notice: the range is in the past
+      // because attendance is only recorded for days that have passed.
+      requestId = await svc.requestLeave(
+        db,
+        actor,
+        leaveInput({
+          employeeId: String(betaId),
+          fromDate: '2026-06-06',
+          toDate: '2026-06-08',
+          reason: 'Fixture leave spanning a Sunday',
+        }),
+        { selfEmployeeId: alphaId, canRaiseForOthers: true }
+      )
+      await svc.decideLeave(
+        db,
+        actor,
+        requestId,
+        { decision: 'approve', rejectReason: null },
+        { approverEmployeeId: alphaId, canOverridePeriod: false }
+      )
+    })
+
+    it('leaves a Sunday inside an approved range covered but not rewritten', async () => {
+      // The fixture only works if both halves hold, so both are asserted rather
+      // than assumed: the day is leave-covered, and it still stores the status
+      // the supervisor put there.
+      const covered = await q.approvedLeaveMonth(db, GRID_MONTH)
+      expect(covered).toContainEqual({
+        employee_id: betaId,
+        attendance_date: SUNDAY,
+        request_id: requestId,
+        type_code: 'EL',
+      })
+      expect(await cell(betaId, SUNDAY)).toMatchObject({ status: 'weekly_off' })
+      // And the working days either side of it were written by the approval.
+      expect(await cell(betaId, '2026-06-06')).toMatchObject({ status: 'paid_leave' })
+      expect(await cell(betaId, '2026-06-08')).toMatchObject({ status: 'paid_leave' })
+    })
+
+    it('refuses that cell when the post tries to change it, and names the request', async () => {
+      await expect(
+        svc.recordAttendanceGrid(
+          db,
+          actor,
+          matrix(GRID_MONTH, [{ employeeId: betaId, day: 7, status: 'present' }]),
+          { canOverridePeriod: false }
+        )
+      ).rejects.toThrow(new RegExp(`approved leave covering ${SUNDAY} \\(request ${requestId}\\)`))
+    })
+
+    it('takes the same cell when the post carries it back unchanged, alongside a real correction', async () => {
+      const result = await svc.recordAttendanceGrid(
+        db,
+        actor,
+        matrix(GRID_MONTH, [
+          // Leave-covered, storing a status the refusal above rejects, and
+          // posted back exactly as stored: not a write, so not refused.
+          { employeeId: betaId, day: 7, status: 'weekly_off' },
+          // The correction on the same page, which has to land.
+          { employeeId: alphaId, day: 4, status: 'absent' },
+        ]),
+        { canOverridePeriod: false }
+      )
+      expect(result).toEqual({ inserted: 0, updated: 1, unchanged: 1 })
+      expect(await cell(alphaId, '2026-06-04')).toMatchObject({ status: 'absent' })
+      expect(await cell(betaId, SUNDAY)).toMatchObject({ status: 'weekly_off' })
+    })
+  })
+
+  it('audits one entry per post, including the post that wrote nothing', async () => {
+    const rows = await db
+      .selectFrom('audit_log')
+      .select(['after_json'])
+      .where('action', '=', 'hr.attendance_grid')
+      .where('id', '>', highWater.get('audit_log') ?? 0)
+      .orderBy('id')
+      .execute()
+    // Eight posts have succeeded: the six-cell insert, the unchanged re-post, the
+    // two halves of the one-cell/whole-page pair, the overhead insert beside a
+    // correction, the leaver's last day, the Sunday marked before the leave was
+    // approved, and the stale page carrying it back. Every refusal above threw
+    // inside the transaction and wrote nothing at all.
+    expect(rows).toHaveLength(8)
+
+    const entries = rows.map((r) => parseJsonColumn(r.after_json) as Record<string, unknown>)
+    expect(entries[0]).toMatchObject({ month: GRID_MONTH, inserted: 6, updated: 0, unchanged: 0 })
+    expect(Number(entries[0]!.project_id)).toBe(projectId)
+    // employee:date:status, so a corrected month is readable without a join.
+    expect(entries[0]!.changed).toContain(`${betaId}:2026-06-02:half_day`)
+    expect((entries[0]!.changed as string[]).length).toBe(6)
+
+    // "Reviewed and there was nothing to correct" and "nobody looked" are
+    // different facts, so the no-op is recorded -- with an empty changed list,
+    // which is what distinguishes it from a post that did something.
+    expect(entries[1]).toMatchObject({ inserted: 0, updated: 0, unchanged: 6, changed: [] })
+    expect(entries[1]!.period_override).toBeUndefined()
+  })
+
+  /*
+   * `approvedLeaveMonth` is the one lookup the matrix could not do a day at a
+   * time, and the clipping is the part its own comment in queries.ts calls easy
+   * to get wrong. Nothing above asserts it: the Sunday construction proves the
+   * query sees a request that lies wholly inside the month, which is the case
+   * that needs no clipping at all.
+   *
+   * Placed last in the file on purpose. Approving the range below writes
+   * attendance in three months and adds an employee, so it must not run before
+   * anything that counts rows or audit entries.
+   */
+  describe('approvedLeaveMonth, a request that starts and ends outside the month it covers', () => {
+    let epsilonId = 0
+    let spanId = 0
+
+    /** Only this employee's cells, since the fixture shares the months with others. */
+    async function covered(month: string) {
+      const cells = await q.approvedLeaveMonth(db, month)
+      return cells.filter((c) => c.employee_id === epsilonId).map((c) => c.attendance_date)
+    }
+
+    beforeAll(async () => {
+      epsilonId = await svc.createEmployee(
+        db,
+        actor,
+        employeeInput({ fullName: 'Fixture Spanner Epsilon', gender: 'male' })
+      )
+      // Raised on behalf, which waives EL's notice, and then approved: the query
+      // filters on `approved`, so a pending request would make every assertion
+      // below pass for the wrong reason.
+      spanId = await svc.requestLeave(
+        db,
+        actor,
+        leaveInput({
+          employeeId: String(epsilonId),
+          fromDate: '2026-04-29',
+          toDate: '2026-06-02',
+          reason: 'Fixture leave spanning three months',
+        }),
+        { selfEmployeeId: alphaId, canRaiseForOthers: true }
+      )
+      const decided = await svc.decideLeave(
+        db,
+        actor,
+        spanId,
+        { decision: 'approve', rejectReason: null },
+        { approverEmployeeId: alphaId, canOverridePeriod: false }
+      )
+      expect(decided.decision).toBe('approve')
+    })
+
+    it('covers every day of the month in the middle, both endpoints being outside it', async () => {
+      const may = await covered('2026-05')
+      // 31 and not 26. This is coverage by the request, which is what a refusal
+      // has to be measured against; the 26 is how many working days `decideLeave`
+      // wrote attendance rows for, and the gap between the two numbers is the
+      // asymmetry the stale-page block above depends on.
+      expect(may).toHaveLength(31)
+      expect(may[0]).toBe('2026-05-01')
+      expect(may[30]).toBe('2026-05-31')
+    })
+
+    it('clips to the month asked about instead of reporting the request dates', async () => {
+      // The request runs 29 April to 2 June. Each end month gets its own days and
+      // nothing beyond the boundary, which is the whole of what clipping means.
+      expect(await covered('2026-04')).toEqual(['2026-04-29', '2026-04-30'])
+      expect(await covered('2026-06')).toEqual(['2026-06-01', '2026-06-02'])
+      expect(await covered('2026-03')).toEqual([])
+      expect(await covered('2026-07')).toEqual([])
+    })
+
+    it('names the request on every day it expanded, so a refusal can quote it', async () => {
+      const cells = await q.approvedLeaveMonth(db, '2026-05')
+      const mine = cells.filter((c) => c.employee_id === epsilonId)
+      expect(new Set(mine.map((c) => c.request_id))).toEqual(new Set([spanId]))
+      expect(new Set(mine.map((c) => c.type_code))).toEqual(new Set(['EL']))
+    })
+
+    it('does not see a request nobody has approved', async () => {
+      // Otherwise the grid would refuse a cell over a request still waiting for a
+      // decision, and the message would name a request the approver could not yet
+      // have seen.
+      const pendingId = await svc.requestLeave(
+        db,
+        actor,
+        leaveInput({
+          employeeId: String(epsilonId),
+          fromDate: '2026-07-01',
+          toDate: '2026-07-03',
+          reason: 'Fixture leave left pending on purpose',
+        }),
+        { selfEmployeeId: alphaId, canRaiseForOthers: true }
+      )
+      expect(pendingId).toBeGreaterThan(0)
+      expect(await covered('2026-07')).toEqual([])
+    })
   })
 })

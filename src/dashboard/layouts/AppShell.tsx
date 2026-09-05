@@ -11,6 +11,16 @@ import type { CurrentUser } from '../../types.js'
  * deliberate for a site supervisor on a phone with two bars of signal.
  */
 
+/**
+ * A page-scoped client component, by name.
+ *
+ * A UNION AND NOT A STRING, so a route cannot put an arbitrary path into a
+ * script tag. Every member is a file this repository wrote at
+ * `public/assets/js/<name>.js`; adding a component means adding a member here,
+ * which is also the list of them.
+ */
+export type ClientComponent = 'attendance-grid'
+
 export interface AppShellProps {
   title: string
   user: CurrentUser
@@ -23,6 +33,12 @@ export interface AppShellProps {
   actions?: Child
   /** Loads Chart.js. Only the pages that draw a chart pass true (spec 2.3). */
   charts?: boolean
+  /**
+   * Client components this page needs, loaded from /assets/js. Nothing is
+   * bundled: these are hand-written files served as they are, like the vendor
+   * scripts beside them.
+   */
+  clients?: ClientComponent[]
   children?: Child
 }
 
@@ -48,6 +64,15 @@ export function AppShell(props: AppShellProps) {
         <script src="/assets/vendor/htmx.min.js" defer></script>
         <script src="/assets/vendor/alpine.min.js" defer></script>
         {props.charts ? <script src="/assets/vendor/chart.umd.min.js" defer></script> : null}
+        {/* AFTER Alpine and also deferred, which is load bearing. Deferred
+            scripts run in document order and all of them before
+            DOMContentLoaded, and Alpine starts on DOMContentLoaded -- so a
+            component file listed here is guaranteed to have registered its
+            `alpine:init` listener before Alpine dispatches it. Move either tag
+            off `defer` and the component silently never registers. */}
+        {(props.clients ?? []).map((name) => (
+          <script src={`/assets/js/${name}.js`} defer></script>
+        ))}
       </head>
       {/* Every htmx request carries the CSRF token as a header, so an hx-post
           with no form fields is still protected (lib/csrf extractToken). */}

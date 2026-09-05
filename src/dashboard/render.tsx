@@ -3,6 +3,7 @@ import type { Child } from 'hono/jsx'
 import type { AppEnv } from '../types.js'
 import { currentUser, currentSession } from '../types.js'
 import { AppShell } from './layouts/AppShell.js'
+import type { ClientComponent } from './layouts/AppShell.js'
 import { Alert } from './components/index.js'
 
 /**
@@ -20,6 +21,7 @@ export interface PageOptions {
   subtitle?: string
   actions?: Child
   charts?: boolean
+  clients?: ClientComponent[]
 }
 
 export function page(c: Context<AppEnv>, opts: PageOptions, body: Child) {
@@ -34,6 +36,7 @@ export function page(c: Context<AppEnv>, opts: PageOptions, body: Child) {
       subtitle={opts.subtitle}
       actions={opts.actions}
       charts={opts.charts}
+      clients={opts.clients}
     >
       {body}
     </AppShell>

@@ -18,14 +18,23 @@ import {
   today,
   workingDaysBetween,
 } from '../../lib/dates.js'
-import { attendanceMonthState, blockerCount, employeeLoginId, exitBlockers, applicableRate, type ExitBlockers } from './queries.js'
+import {
+  attendanceMonthState,
+  approvedLeaveMonth,
+  blockerCount,
+  employeeLoginId,
+  exitBlockers,
+  applicableRate,
+  type ExitBlockers,
+} from './queries.js'
 import type {
   AttendanceBulkInput,
+  AttendanceGridInput,
   ContractorAttendanceInput,
   RateUom,
   SkillLevel,
 } from './schemas.js'
-import { uomLabel } from './schemas.js'
+import { uomLabel, LEAVE_DAY_STATUSES } from './schemas.js'
 import { getSetting } from '../../lib/settings.js'
 
 /**
@@ -623,7 +632,6 @@ export async function recordAttendanceBulk(
       .execute()
     const leaveByEmployee = new Map(approvedLeave.map((r) => [Number(r.employee_id), r]))
 
-    const LEAVE_STATUSES = ['paid_leave', 'unpaid_leave', 'half_day']
     let inserted = 0
     let updated = 0
 
@@ -643,7 +651,7 @@ export async function recordAttendanceBulk(
       }
 
       const leave = leaveByEmployee.get(row.employeeId)
-      if (leave && !LEAVE_STATUSES.includes(row.status)) {
+      if (leave && !LEAVE_DAY_STATUSES.includes(row.status)) {
         throw new UnprocessableError(
           `${employee.full_name} has approved leave covering ${input.attendanceDate} (request ${leave.id}). Withdraw the request before marking that day differently, so the leave balance and the attendance do not disagree.`
         )
@@ -711,6 +719,207 @@ export async function recordAttendanceBulk(
     })
 
     return { inserted, updated }
+  })
+}
+
+export interface AttendanceGridResult {
+  inserted: number
+  updated: number
+  unchanged: number
+}
+
+/**
+ * The month matrix: one post for a whole month of statuses (spec 1761).
+ *
+ * THE SERVER DECIDES WHAT CHANGED. Every cell the matrix renders as editable
+ * posts its current value, whether or not anybody touched it, and this function
+ * compares each against the stored row: equal is `unchanged` and no statement is
+ * issued. That is the whole reason a keyboard post of three cells and a
+ * JavaScript-off post of three hundred leave the database in the same state, and
+ * it is the property that lets the client keep no authority over an attendance
+ * value. The comparison lives here rather than in the browser because a
+ * comparison in the browser is a claim, and this one is a fact.
+ *
+ * It is also what stops a no-op save from restamping `marked_by` and `marked_at`
+ * on three hundred rows and writing an audit entry saying the month was
+ * re-marked.
+ *
+ * WHAT IT WRITES IS `status`, AND NOTHING ELSE. An update sets the status, the
+ * marker and the time; it does not touch `in_time`, `out_time`,
+ * `overtime_hours`, `remarks` or `project_id`, so a month corrected in the
+ * matrix cannot silently erase what the day form entered against those columns
+ * or move a day's cost to another project. An insert has no prior values to
+ * preserve and takes `input.projectId` -- rule 1's one project per post, chosen
+ * on the matrix's own form and applied only to rows it creates.
+ *
+ * Its refusals are the day form's, per cell rather than per person, and every
+ * one of them names the day: a supervisor who posts a month wants to know which
+ * cell was rejected. They are the reason the matrix renders no control at all on
+ * a cell outside the employment dates, on one already approved, and on one in
+ * the future -- and renders a control restricted to `LEAVE_DAY_STATUSES` on a
+ * leave-covered cell, because those three the service accepts.
+ *
+ * ORDER MATTERS INSIDE THE LOOP: the unchanged case is decided before any refusal
+ * is considered. A refusal here is about a write, and an unchanged cell is not a
+ * write. The page a supervisor is looking at was rendered at some earlier moment,
+ * and between then and the save a leave request can be approved, an exit date
+ * entered, or a row approved by somebody else -- with the checks first, one of
+ * those makes the *whole month* unsavable over cells the post was not trying to
+ * change, and the supervisor's three real corrections are lost to a message about
+ * a fourth cell that already said what they posted. Putting the comparison first
+ * costs nothing (`prior` is already loaded) and is what makes the full post
+ * safe to repeat.
+ */
+export async function recordAttendanceGrid(
+  db: Db,
+  actor: Actor,
+  input: AttendanceGridInput,
+  opts: { canOverridePeriod: boolean }
+): Promise<AttendanceGridResult> {
+  return db.transaction().execute(async (trx) => {
+    // One check for the whole post, which is sound because the schema gives every
+    // cell a day inside `input.month` -- there is no field in which a cell could
+    // name a date in some other month whose lock was never looked at.
+    await assertMonthOpen(trx, input.month, opts.canOverridePeriod)
+
+    if (input.projectId !== null) {
+      const project = await trx
+        .selectFrom('projects')
+        .select(['id', 'code'])
+        .where('id', '=', input.projectId)
+        .executeTakeFirst()
+      if (!project) throw new UnprocessableError('That project no longer exists.')
+    }
+
+    const ids = [...new Set(input.cells.map((c) => c.employeeId))]
+    const employees = await trx
+      .selectFrom('employees')
+      .select(['id', 'employee_code', 'full_name', 'date_of_joining', 'date_of_exit'])
+      .where('id', 'in', ids)
+      .execute()
+    const employeeById = new Map(employees.map((e) => [Number(e.id), e]))
+
+    const { start, end } = monthBounds(input.month)
+    const priorRows = await trx
+      .selectFrom('attendance')
+      .select(['id', 'employee_id', 'attendance_date', 'status', 'approved_at'])
+      .where('attendance_date', '>=', start)
+      .where('attendance_date', '<=', end)
+      .where('employee_id', 'in', ids)
+      .execute()
+    const priorByCell = new Map(
+      priorRows.map((r) => [`${Number(r.employee_id)}|${String(r.attendance_date)}`, r])
+    )
+
+    const leaveCells = await approvedLeaveMonth(trx, input.month)
+    const leaveByCell = new Map(leaveCells.map((r) => [`${r.employee_id}|${r.attendance_date}`, r]))
+
+    const now = today()
+    let inserted = 0
+    let updated = 0
+    let unchanged = 0
+    const changed: string[] = []
+
+    for (const cell of input.cells) {
+      const employee = employeeById.get(cell.employeeId)
+      if (!employee) throw new UnprocessableError('One of those employees no longer exists.')
+      const who = employee.full_name
+
+      const key = `${cell.employeeId}|${cell.date}`
+      const prior = priorByCell.get(key)
+
+      // Before every refusal, for the reason in the docstring: this cell asks for
+      // no change, so there is nothing here to refuse. The describe named
+      // 'a stale page, and the cell it is not trying to change' in
+      // tests/integration/hr-attendance-flow.test.ts is what holds this order:
+      // move these six lines below the refusals and its last test -- the one that
+      // carries a leave-covered Sunday back unchanged alongside a real correction
+      // -- goes red with the leave refusal quoted in its own message. Watched.
+      if (prior && String(prior.status) === cell.status) {
+        unchanged += 1
+        continue
+      }
+
+      if (cell.date > now) {
+        throw new UnprocessableError(
+          `${cell.date} has not happened yet. Attendance is recorded for a day that has passed.`
+        )
+      }
+      if (cell.date < String(employee.date_of_joining)) {
+        throw new UnprocessableError(
+          `${who} joined on ${String(employee.date_of_joining)} and cannot be marked on ${cell.date}.`
+        )
+      }
+      if (employee.date_of_exit !== null && cell.date > String(employee.date_of_exit)) {
+        throw new UnprocessableError(
+          `${who} left on ${String(employee.date_of_exit)} and cannot be marked on ${cell.date}.`
+        )
+      }
+
+      const leave = leaveByCell.get(key)
+      if (leave && !LEAVE_DAY_STATUSES.includes(cell.status)) {
+        throw new UnprocessableError(
+          `${who} has approved leave covering ${cell.date} (request ${leave.request_id}). Withdraw the request before marking that day differently, so the leave balance and the attendance do not disagree.`
+        )
+      }
+
+      if (prior && prior.approved_at !== null && !opts.canOverridePeriod) {
+        throw new UnprocessableError(
+          `${who}'s attendance for ${cell.date} is already approved. Changing it needs finance.period_close.`
+        )
+      }
+
+      if (prior) {
+        await trx
+          .updateTable('attendance')
+          .set({ status: cell.status, marked_by: actor.userId, marked_at: nowSqlDateTime() })
+          .where('id', '=', Number(prior.id))
+          .execute()
+        updated += 1
+      } else {
+        await trx
+          .insertInto('attendance')
+          .values({
+            employee_id: cell.employeeId,
+            attendance_date: cell.date,
+            project_id: input.projectId,
+            status: cell.status,
+            in_time: null,
+            out_time: null,
+            overtime_hours: 0,
+            remarks: null,
+            marked_by: actor.userId,
+          })
+          .execute()
+        inserted += 1
+      }
+      changed.push(`${cell.employeeId}:${cell.date}:${cell.status}`)
+    }
+
+    // The changed cells, not the posted ones. A month posted with three
+    // corrections in it produces an entry naming three cells; logging all three
+    // hundred would bury them, and the count of what was left alone is already
+    // the difference between `unchanged` and the rest. A post that changed
+    // nothing is still recorded, because "reviewed and there was nothing to
+    // correct" and "nobody looked" are different facts.
+    await writeAudit(trx, {
+      userId: actor.userId,
+      action: 'hr.attendance_grid',
+      entityType: 'attendance',
+      entityId: null,
+      after: {
+        month: input.month,
+        project_id: input.projectId,
+        inserted,
+        updated,
+        unchanged,
+        changed,
+        period_override: opts.canOverridePeriod ? true : undefined,
+      },
+      ip: actor.ip,
+    })
+
+    return { inserted, updated, unchanged }
   })
 }
 

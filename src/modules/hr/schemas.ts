@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { monthBounds } from '../../lib/dates.js'
 
 /**
  * HR input contracts (spec 6.6).
@@ -281,6 +282,55 @@ export const ATTENDANCE_STATUSES = [
 
 export const LEAVE_REQUEST_STATUSES = ['pending', 'approved', 'rejected', 'cancelled', 'withdrawn'] as const
 
+/**
+ * The statuses a day already covered by approved leave may be marked as.
+ *
+ * `approveLeave` writes the leave days itself and adds them to
+ * `leave_balances.availed`, so marking one of those days `present` would leave
+ * the balance saying a day was taken and the attendance saying it was worked.
+ * These three agree with the balance; everything else is refused, and the
+ * refusal names the request so it can be withdrawn instead.
+ *
+ * Declared here rather than in the service because it has two readers now: the
+ * service refuses by it and the month matrix renders exactly it on a
+ * leave-covered cell. A matrix offering a status the service then refuses is the
+ * defect one list prevents.
+ */
+export const LEAVE_DAY_STATUSES: readonly string[] = ['paid_leave', 'unpaid_leave', 'half_day']
+
+/**
+ * One keystroke per attendance status, for the month matrix (spec 1761: "single
+ * letter to set status").
+ *
+ * DERIVED rather than authored. The rule: the key for a status is the first
+ * letter of its own name that no earlier status has taken, scanning the name
+ * left to right and the statuses in declaration order. For 006's nine that
+ * gives p a h w o i u n c -- `holiday` yields 'o' because `half_day` took 'h',
+ * and `paid_leave` yields 'i' because 'p' and 'a' are gone.
+ *
+ * Authored, this table would be a business rule living in two places: a tenth
+ * status added to the enum above would silently collide with one of the nine and
+ * two cells would answer to one key. Derived, a tenth status either finds a free
+ * letter or gets NO key -- which is why the type is Partial and the matrix must
+ * render the status in its dropdown whether or not a key came back. The failure
+ * mode is a status without a shortcut, not a shortcut with two statuses.
+ *
+ * The keys are shipped to the browser as one JSON attribute on the matrix and
+ * the client script does nothing but look them up, so this is the only place
+ * they exist. Asserted in tests/hr-schemas.test.ts.
+ */
+export const STATUS_KEYS: Partial<Record<(typeof ATTENDANCE_STATUSES)[number], string>> = (() => {
+  const keys: Partial<Record<(typeof ATTENDANCE_STATUSES)[number], string>> = {}
+  const taken = new Set<string>()
+  for (const status of ATTENDANCE_STATUSES) {
+    const free = [...status].find((ch) => ch >= 'a' && ch <= 'z' && !taken.has(ch))
+    if (free === undefined) continue
+    taken.add(free)
+    keys[status] = free
+  }
+  return keys
+})()
+
 export const monthInput = z
   .string()
   .trim()
@@ -411,6 +461,104 @@ export const attendanceBulkSchema = z
     }
 
     return { attendanceDate: v.attendanceDate, projectId: v.projectId, rows } satisfies AttendanceBulkInput
+  })
+
+export interface AttendanceGridCellInput {
+  employeeId: number
+  date: string
+  status: (typeof ATTENDANCE_STATUSES)[number]
+}
+
+export interface AttendanceGridInput {
+  month: string
+  projectId: number | null
+  cells: AttendanceGridCellInput[]
+}
+
+/**
+ * The month matrix: one post for a whole month (spec 1761).
+ *
+ * THE WIRE SHAPE IS THE DECISION HERE, and it is deliberately not the bulk
+ * form's. `attendanceBulkSchema` above zips six parallel arrays, which is safe
+ * only while every row contributes exactly one entry to each of the six -- the
+ * reason `AttendanceEntry` omits a whole row rather than disabling one control
+ * in it. A matrix has 31 columns of controls and the temptation to post only the
+ * changed ones is overwhelming, so parallel arrays would be one clever
+ * optimisation away from writing row 5's status against row 12's employee.
+ *
+ * So every cell posts ONE self-identifying string, `employeeId|day|status`. A
+ * cell that is missing from the post is simply absent; nothing shifts to take
+ * its place. There is no arrangement of the fields that can misattribute a
+ * status, which is what makes it safe for the client to send any subset -- or,
+ * as it happens, all of them.
+ *
+ * THE DAY IS A DAY, NOT A DATE, and that is a containment property rather than
+ * a saving. `month` is posted once and is the month whose lock the service
+ * checks; each cell names a day inside it. A tampered post therefore cannot
+ * write into December while claiming September was the month being unlocked,
+ * because it has no field in which to say December. The alternative -- a full
+ * date per cell, checked against the posted month -- gets the same answer from a
+ * validation that someone can later delete.
+ *
+ * A blank status is DROPPED, as in the bulk form: the matrix renders every
+ * editable cell and a month with four days marked posts hundreds of blanks. What
+ * is NOT dropped is a cell whose status equals what is already stored -- the
+ * service compares and counts it as unchanged, so a no-JavaScript post of the
+ * whole grid and a keyboard post of three cells leave the database in the same
+ * state. That comparison is what keeps authority over an attendance value on the
+ * server, and it is why nothing here tries to work out what changed.
+ */
+export const attendanceGridSchema = z
+  .object({
+    month: monthInput,
+    projectId: optionalId,
+    cell: repeated,
+  })
+  .transform((v, ctx) => {
+    const refuse = (message: string) => {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message })
+      return z.NEVER
+    }
+    const lastDay = Number(monthBounds(v.month).end.slice(8))
+    const cells: AttendanceGridCellInput[] = []
+    const seen = new Set<string>()
+
+    for (const raw of v.cell) {
+      const parts = raw.split('|')
+      if (parts.length !== 3) return refuse('That attendance matrix posted an unreadable cell.')
+
+      const employeeId = Number.parseInt(parts[0] ?? '', 10)
+      if (!Number.isInteger(employeeId) || employeeId < 1) {
+        return refuse('That attendance matrix posted an unreadable employee.')
+      }
+      const day = Number.parseInt(parts[1] ?? '', 10)
+      if (!Number.isInteger(day) || day < 1 || day > lastDay) {
+        return refuse(`That attendance matrix posted a day that is not in ${v.month}.`)
+      }
+
+      // Registered before the blank is dropped, so two controls for one cell are
+      // refused whichever of them carries a status.
+      const key = `${employeeId}|${day}`
+      if (seen.has(key)) return refuse('That attendance matrix sets the same day twice for one person.')
+      seen.add(key)
+
+      const status = (parts[2] ?? '').trim()
+      if (status === '') continue
+      if (!(ATTENDANCE_STATUSES as readonly string[]).includes(status)) {
+        return refuse(`'${status}' is not an attendance status.`)
+      }
+
+      cells.push({
+        employeeId,
+        date: `${v.month}-${String(day).padStart(2, '0')}`,
+        status: status as AttendanceGridCellInput['status'],
+      })
+    }
+
+    if (cells.length === 0) {
+      return refuse('Nothing was marked. Set a status on at least one cell.')
+    }
+    return { month: v.month, projectId: v.projectId, cells } satisfies AttendanceGridInput
   })
 
 /**

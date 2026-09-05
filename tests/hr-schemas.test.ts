@@ -2,11 +2,13 @@ import { describe, expect, it } from 'vitest'
 import {
   attendanceApproveSchema,
   attendanceBulkSchema,
+  attendanceGridSchema,
   contractorAttendanceSchema,
   firstError,
   leaveDecisionSchema,
   leaveRequestSchema,
   monthInput,
+  STATUS_KEYS,
 } from '../src/modules/hr/schemas.js'
 
 /**
@@ -181,6 +183,138 @@ describe('monthInput and attendanceApproveSchema', () => {
   it('carries the month and nothing else, because a close has no project scope', () => {
     const parsed = attendanceApproveSchema.safeParse({ month: '2026-09', projectId: '4' })
     expect(parsed.success && parsed.data).toEqual({ month: '2026-09' })
+  })
+})
+
+/**
+ * STATUS_KEYS: the month matrix's keyboard, asserted as a derivation.
+ *
+ * The point of these three is not the letters. It is that the letters are a
+ * FUNCTION of `ATTENDANCE_STATUSES`, so adding a tenth status cannot silently
+ * give two cells the same key. The uniqueness test is the one that would catch
+ * that; the spelled-out table below it is there so a change to the derivation
+ * shows up as a diff someone reads rather than as nine letters quietly moving.
+ */
+describe('STATUS_KEYS, the derived keyboard', () => {
+  it('gives the first free letter of each status, in declaration order', () => {
+    // holiday -> 'o' because half_day took 'h'; paid_leave -> 'i' because 'p'
+    // and 'a' are gone by then. Both are the derivation working, not a typo.
+    expect(STATUS_KEYS).toEqual({
+      present: 'p',
+      absent: 'a',
+      half_day: 'h',
+      weekly_off: 'w',
+      holiday: 'o',
+      paid_leave: 'i',
+      unpaid_leave: 'u',
+      on_duty_travel: 'n',
+      comp_off: 'c',
+    })
+  })
+
+  it('never gives one letter to two statuses', () => {
+    const letters = Object.values(STATUS_KEYS)
+    expect(new Set(letters).size).toBe(letters.length)
+  })
+
+  it('only ever yields a single lower-case letter, which is what the client indexes by', () => {
+    for (const key of Object.values(STATUS_KEYS)) expect(key).toMatch(/^[a-z]$/)
+  })
+})
+
+/**
+ * attendanceGridSchema: the month matrix's wire shape.
+ *
+ * Read the assertions here against the ones for `attendanceBulkSchema` above.
+ * That schema zips six parallel arrays and its tests are mostly about
+ * ALIGNMENT -- which row a value lands on. There is no equivalent test below,
+ * and there cannot be, because a cell carries its own employee and its own day
+ * in the same string. That absence is the property the shape was chosen for.
+ */
+describe('attendanceGridSchema, the self-identifying cell', () => {
+  const post = (cell: unknown, patch: Record<string, unknown> = {}) =>
+    attendanceGridSchema.safeParse({ month: '2026-09', cell, ...patch })
+
+  it('reads one cell posted as a scalar, the shape a one-cell save actually has', () => {
+    const parsed = post('7|3|present')
+    expect(parsed.success).toBe(true)
+    expect(parsed.success && parsed.data.cells).toEqual([
+      { employeeId: 7, date: '2026-09-03', status: 'present' },
+    ])
+  })
+
+  it('builds the date from the posted month, so a cell cannot name another month', () => {
+    const parsed = post(['7|1|present', '9|30|absent'], { month: '2026-04' })
+    expect(parsed.success && parsed.data.cells.map((x) => x.date)).toEqual(['2026-04-01', '2026-04-30'])
+  })
+
+  it('drops a blank status and keeps the marked cells around it', () => {
+    const parsed = post(['7|3|', '9|3|absent', '11|3|'])
+    expect(parsed.success && parsed.data.cells).toEqual([
+      { employeeId: 9, date: '2026-09-03', status: 'absent' },
+    ])
+  })
+
+  it('treats a project as optional, because the grid charges only the rows it inserts', () => {
+    expect(post('7|3|present').success).toBe(true)
+    const with_ = post('7|3|present', { projectId: '4' })
+    expect(with_.success && with_.data.projectId).toBe(4)
+    const blank = post('7|3|present', { projectId: '' })
+    expect(blank.success && blank.data.projectId).toBeNull()
+  })
+})
+
+describe('attendanceGridSchema, the refusals', () => {
+  const reject = (cell: unknown, patch: Record<string, unknown> = {}) => {
+    const parsed = attendanceGridSchema.safeParse({ month: '2026-09', cell, ...patch })
+    expect(parsed.success).toBe(false)
+    return parsed.success ? '' : firstError(parsed.error)
+  }
+
+  it('refuses a cell that is not three parts', () => {
+    expect(reject('7|3')).toMatch(/unreadable cell/)
+    expect(reject('7|3|present|extra')).toMatch(/unreadable cell/)
+    expect(reject('')).toMatch(/unreadable cell/)
+  })
+
+  it('refuses a day the posted month does not have', () => {
+    expect(reject('7|31|present', { month: '2026-09' })).toMatch(/not in 2026-09/)
+    expect(reject('7|29|present', { month: '2026-02' })).toMatch(/not in 2026-02/)
+    expect(reject('7|0|present')).toMatch(/not in 2026-09/)
+    // A leap February has the 29th, so the bound is the month's own length and
+    // not a constant 28.
+    expect(attendanceGridSchema.safeParse({ month: '2024-02', cell: '7|29|present' }).success).toBe(true)
+  })
+
+  it('refuses two controls for one cell whichever of them carries the status', () => {
+    expect(reject(['7|3|present', '7|3|absent'])).toMatch(/same day twice/)
+    // The blank is dropped AFTER the pair is registered, so a duplicate hidden
+    // behind an empty status is still refused.
+    expect(reject(['7|3|', '7|3|present'])).toMatch(/same day twice/)
+    expect(reject(['7|3|present', '7|3|'])).toMatch(/same day twice/)
+  })
+
+  it('refuses a status outside the enum, including one that only looks like one', () => {
+    expect(reject('7|3|Present')).toMatch(/not an attendance status/)
+    expect(reject('7|3|leave')).toMatch(/not an attendance status/)
+  })
+
+  it('refuses a post in which every cell was left blank', () => {
+    expect(reject(['7|3|', '9|3|'])).toMatch(/Nothing was marked/)
+    // No `cell` field at all is the same refusal and not a crash: `repeated`
+    // turns undefined into an empty array.
+    expect(attendanceGridSchema.safeParse({ month: '2026-09' }).success).toBe(false)
+  })
+
+  it('refuses an unreadable employee before it looks at the day', () => {
+    expect(reject('abc|3|present')).toMatch(/unreadable employee/)
+    expect(reject('0|3|present')).toMatch(/unreadable employee/)
+    expect(reject('-2|3|present')).toMatch(/unreadable employee/)
+  })
+
+  it('needs a valid month, because the month is what the lock check is about', () => {
+    expect(reject('7|3|present', { month: '2026-13' })).toMatch(/month as YYYY-MM/)
+    expect(reject('7|3|present', { month: '' })).toMatch(/month as YYYY-MM/)
   })
 })
 

@@ -2917,3 +2917,224 @@ no `errno` at all. The permitted shapes it asserts cite `:1645` and 19.2 rather 
 per CLAUDE.md's second clause. 019 added no case and changed that one's two tripwires: the clause is still
 read off the live server before any refusal runs, and the second one evaluates the extracted lumpsum
 disjunct alone as described above. Both suites at 019: 264 unit, 204 integration, unchanged by it.
+
+## 22. The first client component: the Alpine attendance month matrix, 2026-09-05
+
+Commissioned by 17.2, which asked for this work as its own slice so that "Alpine is not introduced in the
+middle of a slice". Most of what follows is a pattern decision as much as an attendance decision: §6.5's
+`ItemPicker` and `LineItemGrid` and §6.7's `ApplicantBoard` all land on top of whatever this establishes.
+The entries are in the order a later component author needs them.
+
+### 22.1 A client file moves focus and counts. It does not know a business rule.
+
+The rule, stated once at the top of `public/assets/js/attendance-grid.js` and repeated here because a
+comment inside the file being copied is exactly the kind of self-justifying citation CLAUDE.md distrusts.
+
+**It is a rule rather than a preference because nothing in `public/` is checked by anything.**
+`tsconfig.json` excludes `public`, so the 71 files `npm run typecheck` reads are all under `src/` and that
+file is not one of them. `build:client` is `vite build` and its only output is the minified dashboard
+stylesheet; there is no JS bundle, no transform and no lint, and `public/assets/js/*.js` is served
+byte-for-byte as written. Neither suite loads a browser. A client file is therefore the one place in this
+tree where a mistake reaches a user without passing a single gate, and the only safe response is to put
+nothing there that can be wrong about the business.
+
+Concretely, for the matrix: the file does not know what an attendance status is, which statuses a cell may
+take, which cells are editable, or whether a month is closed. The keystroke table arrives as one
+`data-keymap` JSON attribute (`src/modules/hr/routes.tsx:1431`) that the server renders from `STATUS_KEYS`
+(`src/modules/hr/schemas.ts:322`), and the statuses a cell will accept are the `<option>` elements the
+server put in it. A keystroke for a status the server did not offer on that cell finds no option and does
+nothing (`attendance-grid.js:154-159`). **The client cannot offer a combination the write would refuse,
+because it does not compose combinations at all — it selects from what was sent.**
+
+Three decisions inside the file where the platform default was actively wrong rather than merely unhelpful,
+each one a thing a later grid component will meet:
+
+- **Arrow keys are swallowed.** On a closed `<select>` the browser's own Up and Down change the selected
+  option, so a supervisor arrowing across a month would silently rewrite every cell they passed through.
+  In a grid an arrow moves.
+- **Enter moves down and never submits.** Enter on a control inside a form submits it by default, which on
+  a 300-cell grid is a month posted by a typo. The footer button is the only submit.
+- **Every printable key is swallowed, including one with no status behind it.** Left to the browser it runs
+  the native `<select>` type-ahead, which jumps to whichever option label happens to start with that letter
+  — a different cell value from the same key on a different browser.
+
+`Backspace` reverts a cell to the value the server sent rather than emptying it, because this screen cannot
+delete an attendance row and an emptied cell displayed over a stored status would be a lie.
+
+### 22.2 The plumbing a later component copies: a union member, a hand-written file, no build step
+
+**A page asks for a component by name out of a union, never by path.**
+`export type ClientComponent = 'attendance-grid'` (`src/dashboard/layouts/AppShell.tsx:22`), and `page()`
+takes `clients?: ClientComponent[]`. The reason it is a union and not a string: a route then cannot put an
+arbitrary path into a `<script src>`. Adding a component means adding a member there and a file at
+`public/assets/js/<name>.js`, and nothing else.
+
+**Loaded with `defer`, after the vendored Alpine.** `AppShell.tsx:74`. Every deferred script runs before
+`DOMContentLoaded` and Alpine starts on that event, so a component emitted after `alpine.min.js` always
+registers its `alpine:init` listener in time. The file keeps a `window.Alpine` branch anyway
+(`attendance-grid.js:214-220`) for a future page that loads Alpine earlier.
+
+**A component ships only to the page that needs it.** The matrix route passes
+`clients: gridEditable ? ['attendance-grid'] : undefined` (`routes.tsx:1554`), so a read-only month, or one
+filtered to a project, loads no client code at all.
+
+**Rejected: a JS entry point in `vite.config.ts`.** The instruction was "no build-step dependency beyond
+what `build:client` already does", and there is a real argument for a bundle later — types over client code
+would answer most of 22.1's complaint. But a bundler introduced for one 221-line file changes the deploy
+story, because `public/assets/js` stops being editable in place, and it would have landed in the same commit
+as the first component. That is the coupling 17.2 refused for Alpine itself.
+
+**`x-cloak` is declared in the shared `dashboard.css`, not in anything module-shaped.** Alpine removes the
+attribute when it initialises a component, so `[x-cloak]{display:none !important}` hides an element only
+while Alpine has not run — including forever, on a page with JavaScript off. That is how the grid's
+keyboard-shortcut paragraph stays off a page that has no keyboard shortcuts. It is central because the
+second component will want it and a rule nobody can find gets re-declared.
+
+### 22.3 "No client-side authority over attendance values" means the whole page posts every time
+
+The decision: **every editable cell posts its current value on submit, changed or not, and the server
+compares each against the stored row.** The client's `dirty` count is a number in a button label and decides
+nothing (`attendance-grid.js:39`).
+
+This is what makes the JavaScript-off fallback trustworthy rather than merely present. A `<select>` with no
+script behind it cannot omit itself from a form, so a JavaScript-off browser necessarily posts the whole
+page; if the enhanced path posted only the changed cells the two would take different paths on the server,
+and only one of them would be the path anybody exercises. Posting everything makes them the same request.
+It costs one comparison per cell and buys that.
+
+The tolerance for it is in `recordAttendanceGrid` (`src/modules/hr/service.ts:773`): a cell whose posted
+status equals the stored one is counted `unchanged` and issues no statement.
+
+**Behaviour, and what holds it.** A whole page posted back with nothing altered writes nothing:
+`tests/integration/hr-attendance-flow.test.ts:1483` re-posts all six cells as a *second* officer and asserts
+`{inserted: 0, updated: 0, unchanged: 6}`, that every row is identical to before, and that every `marked_by`
+still names the first actor. The last of those is the load-bearing assertion — the counts are computed by
+the function under test and cannot be their own evidence, whereas `marked_by` would have moved if any
+statement had executed. One cell posted alone lands the same row as that cell inside a full page (`:1501`).
+
+**A correction never re-costs the month.** `project_id` is written on insert and never on update, asserted
+at `:1536`, where a post charged to overhead corrects a row charged to a project — leaving its `project_id`
+alone — while inserting a new row at overhead in the same post.
+
+**Do not optimise the post down to the changed cells.** The wire shape would survive it, because each option
+value carries its own `employeeId|date|status` and so needs no alignment between a cell and a column
+(`tests/hr-schemas.test.ts:234`). The property above would not survive it.
+
+### 22.4 A cell's options and the service's refusals are one list written twice, in one order
+
+A cell is rendered by `cellOptions` (`routes.tsx:1255`) and written by `recordAttendanceGrid`
+(`service.ts:773`). Both answer the same question — may this employee be marked on this day — and they are
+deliberately two functions rather than one, because one is a `<select>` and the other is a transaction. The
+decision: **they refuse in the same order, and the order is part of the contract.** Future day, before
+joining, after exit, covered by approved leave, already approved. A refusal added to either owes a branch in
+the other.
+
+The client is not in that list at all, per 22.1. The grid surfaces a refusal by rendering no control, and the
+server refuses again on arrival, so a page that has been open across an approval gets a message rather than a
+silent write. **Surfacing the refusal is the server's job in both directions; the client neither predicts nor
+suppresses one.**
+
+**Behaviour: the refusals, asserted.** `hr-attendance-flow.test.ts:1567` is the other half of `cellOptions`'
+null branches, in the same order — seven cases: a future day, a day before joining, a day after exit with the
+day *before* the exit accepted in the same test, an approved-leave day marked as worked, a closed month, a
+missing project, a missing employee.
+
+**One ordering inside that list is a hazard rather than a choice, and it now has a tripwire.** The unchanged
+comparison runs *before* every refusal, and the comment on those six lines in `service.ts` names the tests
+that hold them there. Moved below the refusals, a single approved leave day makes a whole month unsavable
+over a cell the post was not trying to change: the page carries that cell back untouched and the refusal
+fires on a value nobody is changing.
+
+Making that observable needed a leave-covered cell storing a *non-leave* status, which exists only because
+`approvedLeaveMonth` expands over calendar days while `decideLeave` writes working days only — so a Sunday
+inside an approved range is covered by the request and keeps whatever status it already had. The construction
+is at `hr-attendance-flow.test.ts:1653`, and it is built through the application's own paths rather than by
+inserting the shape directly. Three assertions: the Sunday is covered yet still `weekly_off` while the
+weekdays either side are `paid_leave` (`:1691`); posting it as `present` is refused and the message names the
+request (`:1708`); posting it back unchanged alongside a real correction succeeds with
+`{inserted: 0, updated: 1, unchanged: 1}` (`:1719`). Per CLAUDE.md's last rule, the third was watched go red
+with the comparison moved below the refusals — failing with the leave refusal quoted in its own message — and
+the move reverted.
+
+### 22.5 A month grid pages the roster, never the month
+
+`ROSTER_PAGE = 25` (`routes.tsx:1221`): twenty-five employees down, every day of the month across. The month
+is not split, because a page boundary inside it would put one supervisor's fortnight on two URLs and there is
+no defensible place to cut. Thirty-one columns do not fit a laptop, so the matrix is the one table in the app
+that expects to scroll sideways, with the employee column sticky (the `.ncc-matrix` block in
+`src/dashboard/assets/css/dashboard.css`).
+
+**The pager is a link outside the form.** A page change is therefore a plain GET the browser can restore, and
+it discards unsaved edits. With JavaScript on, the `beforeunload` guard says so out loud
+(`attendance-grid.js:60-63`); with JavaScript off there is nothing to discard, because nothing was edited
+without a save. That is the whole of what "lossless" can mean on a screen with no client-side draft, and a
+later component that wants a real draft is choosing a much larger problem.
+
+An unsaved cell is outlined, never coloured in: a background change on a `<select>` fights the platform's own
+focus and open-list styling on at least one browser, and an outline reads the same on both. `is-dirty` says
+"not saved yet" and never "accepted".
+
+### 22.6 Conflict flagged, not resolved: the constraints named for this slice are on another table
+
+The instruction commissioning the matrix said it "has to respect the trigger-enforced day/measured
+exclusivity and the pinned lumpsum quantity, so the client cannot offer a cell combination the database will
+refuse". **Neither constraint is on the table this grid renders.** `trg_ca_basis_bi` / `trg_ca_basis_bu`
+(migration 017, 21.5) and `chk_ca_quantity` (018, tightened by 019, 19.2) are all on `contractor_attendance`.
+The month matrix at spec `:1761` renders `attendance`, the employee table, which has no CHECK constraints and
+no triggers: its only database guarantee is `uq_att (employee_id, attendance_date)`, and everything else it
+refuses is refused by the service.
+
+Read as a statement about SQL the instruction does not apply to this screen. Read as a rule about what a
+client may offer it does, and that is how it was implemented — `cellOptions` renders no control for a cell the
+write would refuse, and the write refuses again regardless (22.4). **The contractor day-entry screen is where
+the literal reading lands, and it is a different grid on a different table.** Recorded rather than resolved,
+because the spec wins over a prompt and the spec puts the month matrix on `attendance`.
+
+**Also found, and harmless: one refusal in `recordAttendanceGrid` is unreachable.** The per-row
+`prior.approved_at !== null && !canOverridePeriod` guard cannot fire — `attendanceMonthState` returns
+`locked: approved > 0`, so any approved row in the month makes `assertMonthOpen` refuse the whole post first,
+and where `canOverridePeriod` is true the per-row test is false. `recordAttendanceBulk` carries the same pair.
+Left in as defence in depth: it is correct, it is one comparison, and it stops being dead the day the month
+lock becomes per-row. Noted here so that a later reader does not delete it as dead code without noticing that
+its reachability depends on `attendanceMonthState`'s definition of `locked` rather than on anything local.
+
+### 22.7 Tests
+
+**Unit, `tests/hr-schemas.test.ts`, 45 → 59.** Three describes. `STATUS_KEYS, the derived keyboard` (`:198`)
+pins the whole letter table — `p a h w o i u n c`, the first free letter of each status in declaration order —
+that no letter is given to two statuses, and that every value is a single lower-case letter, which is what the
+client indexes by. `attendanceGridSchema, the self-identifying cell` (`:234`) pins the wire shape; its
+docstring records that there is deliberately no alignment test, because a cell carries its own employee and
+day, and that absence is the property the shape was chosen for. `attendanceGridSchema, the refusals` (`:267`)
+covers a day the posted month does not have — the 31st of September, day zero, and `2026-02-29` refused while
+`2024-02-29` is accepted, so the bound is the month's own length and not a constant 28 — a duplicated
+cell whichever half carries the status, an unknown status, an all-blank post, an unreadable employee and an
+invalid month.
+
+**Integration, `tests/integration/hr-attendance-flow.test.ts`, 61 → 81.** One describe at `:1355` working in
+`2026-06`, a month nothing else in the file writes to and asserted empty at `:1446`, so a failure in this
+block is about this block. It uses a second actor and a second employee who exits mid-month, both created
+through the service. Six top-level cases plus three nested describes; the audit case (`:1738`) asserts eight
+audit rows for eight posts, including the post that wrote nothing, because an attempt is a fact about who
+tried even when no statement ran.
+
+**The two supporting functions this slice added are pinned separately, because the grid tests exercise them
+without constraining them.** `weekdayShort` (`src/lib/dates.ts`) renders the day-of-week column headers, and
+three unit cases in `tests/dates.test.ts` (36 → 39) hold it: that `weekdayShort(date) === 'Su'` agrees with
+`!isWorkingDay(date)` on every day of a month, which is the assertion that matters — the grid greys a column
+by one and payroll counts a day by the other, so a disagreement greys the wrong column; the seven labels in
+week order; and no shift across a month or year boundary. `approvedLeaveMonth` (`src/modules/hr/queries.ts`)
+expands an approved request to one entry per covered day, and the last describe in the integration file holds
+the clipping its own comment calls the easy part to get wrong: a request running 29 April to 2 June yields all
+31 days of May — not the 26 working days `decideLeave` wrote rows for — exactly two days in April, exactly two
+in June, nothing in March or July, the request id and type code on every expanded day, and nothing at all for
+a request still pending. Both were watched fail: removing the two clamp lines returns 35 days for April, and
+rotating the weekday array turns three of the date cases red.
+
+**Both suites at this slice: 281 unit, 224 integration.** Typecheck clean over 71 files under `src/`; the
+client component is not one of them, which is 22.1.
+
+
+
+
+

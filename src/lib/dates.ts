@@ -118,6 +118,21 @@ export function isWorkingDay(isoDate: string): boolean {
   return dt.getUTCDay() !== 0
 }
 
+const WEEKDAYS = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'] as const
+
+/**
+ * Two letters for the day of the week, for a column header in the month matrix.
+ *
+ * Not `toLocaleDateString`: that reads the server's locale, and a header that
+ * says 'Mi' because the host is German is a header nobody here can use. The
+ * noon-UTC parse is `isWorkingDay`'s, so the two never disagree about which
+ * column is a Sunday.
+ */
+export function weekdayShort(isoDate: string): string {
+  const dt = new Date(`${isoDate}T12:00:00Z`)
+  return WEEKDAYS[dt.getUTCDay()] ?? ''
+}
+
 export function previousWorkingDay(isoDate: string): string {
   let d = addDays(isoDate, -1)
   while (!isWorkingDay(d)) d = addDays(d, -1)

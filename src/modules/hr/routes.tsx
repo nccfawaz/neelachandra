@@ -3,7 +3,7 @@ import type { Context } from 'hono'
 import type { Child } from 'hono/jsx'
 import type { AppEnv } from '../../types.js'
 import { currentUser } from '../../types.js'
-import { page, banner, okRedirect, errRedirect, queryParam } from '../../dashboard/render.js'
+import { page, banner, okRedirect, errRedirect, pageParam, queryParam } from '../../dashboard/render.js'
 import {
   Alert,
   CsrfInput,
@@ -13,6 +13,7 @@ import {
   FormField,
   KpiCard,
   Money,
+  Pager,
   Panel,
   StatusBadge,
   Tabs,
@@ -32,12 +33,14 @@ import {
   monthBounds,
   monthOf,
   today,
+  weekdayShort,
 } from '../../lib/dates.js'
 import * as q from './queries.js'
 import * as svc from './service.js'
 import {
   attendanceApproveSchema,
   attendanceBulkSchema,
+  attendanceGridSchema,
   compensationSchema,
   contractorAttendanceSchema,
   contractorBillGenerateSchema,
@@ -57,9 +60,11 @@ import {
   EMPLOYMENT_TYPES,
   EXIT_TYPES,
   GENDERS,
+  LEAVE_DAY_STATUSES,
   LEAVE_REQUEST_STATUSES,
   RATE_UOMS,
   SKILL_LEVELS,
+  STATUS_KEYS,
   uomLabel,
 } from './schemas.js'
 
@@ -1212,6 +1217,263 @@ function AttendanceEntry(props: {
   )
 }
 
+/** Employees per page of the month grid. See `AttendanceGrid` for why it is bounded. */
+const ROSTER_PAGE = 25
+
+/**
+ * The legend for the marks, derived from `MARKS` rather than typed out.
+ *
+ * Typed out it is a second copy of the mark table, and the copy that quietly
+ * stops matching is always the prose one. `keys` adds the keystroke beside each
+ * mark, which is the only place the shortcuts are discoverable: a feature nobody
+ * is told about is a feature nobody uses. `STATUS_KEYS` is derived and Partial,
+ * so a status that got no letter simply shows none.
+ */
+function MarkLegend(props: { keys: boolean }) {
+  const marks = ATTENDANCE_STATUSES.map((s) => {
+    const key = props.keys ? STATUS_KEYS[s] : undefined
+    return `${MARKS[s]?.code ?? s} ${titleCase(s).toLowerCase()}${key ? ` (${key})` : ''}`
+  })
+  return <p class="ncc-hint">{[...marks, '· not marked', '— not employed'].join(' · ')}</p>
+}
+
+/**
+ * Which statuses one cell of the matrix may be set to, or null for no control.
+ *
+ * ONE FUNCTION, TWO CALLERS, AND THE SAME ORDER AS THE SERVICE. The cell
+ * renderer asks it what to draw and the footer asks it how many cells the form
+ * is about to post, so those two cannot disagree about which cells are live. And
+ * every `null` below is one refusal in `recordAttendanceGrid`, in the order that
+ * function checks them, so the matrix offers nothing the service would reject.
+ * Add a refusal there and this is the function that owes a branch.
+ *
+ * The leave-covered case returns a restricted list rather than null, because the
+ * service accepts three statuses on a leave day. `AttendanceEntry` renders
+ * nothing at all on that row -- safe, but it pre-empts a correction the service
+ * would have taken.
+ */
+function cellOptions(
+  employee: q.RosterRow,
+  date: string,
+  prior: q.AttendanceCell | undefined,
+  leave: q.ApprovedLeaveCell | undefined,
+  opts: { now: string; canOverride: boolean }
+): readonly string[] | null {
+  if (date > opts.now) return null
+  if (date < String(employee.date_of_joining)) return null
+  if (employee.date_of_exit !== null && date > String(employee.date_of_exit)) return null
+  if (prior && prior.approved_at !== null && !opts.canOverride) return null
+  return leave ? LEAVE_DAY_STATUSES : ATTENDANCE_STATUSES
+}
+
+/**
+ * The month matrix (spec 1761), and the screen behind this repository's first
+ * client component.
+ *
+ * IT IS A FORM FIRST AND A KEYBOARD SECOND. Everything the matrix does, it does
+ * with JavaScript disabled: every editable cell is a `<select>` inside one POST
+ * form and the browser's own submit sends all of them.
+ * `public/assets/js/attendance-grid.js` adds arrow-key movement, a single-letter
+ * shortcut and a changed-cell count on top of markup that already worked. It
+ * changes no value the form did not already contain and it removes nothing, so
+ * turning the script off costs the screen its shortcuts, not its function.
+ *
+ * WHICH CELLS ARE EDITABLE IS DECIDED IN `cellOptions`, by the conditions
+ * `recordAttendanceGrid` refuses on. A cell the service would reject carries no
+ * control, and a cell it would only partly accept carries only the statuses it
+ * accepts -- so the client is never in a position to offer a combination the
+ * write would refuse.
+ *
+ * A STORED STATUS IS ALWAYS AN OPTION, even where those rules would not offer
+ * it, because a control that cannot show what the row holds lies about it. The
+ * blank `·` option is the same rule mirrored: it appears only where there is no
+ * row, since this screen cannot delete one and an emptied cell over a stored
+ * status would say a marked day is unmarked.
+ *
+ * THE PROJECT FILTER MAKES IT READ-ONLY. `attendanceMonth` filtered by project
+ * returns only that project's cells, so a day charged elsewhere renders blank --
+ * and a blank editable cell means "no row here", which is what makes posting it
+ * an insert. Editing under the filter would post inserts for rows that exist and
+ * collide with `uq_att`. The caption says so and offers the way out.
+ *
+ * WHY THE ROSTER IS PAGED: an editable cell is a `<select>` with nine options,
+ * around half a kilobyte of markup, and there is no compression middleware in
+ * front of these pages. A month for 25 people is ~775 controls; for a 300-person
+ * roster it would be four megabytes of HTML on every load. The whole-roster,
+ * whole-month read view is the muster roll, which the toolbar links to and which
+ * renders one span per cell.
+ */
+function AttendanceGrid(props: {
+  csrf: string
+  month: string
+  page: number
+  days: string[]
+  roster: q.RosterRow[]
+  byKey: Map<string, q.AttendanceCell>
+  leave: q.ApprovedLeaveCell[]
+  projects: Array<{ id: number; code: string; name: string }>
+  canRecord: boolean
+  canOverride: boolean
+  filtered: boolean
+  lockedOut: boolean
+}) {
+  const now = today()
+  const editable = props.canRecord && !props.filtered && !props.lockedOut
+  const leaveByKey = new Map(props.leave.map((r) => [`${r.employee_id}|${r.attendance_date}`, r]))
+  const optionsFor = (r: q.RosterRow, date: string) =>
+    cellOptions(r, date, props.byKey.get(`${r.id}|${date}`), leaveByKey.get(`${r.id}|${date}`), {
+      now,
+      canOverride: props.canOverride,
+    })
+
+  const columns: Column<q.RosterRow>[] = [
+    {
+      header: 'Employee',
+      cell: (r) => (
+        <>
+          <a href={`/app/hr/employees/${r.id}`}>{r.full_name}</a>
+          <div class="ncc-muted">{r.employee_code}</div>
+        </>
+      ),
+    },
+    ...props.days.map(
+      (date): Column<q.RosterRow> => ({
+        // The weekday is here because Sunday is the weekly off: a supervisor
+        // reading a column of WO needs to see which column it is.
+        header: `${date.slice(8)} ${weekdayShort(date)}`,
+        cell: (r) => {
+          const outside =
+            date < String(r.date_of_joining) || (r.date_of_exit !== null && date > String(r.date_of_exit))
+          if (outside) {
+            return (
+              <span class="ncc-muted" title="Not employed on this date">
+                —
+              </span>
+            )
+          }
+          const prior = props.byKey.get(`${r.id}|${date}`)
+          const mark = (
+            <span title={prior?.project_code ? `Charged to ${prior.project_code}` : undefined}>
+              <Mark status={prior?.status} />
+            </span>
+          )
+          if (!editable) return mark
+          const allowed = optionsFor(r, date)
+          if (allowed === null) return mark
+
+          const stored = prior ? String(prior.status) : null
+          const offered = stored !== null && !allowed.includes(stored) ? [stored, ...allowed] : allowed
+          const day = date.slice(8)
+          return (
+            <select name="cell" aria-label={`${r.full_name}, ${formatDate(date)}`}>
+              {prior ? null : (
+                <option value={`${r.id}|${day}|`} selected>
+                  ·
+                </option>
+              )}
+              {offered.map((s) => (
+                <option value={`${r.id}|${day}|${s}`} selected={stored === s} title={titleCase(s)}>
+                  {MARKS[s]?.code ?? s}
+                </option>
+              ))}
+            </select>
+          )
+        },
+      })
+    ),
+  ]
+
+  const table = (
+    <DataTable
+      columns={columns}
+      rows={props.roster}
+      empty="Nobody was on the books in this month."
+      caption={
+        props.filtered
+          ? `Filtered to one project, so a day charged elsewhere shows as unmarked.${
+              props.canRecord ? ' Clear the filter to edit the month.' : ''
+            }`
+          : undefined
+      }
+    />
+  )
+
+  if (!editable) {
+    return (
+      <>
+        {table}
+        <MarkLegend keys={false} />
+      </>
+    )
+  }
+
+  const live = props.roster.reduce(
+    (sum, r) => sum + props.days.filter((d) => optionsFor(r, d) !== null).length,
+    0
+  )
+
+  // { letter: status }, the inverse of STATUS_KEYS and the only thing the client
+  // script is ever told about a status. It looks a letter up and selects the
+  // option carrying that status if the server put one on that cell; no other
+  // knowledge of what a status is crosses into the browser.
+  const keymap: Record<string, string> = {}
+  for (const s of ATTENDANCE_STATUSES) {
+    const key = STATUS_KEYS[s]
+    if (key) keymap[key] = s
+  }
+
+  return (
+    <form
+      class="ncc-matrix"
+      method="post"
+      action="/api/hr/attendance/grid"
+      x-data="attendanceGrid"
+      data-keymap={JSON.stringify(keymap)}
+      x-on:change="onChange"
+      x-on:keydown="onKey"
+      x-on:submit="onSubmit"
+    >
+      <CsrfInput token={props.csrf} />
+      <input type="hidden" name="month" value={props.month} />
+      {/* Echoed so a save returns to the page of the roster it was posted from
+          rather than to the first one. Unknown to `attendanceGridSchema`, which
+          strips it like the CSRF field. */}
+      <input type="hidden" name="page" value={String(props.page)} />
+      <div class="ncc-toolbar">
+        <FormField
+          label="Charge new rows to"
+          name="projectId"
+          options={[
+            { value: '', label: 'Overhead (no project)', selected: true },
+            ...props.projects.map((p) => ({ value: String(p.id), label: `${p.code} ${p.name}` })),
+          ]}
+          hint="Only for cells that have no row yet. Correcting a day leaves it charged where it already was, and only the day form can move it."
+        />
+      </div>
+      {table}
+      <MarkLegend keys={true} />
+      {/* `x-cloak` is how a sentence about keyboard shortcuts stays off a page
+          whose script never ran: Alpine removes the attribute on init and the
+          stylesheet hides anything still carrying it. With JavaScript off it is
+          never removed, so the hint never appears and never lies. */}
+      <p class="ncc-hint" x-cloak>
+        Arrows move · Enter and Shift+Enter move down and up · Home and End jump to the ends of a row · a
+        letter sets the status · Backspace puts a cell back to what was saved.
+      </p>
+      <p class="ncc-row" style="margin-top:1rem">
+        <button class="ncc-btn ncc-btn-primary" type="submit">
+          Save {formatMonth(props.month)}
+          <span x-text="summary()"></span>
+        </button>
+        <span class="ncc-hint">
+          {live} editable cell{live === 1 ? '' : 's'} on this page. Every one of them is posted and the server
+          writes only the ones that differ from what is stored.
+        </span>
+      </p>
+    </form>
+  )
+}
+
 /**
  * The attendance screen: a read grid for the month, and an entry grid for a day.
  *
@@ -1224,8 +1486,11 @@ function AttendanceEntry(props: {
  *
  * The entry date is a query parameter, not a client-side control, so the grid
  * can be prefilled with what is already recorded for that day. Changing the
- * date reloads. That is one round trip per correction and no Alpine: the spec's
- * keyboard-entry matrix is not built, and is reported as not built.
+ * date reloads. The month matrix beside it is the keyboard screen of spec 1761
+ * and is the one place in the app that loads a client component; the day form
+ * stays because a status is not the whole of an attendance row -- times,
+ * overtime and remarks are entered there and the matrix deliberately cannot
+ * touch them.
  */
 hr.get(
   '/app/hr/attendance',
@@ -1246,16 +1511,21 @@ hr.get(
     const entryDate = dateParam(c, 'date')
     const entryMonth = monthOf(entryDate)
     const projectId = Number(queryParam(c, 'projectId') ?? '') || undefined
+    const { page: pageNo, offset, pageSize } = pageParam(c, ROSTER_PAGE)
 
-    const [roster, cells, state, projects, entryRoster, entryCells, entryLeave] = await Promise.all([
-      q.attendanceRoster(db, month),
-      q.attendanceMonth(db, month, { projectId }),
-      q.attendanceMonthState(db, month),
-      q.projectOptions(db),
-      entryMonth === month ? Promise.resolve(null) : q.attendanceRoster(db, entryMonth),
-      canRecord ? q.attendanceOn(db, entryDate) : Promise.resolve([]),
-      canRecord ? q.approvedLeaveOn(db, entryDate) : Promise.resolve([]),
-    ])
+    const [roster, cells, state, projects, entryRoster, entryCells, entryLeave, monthLeave] =
+      await Promise.all([
+        q.attendanceRoster(db, month),
+        q.attendanceMonth(db, month, { projectId }),
+        q.attendanceMonthState(db, month),
+        q.projectOptions(db),
+        entryMonth === month ? Promise.resolve(null) : q.attendanceRoster(db, entryMonth),
+        canRecord ? q.attendanceOn(db, entryDate) : Promise.resolve([]),
+        canRecord ? q.approvedLeaveOn(db, entryDate) : Promise.resolve([]),
+        // Only the editable matrix reads it, and the filter makes the matrix
+        // read-only, so the filtered view does not pay for the query.
+        canRecord && !projectId ? q.approvedLeaveMonth(db, month) : Promise.resolve([]),
+      ])
     const entryState =
       entryMonth === month ? state : await q.attendanceMonthState(db, entryMonth)
 
@@ -1263,39 +1533,15 @@ hr.get(
     const days = datesBetween(bounds.start, bounds.end)
     const byKey = new Map(cells.map((r) => [`${r.employee_id}|${r.attendance_date}`, r]))
 
-    const gridColumns: Column<q.RosterRow>[] = [
-      {
-        header: 'Employee',
-        cell: (r) => (
-          <>
-            <a href={`/app/hr/employees/${r.id}`}>{r.full_name}</a>
-            <div class="ncc-muted">{r.employee_code}</div>
-          </>
-        ),
-      },
-      ...days.map(
-        (date): Column<q.RosterRow> => ({
-          header: date.slice(8),
-          cell: (r) => {
-            const outside =
-              date < String(r.date_of_joining) ||
-              (r.date_of_exit !== null && date > String(r.date_of_exit))
-            if (outside) return <span class="ncc-muted" title="Not employed on this date">—</span>
-            const cell = byKey.get(`${r.id}|${date}`)
-            return (
-              <span title={cell?.project_code ? `Charged to ${cell.project_code}` : undefined}>
-                <Mark status={cell?.status} />
-              </span>
-            )
-          },
-        })
-      ),
-    ]
-
+    // The KPIs and the subtitle count the whole month for everybody; only the
+    // grid itself is paged, and `AttendanceGrid` says why.
     const marked = roster.reduce(
       (sum, r) => sum + days.filter((d) => byKey.has(`${r.id}|${d}`)).length,
       0
     )
+    const lockedOut = state.locked && !canOverride
+    const gridEditable = canRecord && !projectId && !lockedOut
+    const gridBack = `/app/hr/attendance?month=${month}${projectId ? `&projectId=${projectId}` : ''}&date=${entryDate}`
 
     return page(
       c,
@@ -1303,6 +1549,9 @@ hr.get(
         title: 'Attendance',
         path: '/app/hr/attendance',
         subtitle: `${formatMonth(month)} — ${roster.length} on the roster, ${marked} day${marked === 1 ? '' : 's'} marked`,
+        // Only the editable matrix has a script behind it. A read-only view, or
+        // one filtered to a project, loads no client code at all.
+        clients: gridEditable ? ['attendance-grid'] : undefined,
       },
       <>
         {banner(c)}
@@ -1350,20 +1599,28 @@ hr.get(
         </form>
 
         <Panel title={`Month grid — ${formatMonth(month)}`}>
-          <DataTable
-            columns={gridColumns}
-            rows={roster}
-            empty="Nobody was on the books in this month."
-            caption={
-              projectId
-                ? 'Filtered to one project, so a day charged elsewhere shows as unmarked.'
-                : undefined
-            }
+          <AttendanceGrid
+            csrf={session.csrfToken}
+            month={month}
+            page={pageNo}
+            days={days}
+            roster={roster.slice(offset, offset + pageSize)}
+            byKey={byKey}
+            leave={monthLeave}
+            projects={projects}
+            canRecord={canRecord}
+            canOverride={canOverride}
+            filtered={projectId !== undefined}
+            lockedOut={lockedOut}
           />
-          <p class="ncc-hint">
-            P present · A absent · ½ half day · WO weekly off · H holiday · PL paid leave · LWP unpaid ·
-            OD on duty travel · CO comp off · · not marked · — not employed
-          </p>
+          {/*
+            Outside the form, and a link rather than a button, so a page change is
+            a plain GET the browser can restore. It discards unsaved edits, which
+            is what the client component's beforeunload guard is there to say out
+            loud -- and with JavaScript off there is nothing to discard, because
+            nothing was edited without a save.
+          */}
+          <Pager page={pageNo} pageSize={pageSize} total={roster.length} baseHref={gridBack} />
         </Panel>
 
         {canApprove ? (
@@ -1421,6 +1678,55 @@ hr.post('/api/hr/attendance/bulk', requirePermission(PERMISSIONS.HR_ATTENDANCE_R
       result.updated > 0 ? `${result.updated} corrected` : null,
     ].filter((p): p is string => p !== null)
     return `${formatDate(parsed.data.attendanceDate)}: ${parts.join(', ')}.`
+  })
+})
+
+/**
+ * The month matrix's save (spec 1761).
+ *
+ * IT TAKES THE WHOLE PAGE EVERY TIME. Every editable cell on the page posts,
+ * including the ones nobody touched, because a `<select>` with no JavaScript has
+ * no way to omit itself. `recordAttendanceGrid` compares each cell against what
+ * is stored and issues no statement for the ones that match, so a full post and a
+ * three-cell post leave the database in the same state. That is what keeps the
+ * JS-off path and the keyboard path honest with each other: the client is never
+ * the thing that decides which cells count.
+ *
+ * `page` is echoed into the redirect so a save returns to the page of the roster
+ * it was posted from. It is not part of `attendanceGridSchema` -- the schema
+ * strips it the way it strips the CSRF field -- because a page number is a
+ * property of the screen and no business rule reads it.
+ */
+hr.post('/api/hr/attendance/grid', requirePermission(PERMISSIONS.HR_ATTENDANCE_RECORD), async (c) => {
+  const body = await readBody(c)
+  const parsed = attendanceGridSchema.safeParse(body)
+  // The month is echoed for the same reason the bulk route echoes the date: a
+  // refusal has to land back on the month it was refused on. Read from the raw
+  // body because a parse failure is exactly when `parsed.data` is unavailable.
+  const rawMonth = typeof body['month'] === 'string' ? body['month'] : ''
+  const month = /^\d{4}-(0[1-9]|1[0-2])$/.test(rawMonth) ? rawMonth : monthOf(today())
+  const rawPage = Number(typeof body['page'] === 'string' ? body['page'] : '1')
+  const pageSuffix = Number.isInteger(rawPage) && rawPage > 1 ? `&page=${rawPage}` : ''
+  const back = `/app/hr/attendance?month=${month}${pageSuffix}`
+  if (!parsed.success) return errRedirect(c, back, firstError(parsed.error))
+
+  return guard(c, `/app/hr/attendance?month=${parsed.data.month}${pageSuffix}`, async () => {
+    const result = await svc.recordAttendanceGrid(c.get('db'), actorOf(c), parsed.data, {
+      canOverridePeriod: c.get('perms').has(PERMISSIONS.FINANCE_PERIOD_CLOSE),
+    })
+    const parts = [
+      result.inserted > 0 ? `${result.inserted} recorded` : null,
+      result.updated > 0 ? `${result.updated} corrected` : null,
+    ].filter((p): p is string => p !== null)
+    // Say so when a post wrote nothing. A save that reports a count of zero is
+    // the honest answer to a full page of unchanged cells, and it is also how a
+    // supervisor finds out their edit did not reach the server.
+    if (parts.length === 0) {
+      return `${formatMonth(parsed.data.month)}: nothing had changed, so nothing was written.`
+    }
+    return `${formatMonth(parsed.data.month)}: ${parts.join(', ')}${
+      result.unchanged > 0 ? `, ${result.unchanged} already matched` : ''
+    }.`
   })
 })
 

@@ -1,5 +1,5 @@
 import type { Db, Queryable } from '../../db/kysely.js'
-import { monthBounds } from '../../lib/dates.js'
+import { datesBetween, monthBounds } from '../../lib/dates.js'
 
 /**
  * HR reads (spec 6.6).
@@ -579,6 +579,56 @@ export async function approvedLeaveOn(db: Queryable, date: string): Promise<Appr
     type_code: r.type_code,
     days: Number(r.days),
   }))
+}
+
+/**
+ * Approved leave across a whole month, expanded to one entry per covered day.
+ *
+ * The month matrix needs, for 31 days, the answer `approvedLeaveOn` gives for
+ * one, and 31 round trips for it would be absurd. The expansion is done here
+ * rather than in the caller because two callers need the same shape and the
+ * clipping is the part that is easy to get wrong: a request running from August
+ * into October covers every day of September while its `from_date` and
+ * `to_date` both fall outside the month asked about.
+ */
+export interface ApprovedLeaveCell {
+  employee_id: number
+  attendance_date: string
+  request_id: number
+  type_code: string
+}
+
+export async function approvedLeaveMonth(db: Queryable, month: string): Promise<ApprovedLeaveCell[]> {
+  const { start, end } = monthBounds(month)
+  const rows = await db
+    .selectFrom('leave_requests')
+    .innerJoin('leave_types', 'leave_types.id', 'leave_requests.leave_type_id')
+    .select([
+      'leave_requests.employee_id',
+      'leave_requests.id as request_id',
+      'leave_types.code as type_code',
+      'leave_requests.from_date',
+      'leave_requests.to_date',
+    ])
+    .where('leave_requests.status', '=', 'approved')
+    .where('leave_requests.from_date', '<=', end)
+    .where('leave_requests.to_date', '>=', start)
+    .execute()
+
+  const cells: ApprovedLeaveCell[] = []
+  for (const r of rows) {
+    const from = String(r.from_date) < start ? start : String(r.from_date)
+    const to = String(r.to_date) > end ? end : String(r.to_date)
+    for (const date of datesBetween(from, to)) {
+      cells.push({
+        employee_id: Number(r.employee_id),
+        attendance_date: date,
+        request_id: Number(r.request_id),
+        type_code: r.type_code,
+      })
+    }
+  }
+  return cells
 }
 
 export interface LeaveRequestRow {
