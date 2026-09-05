@@ -1490,10 +1490,16 @@ describe('a measured rate reaches a bill (migration 013)', () => {
     ).rows.find((r) => r.CONSTRAINT_NAME === 'chk_ca_quantity')?.CHECK_CLAUSE
     expect(clause).toMatch(/lumpsum/)
     expect(clause).toMatch(/`quantity` = 1/)
-    // And 014's guard is still ahead of the new conjunct in the AND chain, which is
-    // the only reason the NULL case below is refused: `(uom <> 'lumpsum' OR
-    // quantity = 1)` against a NULL quantity is UNKNOWN on its own, and a CHECK
-    // admits UNKNOWN. 19.3 is that bug; this is the fourth appearance of the class.
+    // And 014's guard is still a sibling conjunct of the new one, which is the only
+    // reason the NULL case below is refused: `(uom <> 'lumpsum' OR quantity = 1)`
+    // against a NULL quantity is UNKNOWN on its own, and a CHECK admits UNKNOWN.
+    // `FALSE AND UNKNOWN` is FALSE, so what does the work is that the guard sits in
+    // the same AND as the disjunction rather than inside one of its branches -- not
+    // that it is written first. MariaDB promises no evaluation order and needs to
+    // promise none. 19.3 is that bug; this is the fourth appearance of the class and
+    // the first where the new conjunct was harmless only because an older one was
+    // already there (DECISIONS 21.7). Anything that moves the lumpsum disjunct out
+    // from under this guard stops refusing a NULL and says nothing while it does.
     expect(clause).toMatch(/`quantity` is not null/)
 
     const raw = (over: Record<string, unknown>) =>

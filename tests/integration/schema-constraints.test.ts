@@ -297,10 +297,27 @@ describe('the CHECK constraint inventory', () => {
       if (key in PERMISSIVE_OVER_NULL) continue
       for (const column of referencedColumns(row)) {
         if (!nullable.get(`${row.table_name}.${column}`)) continue
-        // The guard has to be in the clause. Whether it is positioned ahead of
-        // the comparison is what the refusal tests prove; this is the cheap
-        // half, and it is the half that fails on a constraint nobody has run a
-        // NULL through yet.
+        // The guard has to be in the clause. Whether it actually covers the
+        // comparison is what the refusal tests prove; this is the cheap half,
+        // and it is the half that fails on a constraint nobody has run a NULL
+        // through yet.
+        //
+        // WHAT THIS DOES NOT PROVE, with migration 018 as the live example. The
+        // regex finds one guard anywhere in the clause. `chk_ca_quantity` now
+        // compares `quantity` twice -- `quantity > 0`, and the
+        // `(uom <> 'lumpsum' OR quantity = 1)` that 018 added -- and the single
+        // `quantity IS NOT NULL` covers both only because it is a sibling
+        // conjunct of the same AND: `FALSE AND UNKNOWN` is FALSE. Written order
+        // is not what does it, and MariaDB promises none. So a future clause
+        // that compares a nullable column inside a disjunction the guard is
+        // *not* a sibling of passes this test while enforcing nothing over NULL.
+        // DECISIONS 21.7 has both halves run against the server, and the
+        // assertion that 018's clause still has that shape is in
+        // hr-contractor-flow.test.ts beside the four refusals that exercise it.
+        //
+        // This comment is where that dependency is recorded, because 018 cannot
+        // carry it: the file is applied, and scripts/migrate.mjs treats an
+        // applied migration whose checksum moved as a hard failure.
         const guarded = new RegExp('`' + column + '`\\s+is\\s+not\\s+null', 'i').test(row.check_clause)
         if (!guarded) unguarded.push(`${key} compares nullable ${column} with no IS NOT NULL guard`)
       }

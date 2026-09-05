@@ -2361,8 +2361,10 @@ export async function approveContractorBill(
       // `second_approved_by`, unlike `purchase_orders`. A single signature
       // written as `approved` where two are required is the failure the second
       // signature exists to prevent, so this refuses rather than approving.
-      // Flagged in DECISIONS 18.9 as a schema gap; unreachable until 8.2 fills
-      // `approval_limits`.
+      // Flagged in DECISIONS 18.9 as a schema gap and reclassified at 21.2:
+      // this refusal is a placeholder, not the intended rule. The real one is
+      // the two-signature path `approvePo` already runs in
+      // inventory/service.ts. Unreachable until 8.2 fills `approval_limits`.
       throw new UnprocessableError(
         `${formatPaise(gross)} is above the ${formatPaise(limit.requiresSecondApprovalAbove)} single-approval threshold for your role, and contractor_bills has no column for a second approval. This bill cannot be approved until that is added.`
       )

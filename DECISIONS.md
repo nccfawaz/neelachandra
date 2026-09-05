@@ -1949,6 +1949,11 @@ single signature as `approved` where the limit says two are required is exactly 
 signature exists to prevent, so the code refuses and says why. Unreachable until §8.2 supplies
 numbers. A second-approval column is the fix; the test is a tripwire pointing here.
 
+**Reclassified at 21.2, 2026-09-05.** The refusal above is a placeholder and not the intended rule, which
+is the two-signature path `approvePo` already runs for purchase orders. Read this section for what the
+code does and 21.2 for what it is standing in for; the heading here says "refused, not approved with one
+signature" and that remains an accurate description of the behaviour, not of the policy.
+
 Self-approval is refused before the limit is even resolved: whoever generated the bill cannot approve
 it.
 
@@ -2024,6 +2029,28 @@ about what the database refuses, and it is the only sentence in §6.8 that says 
 prevented at all. A schema sketch that contradicts a behavioural guarantee loses to it. Flagged here
 rather than settled by editing either line of the spec.
 
+**Amended 2026-09-05, and it is a withdrawal: this is not one of the divergences 21.3 carries.** Two things
+were being run together here and in 20.2, and separating them is the correction.
+
+The first is real and is discharged. `:2013` says `KEY`, `:2137` says unique index, and the spec disagrees
+with itself — that much stands. But rule 1's full wording is *"where both are non-null"*, so the prose is
+complete about NULL as well as about uniqueness, and a `UNIQUE KEY` supplies everything the `KEY` at :2013
+promised — an access path over those columns — while also supplying the refusal :2137 asks for. After 012,
+**no line of the spec is false of the tree.** That is the test 21.3 applies: it lists disagreements the tree
+is still living inside, and this one was settled rather than carried. 012 closed a gap between the tree and
+the prose — `009_finance.sql:140` had reproduced a sketch — and left nothing behind on either side.
+
+The second was never a spec matter at all. The half-pair row 20.2 closed is a property of how a UNIQUE index
+treats NULL, not a place where the tree departed from the spec: :2137 asked for uniqueness over non-null
+pairs and got it, and no sentence anywhere asks for both-or-neither. `chk_exp_source_pair` is therefore an
+addition beyond the spec, not the repair of a divergence from it. Recording it as a spec-implementation gap
+was wrong, and it is withdrawn from 21.3's list on that ground.
+
+Stated rather than smoothed over: `KEY` and `UNIQUE KEY` are a real distinction in MariaDB's DDL grammar, so
+:2013 is not silent about uniqueness the way :1387's sketch is silent about nullability. It says the weaker
+of the two available spellings. What separates the expenses case from the two 21.3 keeps is not that the DDL
+said less — it is that after the resolution nothing was left unsatisfied.
+
 **Why now rather than with §6.8.** Nothing posts into `expenses` yet. Five paths eventually will — GRN,
 contractor bill, equipment deployment, campaign spend, payroll — and each will be written assuming a
 second attempt is refused underneath it. Adding the constraint afterwards means auditing five call sites
@@ -2049,12 +2076,22 @@ section.
 
 **Three tests, in `tests/integration/hr-contractor-flow.test.ts`.** The old tripwire is inverted: the
 only index over those columns is `uq_exp_source` with `NON_UNIQUE = 0`, which also fails if a future
-migration leaves both indexes in place. Five rows with no `source_id` insert without complaint, three
-fully manual and two with `source_table` set and `source_id` NULL — half a pair is exempt by the same
-rule, and the migration comment claims it, so it is asserted. The refusal test calls no service at all:
-the same insert runs twice with `source_id = contractor_bills.id`, and the second comes back
-`ER_DUP_ENTRY`, `errno 1062`, message naming `uq_exp_source`. Asserting the errno is the point — it is
-what distinguishes the database refusing from a service check refusing, and rule 1 asks for the former.
+migration leaves both indexes in place. Three fully manual rows insert without complaint and the count of
+`source_id IS NULL` fixture rows is asserted at 3. The refusal test calls no service at all: the same insert
+runs twice with `source_id = contractor_bills.id`, and the second comes back `ER_DUP_ENTRY`, `errno 1062`,
+message naming `uq_exp_source`. Asserting the errno is the point — it is what distinguishes the database
+refusing from a service check refusing, and rule 1 asks for the former.
+
+**What that paragraph said until 2026-09-05, because it is the defect this file exists to catch.** It read:
+*"Five rows with no `source_id` insert without complaint, three fully manual and two with `source_table` set
+and `source_id` NULL — half a pair is exempt by the same rule, and the migration comment claims it, so it is
+asserted."* Both halves had gone wrong. The justification was 012's own comment, written in the same session
+as the assertion it justified — the circular citation CLAUDE.md's "An exemption cites the spec or DECISIONS"
+was written about, sitting in the section that produced the rule. And the fact was stale: migration 015 made
+those two inserts fail, so since 015 the test has asserted `errno 4025` naming `chk_exp_source_pair` for them
+(`hr-contractor-flow.test.ts:1082-1090`), while this paragraph went on describing the suite that defended the
+hole. A permission assertion that outlives the permission is the specific way a stale record misleads:
+nothing was red, and the prose stayed confident.
 
 ### 19.2 `contractor_attendance` can price measured work — migration 013
 
@@ -2269,8 +2306,9 @@ column was dropped again.
 `site_page_revisions.schema_types` is `JSON NULL` (007:51), uncommented, and spec :1387 says "every
 publish snapshots the previous state". A snapshot column that can be NULL where the column it snapshots
 cannot be is not a faithful snapshot. §7 marketing is unbuilt and nothing writes either table, changing
-nullability is not a CHECK repair, and it is a second instance of the prose-and-DDL disagreement recorded
-in 21.3 — so it is logged here rather than fixed.
+nullability is not a CHECK repair, and it is the **first of the two** prose-and-DDL disagreements 21.3
+lists — so it is logged here rather than fixed. (Written as "a second instance" until 2026-09-05, counting
+`:2013` vs `:2137` ahead of it. That one is discharged, not carried: see the withdrawal in 19.1.)
 
 ### 20.2 A UNIQUE index cannot say "both or neither" — the expenses source pair
 
@@ -2334,6 +2372,16 @@ row that used the hole. Nothing under `src/` inserts into `expenses` yet (0 hits
 twice is refused `errno 1062` naming `uq_exp_source` — the two mechanisms separable in one test, which is
 this section's argument stated as an assertion.
 
+**Classified 2026-09-05: this was never a spec-implementation divergence, and 015 is an addition rather than
+a repair.** §6.8 rule 1 at `:2137` asks for a unique index on the pair *"where both are non-null"*, which is
+exactly what 012 built, so the spec was satisfied before this hole was found and stayed satisfied after it
+was closed. No sentence in the spec asks for both-or-neither; the half-pair row is admitted by SQL's rule
+that a NULL in an indexed column makes a row distinct, which is a property of the mechanism, not a departure
+from a written requirement. So `chk_exp_source_pair` goes beyond the spec in the direction the spec's own
+intent points, and this section is **not** on 21.3's list of carried DDL-versus-prose disagreements — see the
+withdrawal in 19.1 for the two things that were being run together. Nothing about the constraint changes;
+what changes is what it may be cited as evidence of.
+
 **Still open: `source_type` is not tied to the pair, and should not stay advisory forever.** Today the
 constraint says the pair is whole or empty and says nothing about which ENUM member claims it, so
 `source_type = 'manual'` with a full pair, or `'grn'` with an empty one, are both writable. The reason is
@@ -2343,6 +2391,11 @@ exist in code** — each posting path names its own table, the way `hr/service.t
 constraint should be extended to match it: `'manual'` implies an empty pair, every other member implies
 its own table name. Recorded as a precondition on §6.8 rather than a preference, because the longer it
 stays advisory the more postings exist to migrate.
+
+**20.2 stays open, and the 2026-09-05 pass did not close it.** That pass reclassified where the half-pair
+hole came from and struck the stale test description out of 19.1. It touched nothing about `source_type`.
+The open item is still the whole of the paragraph above: the pair is whole or empty, and which ENUM member
+claims it is unenforced.
 
 ### 20.3 Triage of six comment-justified assertions, none fixed
 
@@ -2425,10 +2478,12 @@ existed — which is the reason the section is being written now rather than whe
 to a section that does not exist is decoration, and CLAUDE.md's rule against decorated citations is the rule
 this repository has spent the most time on.
 
-21.2 and 21.3 are reserved and named rather than absent: **21.2** is the reclassification of the
-second-approval refusal, and **21.3** the general caution about the spec's DDL blocks. Both are written in
-the same pass as the finance-facing entries they belong with. The numbering gap is deliberate so that the
-citations already in the tree do not move.
+21.2 and 21.3 were reserved and named rather than absent while the entries around them were written. Both
+landed on 2026-09-05 and the gap is closed. They were held at those numbers instead of being appended at the
+end because four sections of this file — 19.1, 20.1, 21.4 and 21.6 — already pointed at 21.3, and a pointer
+that has to be renumbered later is a pointer nobody trusts. 21.2 is now also cited from
+`hr/service.ts:2364`; 21.3 is cited only from inside this file, because it is a reading rule for the spec
+rather than a fact about any table.
 
 ### 21.1 Leave enforcement and an accrual writer arrive together, or neither does
 
@@ -2459,6 +2514,97 @@ nothing errors, a figure is simply too large. So the two ship together, or the e
 See 17's §8.6 blocking list, which asks the owner question this depends on, and 20.3 on the attendance
 override, which the same answer decides.
 
+### 21.2 Refusing a bill above `requires_second_approval_above` is a placeholder, not the rule
+
+Cited from `src/modules/hr/service.ts:2359`. **The refusal is not the intended behaviour and must not be read
+as policy.** It stands in until finance supplies the column the real rule needs.
+
+What the code does today. `approveContractorBill` resolves an `approval_limits` row for document type
+`expense` — the ENUM has no `contractor_bill` member, which 18.9 records — checks the **gross** against
+`max_value`, and then, above `requires_second_approval_above`, throws instead of approving
+(`service.ts:2359-2368`). The message names the figure, the threshold and the reason: `contractor_bills` has
+one `approved_by` column and no `second_approved_by`.
+
+**The intended rule is a two-signature path, and it already runs in this codebase.** `approvePo` at
+`src/modules/inventory/service.ts:1379-1426` is the shape: above the threshold the first approval is
+*recorded* — `approved_by` set, `status` left at `pending_approval` — the permission holders are notified that
+a second is needed, an `inventory.po_approve_first` audit row is written, and the second approver, refused at
+`:1362` if they are the same person, is the one who sets `status = 'approved'` and `second_approved_by`. Spec
+`:2141` (§6.8 rule 3) asks for exactly that and says why: *"two names on a voucher is the only real control
+that exists."* So this is not a design question. It is a missing column pair plus that branch.
+
+**Why refusing was the right placeholder rather than either alternative.**
+
+- *Approve on one signature anyway.* This turns the only real control in §6.8 into nothing, silently, and the
+  row afterwards reads `approved` — indistinguishable from a bill that had two names on it. That is the
+  failure family this file exists to record.
+- *Add `second_approved_by` now.* It is a finance-slice column with a screen, a notification and an audit
+  action attached. Adding the column without them produces a bill that can be parked awaiting a second
+  approval no UI can give it.
+
+Refusing is loud, it names the gap in the message a user actually sees, and it is **unreachable today**:
+`approval_limits` is seeded empty pending §8.2, so `limit === null` refuses first and this branch is never
+evaluated. Which is also why it cannot be found by using the system, and why it needs an entry here.
+
+**The one thing copying `approvePo` does not answer.** `purchase_orders` parks a first signature by leaving
+`status = 'pending_approval'`, and `contractor_bills.status` has no such member — it is
+`draft | submitted | verified | approved | paid | disputed`, and `verified` with `verified_by` already means a
+different step. So finance chooses: add a status member, or treat `approved_by IS NOT NULL` at
+`status = 'verified'` as the awaiting-second state. Flagged rather than chosen, because the answer belongs
+with whoever builds the approval screen.
+
+**Gross, not net, stays as recorded** (18.9). The figure checked against both limits is `gross_paise`, the
+cost committed to the project — not `net_payable_paise`, which is what leaves the bank after retention, TDS,
+advance recovery and penalty, and belongs to `payment_release`. Approving a bill authorises the cost. This
+reclassification does not reopen that.
+
+**Open against §6.8.** Nothing here is a to-do for the HR slice.
+
+### 21.3 The spec's DDL blocks are non-normative where its prose disagrees
+
+**This entry records an instruction rather than a tree-side choice**, which makes it unusual here: the owner
+settled it in the prompt governing slice 6 — DDL blocks are non-normative by default where the prose
+disagrees, prefer the prose, say when you do. It is written down because three migrations relied on it before
+it existed as a rule, and because four sections of this file point at it.
+
+**The rule.** Where a DDL block in `NCC_BUILD_SPEC.md` and the prose of the same document disagree, the prose
+wins, and the migration or entry that departs from the block names both lines. A block sketches a table; the
+prose states what the system must do.
+
+**Why the prose, rather than simply the more specific line.** Three reasons, each demonstrated in the tree:
+
+1. A block states shape and the prose states behaviour. Where the shape cannot deliver the behaviour, the
+   shape is what is wrong: a `KEY` cannot deliver a refusal (19.1).
+2. The blocks are demonstrably incomplete. `:1650-1659` sketches `contractor_attendance` with no `uom`, no
+   `work_type` and no `quantity`; 013 added all three under 19.2, because four fifths of the rate card was
+   otherwise unreachable. A source already outgrown cannot be read strictly.
+3. Some blocks do not say enough to have a strict reading. `:1387` writes `schema_types JSON` with no
+   nullability at all, so there is nothing strict to prefer.
+
+**Two instances are carried. Not three.**
+
+1. `007:51` versus `:1387` — `site_page_revisions.schema_types` is `JSON NULL` while the column it snapshots
+   is `JSON NOT NULL`, and the prose says every publish snapshots the previous state. **Carried:** the tree
+   still declares it NULL, so the prose is unsatisfied right now. 21.4, logged at 20.1.
+2. `:1659` versus `:1743` — the `uq_ca` sketch enumerates four columns and 016 made it five. **Carried:** that
+   spec line is false of the tree, deliberately, and 21.6 argues why the prose at `:1743` is satisfied anyway.
+
+**Withdrawn 2026-09-05: `:2013` versus `:2137`, the `expenses` source pair.** Rule 1's wording is *"where both
+are non-null"*, so the prose is complete about NULL as well as about uniqueness, and after 012 a `UNIQUE KEY`
+satisfies it while still being everything the `KEY` at `:2013` promised. Nothing is left unsatisfied on either
+side, so nothing is being carried. The full account — including the second thing that was being run together
+with it, the half-pair hole 015 closed, which was never a spec matter at all — is in 19.1.
+
+**The test that decides membership: after the resolution, is a line of the spec still false of the tree?** If
+yes, the disagreement is being carried and belongs on this list. If no, it was a gap that got closed and
+belongs in the entry that closed it. Both carried instances fail that test in the same way; the expenses one
+passes it. That is the whole of the difference, and it is the reason the list is two rather than three.
+
+**What this rule is not.** Not a licence to skip a DDL block. The blocks are what a migration is written from
+and reproducing one faithfully is the default — `009_finance.sql:140` did exactly that and was right to. The
+rule fires only where prose in the same document contradicts the block, and the report has to quote both
+lines. Preferring the prose because the block is inconvenient is not this rule.
+
 ### 21.4 A snapshot column nullable where its source is not, as a precondition on §7
 
 Cited from `tests/integration/schema-constraints.test.ts` in `AUTO_JSON_CHECKS`, and recorded here because
@@ -2485,7 +2631,7 @@ whole cost of getting this wrong is in the ordering.
 Nothing in the tree writes `site_page_revisions` yet, so no unusable revision exists today. Deliberately
 **not** recorded as intentional: the spec's own DDL sketch at :1387 shows `schema_types JSON` with no
 nullability at all, which is the sketch being a sketch rather than a decision that it may be NULL — see
-21.3 on why the DDL blocks are read that way.
+21.3 on why the DDL blocks are read that way. This is the **first** of the two disagreements 21.3 carries.
 
 ### 21.5 A day rate and a measured rate for one skill level on one date: refused in the database, policy still open
 
@@ -2583,10 +2729,12 @@ Why the tree is where it is:
    interiors work, and refusing to record it is not a conservative reading of the spec, it is a defect.
 
 So this follows the standing rule for the spec's DDL blocks — prefer the prose, treat the block as a sketch,
-and say so — and it is the **third** instance of that pattern, after `:2013` vs `:2137` and `007:51` vs
-`:1387`. 21.3 gathers the three when it is written. What is *not* claimed: that the spec author intended the
-widening. Nobody has been asked. If the answer is that the four-column key was meant literally, 016 is
-reversible only by refusing measured work, and that is the conversation to have.
+and say so — now written up at 21.3. It is the **second** of the two instances 21.3 carries, after `007:51` vs
+`:1387`. (Written as the third until 2026-09-05, counting `:2013` vs `:2137`. That one is withdrawn: after 012
+no spec line is false of the tree, so nothing is carried — 19.1 and 21.3 for the criterion.) What is *not*
+claimed: that the spec author intended the widening. Nobody has been asked. If the answer is that the
+four-column key was meant literally, 016 is reversible only by refusing measured work, and that is the
+conversation to have.
 
 ### 21.7 A lumpsum quantity is pinned to exactly 1 — migration 018
 
@@ -2654,11 +2802,26 @@ why 017 had to build a temporary key to prove its own precondition and 018 did n
 
 **The three-valued class again, one guard away.** `(uom <> 'lumpsum' OR quantity = 1)` evaluated on its
 own against a NULL quantity is NULL — `select (null = 1)` is NULL and so is the whole disjunction — and a
-CHECK admits UNKNOWN. It refuses only because 014's `quantity IS NOT NULL` sits ahead of it in the same
-AND chain and `FALSE AND UNKNOWN` is FALSE. Both were run on the server. So this clause is safe **because
-of 014, not on its own**: the fourth appearance of the class CLAUDE.md names, and the first that was
-harmless on arrival. The integration test asserts the guard is still in the live clause for exactly this
-reason.
+CHECK admits UNKNOWN. It refuses only because 014's `quantity IS NOT NULL` is a **sibling conjunct** of it in
+the same AND, and `FALSE AND UNKNOWN` is FALSE. Both were run on the server. What carries it is the sibling
+relationship and not the written order: MariaDB promises no evaluation order and does not need to, so a
+reader who reorders the conjuncts loses nothing and a reader who moves the disjunction out from under the
+guard loses the refusal. So this clause is safe **because of 014, not on its own**: the fourth appearance of
+the class CLAUDE.md names, and the first that was harmless on arrival. The integration test asserts the guard
+is still in the live clause for exactly this reason.
+
+**Where that dependency is written down, and why not in 018.** It belongs against the clause, and 018 cannot
+hold it: the file is applied and `scripts/migrate.mjs:117-128` treats an applied migration whose checksum
+moved as a hard failure, which is the right behaviour and not worth suspending for a comment. So the note
+sits in the two places a reader actually meets the clause — the tripwire in `hr-contractor-flow.test.ts`
+beside the four refusals, and the guard rule in `schema-constraints.test.ts`, which is the one that would
+otherwise mislead: its regex finds one `IS NOT NULL` anywhere in the clause, so it cannot distinguish a guard
+that covers a comparison from one that merely shares a constraint with it. The alternative considered and not
+taken was a migration 019 restructuring the disjunction to `(uom <> 'lumpsum' OR (quantity IS NOT NULL AND
+quantity = 1))`, which removes the dependency instead of documenting it. That is the better end state by
+CLAUDE.md's own preference for a constraint that needs no second thing to stay true, but it is a schema
+change to a shared object for a documentation reason, and it was not asked for. Recorded here as the open
+option rather than done quietly.
 
 **Found while testing it: a refusal message that instructed the caller to write the forbidden row.** The
 quantity gate 19.2 shipped covers every non-day unit — *"it needs a quantity above zero to price"* — and a
