@@ -60,6 +60,17 @@ a different act, so citing one is a real check. The test for whether a citation 
 bearing: **if the cited text vanished, would the assertion still look justified?** If yes,
 it was decoration.
 
+**Second clause: a citation covers the shape it names and no adjacent shape.** A test
+asserting a neighbouring case needs its own basis, even where the citation above it is real.
+This is the clause that would actually have caught the expenses hole — the first one would
+not have. The docstring over that test quotes rule 1 correctly and cites DECISIONS 19.1, and
+it is right about what it says: rule 1 is about two rows carrying the *same* pair, and a
+UNIQUE index over nullable columns is the mechanism for it. The child test then asserted
+something about *half* a pair, a shape rule 1 does not mention, and inherited the parent's
+credibility for it. So the defect passed a citation check while being justified by nothing.
+A cited docstring makes the tests under it look grounded; each assertion still owes its own
+line.
+
 Two consequences worth stating:
 
 - Prefer asserting the *refusal*. A test that pins what the database rejects fails when the

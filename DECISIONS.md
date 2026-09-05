@@ -1648,6 +1648,28 @@ and ESI (which decides whether `uan`, `pf_number` and `esi_number` are required 
 whether leave accrual runs on the 1 April financial year — assumed yes, matching
 `document_numbering` — or on the calendar year.
 
+**Does attendance override approved leave? Same §8.6 conversation, and it belongs to the same
+answer.** `hr-attendance-flow.test.ts:911` asserts that marking attendance on a day already covered
+by an approved leave request is permitted, and nothing outside that test says so — no spec line, no
+section here, and the code does not refuse it only because nobody wrote a refusal. The question is a
+policy one: if a person on approved EL turns up and works, is that an attendance row plus a leave day
+(paid twice), a cancellation of the leave day, or an error the clerk must resolve before either row
+exists?
+
+The reason this is on the blocking list rather than in 20.3's triage is the **failure mode, which is
+silent**. A wrong answer produces no error and no missing row: the leave request stays approved, the
+attendance row says present, and payroll — which reads both — sees a paid leave day and a worked day
+for one calendar day. Nothing in the system disagrees with itself loudly enough to be noticed, and
+the discrepancy surfaces as a salary figure nobody can reconstruct. That is why it cannot be repaired
+as a test defect: a test cannot be written until it is known which of the three outcomes is wanted,
+and the current test pins the one that is cheapest to leave in place, not one that was chosen.
+
+Coupled to the quotas because the same answer decides both: whether an approved day is a *reservation
+against a balance* (in which case attendance over it must release the balance) or merely a *record
+that permission was given* (in which case both rows are legitimate and payroll needs the rule). No
+enforcement should be written for either until this is answered — see 21.1 on the accrual precondition
+for the same argument about writing enforcement ahead of the writer that feeds it.
+
 **Also unanswered, and it gates the shape of HR slice 3 rather than a column in it:** §8.6 asks
 "Do you use labour contractors, and roughly how many? The whole `labour_contractors` and
 `contractor_bills` design in 6.6 assumes yes. If site labour is directly employed instead, that
@@ -2233,3 +2255,55 @@ row that used the hole. Nothing under `src/` inserts into `expenses` yet (0 hits
 `('contractor_bills', 0)`; two different documents in the same table both insert; and the same document
 twice is refused `errno 1062` naming `uq_exp_source` — the two mechanisms separable in one test, which is
 this section's argument stated as an assertion.
+
+**Still open: `source_type` is not tied to the pair, and should not stay advisory forever.** Today the
+constraint says the pair is whole or empty and says nothing about which ENUM member claims it, so
+`source_type = 'manual'` with a full pair, or `'grn'` with an empty one, are both writable. The reason is
+that the map from ENUM member to table name does not exist anywhere yet. **When finance lands it will
+exist in code** — each posting path names its own table, the way `hr/service.ts:2316` already names
+`'contractor_bills'` — and at that point the map is a fact about the system rather than a guess, and this
+constraint should be extended to match it: `'manual'` implies an empty pair, every other member implies
+its own table name. Recorded as a precondition on §6.8 rather than a preference, because the longer it
+stays advisory the more postings exist to migrate.
+
+### 20.3 Triage of six comment-justified assertions, none fixed
+
+Found by grepping the suites after 20.2, under the CLAUDE.md rule it produced. Recorded rather than
+repaired: four of the six need an answer or a different session's attention, and repairing a test whose
+basis is unknown is how a wrong assertion gets a confident new comment.
+
+**Two are genuine defects.**
+
+`tests/integration/hr-contractor-flow.test.ts:989` — the docstring quotes 6.8 rule 1 and cites 19.1
+correctly, and is right about identical pairs. The child test asserted something about *half* pairs, which
+rule 1 does not mention, and took the parent's credibility for it. A real citation stretched one step. This
+is the failure that actually let the source-pair hole survive, and it is why CLAUDE.md now carries a second
+clause: **a citation covers the shape it names and no adjacent shape.** The first clause would not have
+caught it, because there was a citation.
+
+`tests/inventory-schemas.test.ts:216` — "The system quantity is deliberately absent from the form and the
+POST: `postAdjustment` reads it inside the transaction from the row it locks." The stated basis is the
+behaviour of the code under test, so the assertion **cannot ever disagree with the implementation**:
+change `postAdjustment` and the justification changes with it. Circular in the original way, and the claim
+it is making — that a physical count must not be able to submit a system quantity — is a real control
+worth a real citation.
+
+**Two are undocumented domain assumptions. They need an owner's answer, not a repair.**
+
+`tests/hr-schemas.test.ts:156` — "accepts one time without the other, because a half day may have only
+one." Plausible and unstated: whether a half day records one punch or two is a payroll question.
+
+`tests/integration/hr-attendance-flow.test.ts:445` — "`attendanceOn` takes no project on purpose: an
+overhead day showing as unmarked would invite a supervisor to enter it again against a project." A UX
+argument for a query's shape, written with the test. It may well be right.
+
+**One is sound and gets tightened opportunistically.** `hr-contractor-flow.test.ts:395` cites "Rule 2" by
+number rather than by line. Substantively correct; the line number goes in the next time that file is open
+for another reason.
+
+**The sixth is a policy claim, not a test problem, and is now on the §8.6 blocking list in 17.**
+`hr-attendance-flow.test.ts:911` asserts that a write is permitted over a day covered by approved leave.
+That is a statement about attendance overriding leave, which nobody has ratified, and the reason it is on
+the blocking list rather than in this triage is that **if it is wrong the error is silent**: the leave stays
+approved, the attendance row says the person was present, and payroll sees both. Same conversation as the
+quotas, and the same answer decides both.
