@@ -54,6 +54,7 @@ const db = getDb()
 const TRACKED = [
   'contractor_attendance',
   'contractor_bills',
+  'expenses',
   'contractor_rates',
   'labour_contractors',
   'document_numbering',
@@ -948,17 +949,103 @@ describe('approving a contractor bill', () => {
     expect(await q.findContractorBill(db, Number(second.id))).toMatchObject({ status: 'draft' })
   })
 
-  it('records that (source_table, source_id) is not unique in the database yet', async () => {
-    // 6.8 rule 1's prose calls this a unique index; 009 declares
-    // `KEY idx_exp_source (source_table, source_id)`. Until that changes, nothing
-    // at the database level stops the same bill being posted twice, and the
-    // guard has to be in the 6.8 code.
-    // TRIPWIRE: when the index becomes UNIQUE this fails, and DECISIONS 18.8 is
-    // the note to update.
-    const idx = await sql<{ NON_UNIQUE: number }>`
-      select distinct NON_UNIQUE from information_schema.STATISTICS
-      where TABLE_SCHEMA = database() and TABLE_NAME = 'expenses' and INDEX_NAME = 'idx_exp_source'
+})
+
+/**
+ * The constraint 6.8 rule 1 promises, asserted before 6.8 exists.
+ *
+ * Migration 012 replaced `KEY idx_exp_source` with `UNIQUE KEY uq_exp_source`.
+ * Rule 1's wording is "a unique index on (source_table, source_id) where both are
+ * non-null", and MariaDB has no partial index for that clause -- it does not need
+ * one, because a UNIQUE index already treats a row with a NULL in an indexed
+ * column as distinct from every other row. So the permissiveness over NULLs below
+ * is the requirement being met rather than a gap in it, and the manual expense
+ * class rule 1 ends on keeps working.
+ *
+ * These live in this file because slice 3 is where the divergence was found:
+ * `contractor_bills.id` is the first identity that will be posted through that
+ * pair. DECISIONS 19.1.
+ */
+describe('the double-posting constraint 6.8 rule 1 promises', () => {
+  let expenseSeq = 0
+
+  /** Only the five columns that are NOT NULL without a default. */
+  async function insertExpense(over: Record<string, unknown> = {}) {
+    expenseSeq += 1
+    return db
+      .insertInto('expenses')
+      .values({
+        expense_no: `FIXEXP/${expenseSeq}`,
+        expense_date: DAY_1,
+        expense_type: 'labour_contractor',
+        payee_type: 'contractor',
+        created_by: actor.userId,
+        ...over,
+      })
+      .executeTakeFirst()
+  }
+
+  it('indexes (source_table, source_id) uniquely, under a uq_ name', async () => {
+    const idx = await sql<{ INDEX_NAME: string; NON_UNIQUE: number }>`
+      select distinct INDEX_NAME, NON_UNIQUE from information_schema.STATISTICS
+      where TABLE_SCHEMA = database() and TABLE_NAME = 'expenses'
+        and COLUMN_NAME in ('source_table', 'source_id')
     `.execute(db)
-    expect(idx.rows.map((r) => Number(r.NON_UNIQUE))).toEqual([1])
+    expect(idx.rows.map((r) => ({ name: r.INDEX_NAME, nonUnique: Number(r.NON_UNIQUE) }))).toEqual([
+      { name: 'uq_exp_source', nonUnique: 0 },
+    ])
+  })
+
+  it('still permits any number of rows with no source document', async () => {
+    // Direct entry: statutory fees, professional fees, site overheads, travel.
+    // There is no upstream row to be unique against and there are many of them.
+    for (let i = 0; i < 3; i += 1) await insertExpense({ source_type: 'manual' })
+    // Half a pair is exempt by the same NULL rule. Nothing writes one, but the
+    // migration comment claims it, so it is asserted rather than assumed.
+    await insertExpense({ source_table: 'contractor_bills' })
+    await insertExpense({ source_table: 'contractor_bills' })
+
+    const n = await db
+      .selectFrom('expenses')
+      .select((eb) => eb.fn.countAll<number>().as('n'))
+      .where('source_id', 'is', null)
+      .where('expense_no', 'like', 'FIXEXP/%')
+      .executeTakeFirstOrThrow()
+    expect(Number(n.n)).toBe(5)
+  })
+
+  it('refuses a second post of the same document in the database, not in code', async () => {
+    expect(firstBillId).toBeGreaterThan(0)
+    await insertExpense({
+      source_type: 'contractor_bill',
+      source_table: 'contractor_bills',
+      source_id: firstBillId,
+    })
+
+    // No service call anywhere in this test: the second insert is the same
+    // statement as the first and the refusal comes off the wire. errno 1062 with
+    // the constraint name in the message is the proof of which layer said no --
+    // an application check would throw a ConflictError with prose instead.
+    let err: (Error & { code?: string; errno?: number }) | undefined
+    try {
+      await insertExpense({
+        source_type: 'contractor_bill',
+        source_table: 'contractor_bills',
+        source_id: firstBillId,
+      })
+    } catch (caught) {
+      err = caught as Error & { code?: string; errno?: number }
+    }
+    expect(err?.code).toBe('ER_DUP_ENTRY')
+    expect(err?.errno).toBe(1062)
+    expect(err?.message).toMatch(/uq_exp_source/)
+
+    const posted = await db
+      .selectFrom('expenses')
+      .select((eb) => eb.fn.countAll<number>().as('n'))
+      .where('source_table', '=', 'contractor_bills')
+      .where('source_id', '=', firstBillId)
+      .executeTakeFirstOrThrow()
+    expect(Number(posted.n)).toBe(1)
   })
 })

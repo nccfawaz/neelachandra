@@ -1820,14 +1820,14 @@ human-facing form of the same thing and is what messages quote, but it is not wh
 on. The four values above are written into the `hr.contractor_bill_approve` audit payload on every
 approval, so the link is legible before the posting exists.
 
-**Discrepancy, flagged not resolved.** §6.8 rule 1's prose calls `(source_table, source_id)` a
-**unique index**. `009_finance.sql` declares `KEY idx_exp_source (source_table, source_id)` — a plain
-index. So the database will not in fact refuse a second posting of the same bill, and the guard §6.8
-relies on has to be in code until the index is changed. Making it UNIQUE is a migration, not a
-decision this slice gets to take: `source_table` and `source_id` are both NULL for a manual expense
-and MySQL allows unlimited NULL duplicates in a unique index, so the change is safe, but it belongs to
-whoever builds §6.8 and it needs their reading of the `source_type` members. The integration test
-asserts `NON_UNIQUE = 1` today as a tripwire pointing here.
+**Discrepancy, closed by 012 — see 19.1.** §6.8 rule 1's prose calls `(source_table, source_id)` a
+**unique index**; the spec's own DDL block at `NCC_BUILD_SPEC.md:2013` writes `KEY idx_exp_source`, and
+`009_finance.sql:140` reproduced that. When this section was written the conclusion was that changing
+it belonged to whoever builds §6.8. That was wrong in one respect: the change is cheapest while
+`expenses` is empty and no posting path has been written against the weaker guarantee. Migration
+`012_expense_source_unique.sql` makes it `UNIQUE KEY uq_exp_source`. The reasoning, including why NULL
+duplicates remain permitted, is in 19.1. The tripwire in the integration test is now inverted and
+asserts `NON_UNIQUE = 0`.
 
 ### 18.9 A bill above the second-approval threshold is refused, not approved with one signature
 
@@ -1894,6 +1894,62 @@ the empty-`approval_limits` refusal, the gross-versus-limit refusal, a successfu
 finance identity in the audit payload and `expense_id` still NULL, the double-approval refusal and the
 second-signature refusal (18.8, 18.9).
 
-Two tripwires are deliberate: the `NON_UNIQUE = 1` assertion on `idx_exp_source` (18.8) and the
-second-approval refusal (18.9). Both fail when the schema gains what they describe as missing, and both
-carry a comment naming this section.
+One tripwire remains deliberate: the second-approval refusal (18.9). It fails when the schema gains
+what it describes as missing, and it carries a comment naming this section. The other one, the
+`NON_UNIQUE = 1` assertion on `idx_exp_source`, fired as designed within a day: 19.1 closed the
+divergence and the assertion is now `NON_UNIQUE = 0` on `uq_exp_source`.
+
+## 19. Corrections made before finance depends on them, 2026-09-05
+
+Slice 3 surfaced two schema facts that §6.8 would otherwise be written against, and both are cheaper to
+change now than after five posting paths exist. §18 logged them as findings; this section closes them.
+
+### 19.1 `expenses (source_table, source_id)` is UNIQUE — migration 012
+
+§18.8 called this a spec-versus-migration divergence. That was half right, and the correction matters
+because it changes who was wrong: **the divergence is inside the spec.**
+
+- `NCC_BUILD_SPEC.md:2013`, in the `expenses` DDL block:
+  `KEY idx_exp_source (source_table, source_id)`
+- `NCC_BUILD_SPEC.md:2137`, §6.8 rule 1: "A unique index on `(source_table, source_id)` **where both
+  are non-null** makes double posting impossible at the database level rather than by convention."
+
+`009_finance.sql:140` reproduced the first one faithfully. It is not a transcription error — the DDL
+block is what a migration is written from, and it says `KEY`.
+
+**The prose wins.** A `KEY` is an access path and promises nothing about content; rule 1 is a statement
+about what the database refuses, and it is the only sentence in §6.8 that says how double counting is
+prevented at all. A schema sketch that contradicts a behavioural guarantee loses to it. Flagged here
+rather than settled by editing either line of the spec.
+
+**Why now rather than with §6.8.** Nothing posts into `expenses` yet. Five paths eventually will — GRN,
+contractor bill, equipment deployment, campaign spend, payroll — and each will be written assuming a
+second attempt is refused underneath it. Adding the constraint afterwards means auditing five call sites
+plus whatever they have already written. Adding it against an empty table is one `ALTER`.
+
+**Preconditions, checked rather than assumed** (dev MariaDB, before the migration was written):
+`expenses` held **0 rows**, of which **0** had both columns non-NULL, in **0** duplicate
+`(source_table, source_id)` groups. Nothing blocked the change.
+
+**NULL stays permissive, and that is rule 1's own wording being met.** Rule 1 says "where both are
+non-null". MariaDB has no partial index for that clause and does not need one: a UNIQUE index treats any
+row with a NULL in an indexed column as distinct from every other row. So unlimited rows may hold
+`(NULL, NULL)` while `('contractor_bills', 7)` may appear once. The manual class rule 1 closes on —
+statutory fees, professional fees, site overheads, travel — carries no source document and is
+untouched. This is the property to want, not a hole to close later; a strict constraint over NULLs would
+permit exactly one direct-entry expense in the company's history.
+
+**Renamed to `uq_exp_source`.** Every other unique key in this schema is `uq_` (`uq_expense_no`,
+`uq_period`, `uq_budget`, `uq_cb_no`, `uq_ca`), and an index called `idx_` that silently refuses an
+insert is the sort of name that costs somebody an afternoon. One `ALTER` does the `DROP` and the `ADD`,
+so the pair is never unindexed. Both columns also gained a `COMMENT` naming the constraint and this
+section.
+
+**Three tests, in `tests/integration/hr-contractor-flow.test.ts`.** The old tripwire is inverted: the
+only index over those columns is `uq_exp_source` with `NON_UNIQUE = 0`, which also fails if a future
+migration leaves both indexes in place. Five rows with no `source_id` insert without complaint, three
+fully manual and two with `source_table` set and `source_id` NULL — half a pair is exempt by the same
+rule, and the migration comment claims it, so it is asserted. The refusal test calls no service at all:
+the same insert runs twice with `source_id = contractor_bills.id`, and the second comes back
+`ER_DUP_ENTRY`, `errno 1062`, message naming `uq_exp_source`. Asserting the errno is the point — it is
+what distinguishes the database refusing from a service check refusing, and rule 1 asks for the former.
