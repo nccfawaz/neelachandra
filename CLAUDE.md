@@ -85,3 +85,48 @@ Two consequences worth stating:
 `npm test` opens no connection: it is evidence about pure functions and form contracts
 only. `npm run test:integration` needs the persistent dev MariaDB on port **3307** and
 throws rather than falling back, which is deliberate. Do not tear that database down.
+
+## A nullable column inside a CHECK or a UNIQUE key weakens it silently
+
+Three instances now, the same mistake in different clothes. All three read as correct.
+
+- **A CHECK admits UNKNOWN.** `chk_ca_quantity` as migration 013 wrote it ended
+  `quantity > 0`. A CHECK refuses a row only when its expression is FALSE, and
+  `NULL > 0` is UNKNOWN, so the one row the constraint existed to refuse — a measured
+  line with no measure to multiply — was the row it let through. Migration 014 exists
+  for nothing but to put `quantity IS NOT NULL AND` in front of it.
+- **A UNIQUE index exempts every row with a NULL in it, including the nonsense ones.**
+  `uq_exp_source (source_table, source_id)`, migration 012. The NULL-NULL exemption is
+  wanted: a manual expense has no upstream document and there are many of them. *Half*
+  a pair is exempt by the same rule, so the table admitted any number of rows naming a
+  source table and pointing at no id — each claiming to be the posting of an upstream
+  document with nothing at the other end. No index can refuse that, because the row is
+  wrong on its own rather than a duplicate of another, which is why 015 had to add
+  `chk_exp_source_pair` beside the index rather than fixing the index.
+- **A nullable member makes a widened key weaker than the narrow one it replaced.**
+  `work_type` was `VARCHAR(120) NULL` and NULL on every per-day row when 016 was asked
+  to add it to `uq_ca`. Done as instructed, the five-column key would have stopped
+  refusing two identical per-day rows — the commonest shape in the table, and a
+  double-billing path — in the course of permitting the pair it was widened for.
+  Adding a nullable column to a UNIQUE key does not widen the key. It punches a hole
+  in it.
+
+The rule: **before writing a migration that puts a nullable column inside a CHECK or a
+UNIQUE key, prove the current behaviour with a real insert against the live server, and
+state that proof in the report.** Not a reading of the clause and not what the previous
+migration's header claims — the insert, and what the server said back. For 016 that was
+three identical `(1, NULL)` rows accepted and `(1, 'x')` refused 1062: two commands,
+and they turned an instruction that would have removed a guarantee into one that added
+one.
+
+The reason it has to be a proof and not care taken is that none of the three is visible
+to reading. The clause reads correctly. The index names the columns it should. The
+widened key contains strictly more columns than the old one. Each is wrong for a reason
+that lives in SQL's three-valued logic rather than in the text, and `tsc` and the pure
+suite cannot see any of it.
+
+Two shapes are safe once the proof shows a hole. Make the column NOT NULL with a
+sentinel default and a CHECK that keeps the sentinel unreachable where it would mean
+something (016: `''` on a day row, `chk_ca_work_type`). Or add a CHECK beside the index
+for the shape an index cannot express (015). Prefer the first: it needs no second
+constraint to stay true.
