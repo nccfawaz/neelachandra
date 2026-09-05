@@ -111,6 +111,12 @@ export const NAV: NavGroup[] = [
       // Any authenticated user: the route is "own" and unguarded. See anyUser.
       { label: 'Leave', href: '/app/hr/leave', perms: [PERMISSIONS.HR_LEAVE_APPROVE, PERMISSIONS.HR_EMPLOYEE_VIEW], anyUser: true },
       { label: 'Contractors', href: '/app/hr/contractors', perms: [PERMISSIONS.HR_LABOUR_CONTRACTOR_MANAGE] },
+      // Bills are linked separately from the contractor master because they are
+      // money: 6.8 rule 1 turns an approved one into an expenses row, and the
+      // person chasing a payment should not have to go through a contractor
+      // profile to find it. Attendance entry is not linked -- it is only ever
+      // reached for one contractor on one site, so it starts from Contractors.
+      { label: 'Contractor bills', href: '/app/hr/contractor-bills', perms: [PERMISSIONS.HR_LABOUR_CONTRACTOR_MANAGE] },
       { label: 'Recruiting', href: '/app/hr/recruiting', perms: [PERMISSIONS.HR_RECRUIT_MANAGE] },
     ],
   },

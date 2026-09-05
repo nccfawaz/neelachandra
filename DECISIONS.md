@@ -1653,3 +1653,247 @@ whether leave accrual runs on the 1 April financial year — assumed yes, matchi
 `contractor_bills` design in 6.6 assumes yes. If site labour is directly employed instead, that
 part of the module changes shape substantially." Slice 3 is built to the spec's design, which
 assumes yes. If the answer is no, that slice is dead weight rather than wrong.
+
+## 18. HR, third slice: contractor labour and bills, 2026-09-05
+
+Four files in the projects pattern — `queries.ts`, `schemas.ts`, `service.ts`, `routes.tsx` — plus
+`tests/integration/hr-contractor-flow.test.ts` against the dev MariaDB. Spec §6.6 rules 2 and 3,
+migration `006_hr.sql`. No finance posting: §6.8 rule 1 is not in this slice.
+
+### 18.1 Contractor labour is a separate ledger, and the separation is asserted, not assumed
+
+`labour_contractors`, `contractor_rates`, `contractor_attendance` and `contractor_bills` share no
+identity table with `employees`. There is no `employee_id` anywhere in the four, no row is created
+in `employees` for a contractor worker, and **individual workers are not stored at all** — the unit
+is a headcount per skill per day, which is what §6.6 rule 2 prices and what a site gate can
+actually report. A named-worker register would need Aadhaar or an equivalent identifier, and the
+standing constraint is that full Aadhaar is deliberately not stored.
+
+This is a property of the schema rather than of the code, so it is checked by a test that reads
+`information_schema.COLUMNS` and fails if any column matching `%employee%` or `%aadhaar%` appears in
+those four tables. It will fail the day somebody adds the convenient link, which is the point.
+
+`contractor_attendance` is also a different table from `attendance`, and the two never join. One
+consequence worth knowing: `hrDashboard`'s `unapprovedAttendance` counts `attendance` only, so
+unapproved contractor days do not appear on the HR dashboard KPI.
+
+### 18.2 Only a `per_day` rate can price a day, so four of the five UOMs cannot reach a bill
+
+`contractor_rates.uom` has five members — `per_day`, `per_sqft`, `per_cum`, `per_kg`, `lumpsum` —
+and `contractor_attendance` records a headcount, an overtime figure and nothing else. **There is no
+quantity column**, so a piece-rate agreement has nothing to multiply and no path to a bill. This is
+a gap in §6.6 rather than a decision: rule 2 says "attendance × rate" and the rate card the same
+rule specifies can hold four rates that attendance cannot express.
+
+What is built: the other four UOMs are accepted onto the rate card, because the column has them and
+a rate that exists should be recordable, and the attendance entry screen **derives its skill rows
+from the `per_day` rates in force on the date being entered**. A skill nobody has priced per day is
+never offered, so the service never has to refuse a row the screen invited. Recording one anyway —
+through a direct call or a hand-made post — is refused by name.
+
+Not resolved here, and not silently designed around: billing piece-rate work needs either a
+quantity column on `contractor_attendance` or a separate measurement table, and both are spec
+changes. Flagged for the business rather than chosen.
+
+**Overtime is recorded and unpriced.** `overtime_hours` is stored per row and contributes nothing to
+`amount_paise`, because the spec gives no overtime multiplier. The entry screen says so. A ceiling of
+`headcount × 12` hours is enforced in the schema so a typo cannot store a week in a day.
+
+### 18.3 Three routes are additions to the §6.6 route table, and one of them is load-bearing
+
+The §6.6 route table gives four routes; the page list gives five screens. A page cannot exist
+without a route to reach it, so `GET /app/hr/contractor-attendance` and
+`GET /app/hr/contractor-bills` (plus `GET /app/hr/contractor-bills/:billId`) are additions of the
+mechanical kind.
+
+`POST /api/hr/contractor-attendance/approve` is the one that matters. **Rule 2 bills only rows whose
+`approved_at` is set, and nothing in the route table can set it.** Taken literally the module ships a
+bill generator that can never find anything to bill. The addition carries
+`hr.attendance_approve` — the permission rule 4 uses for the same act on employee attendance — rather
+than a new permission key, so the §4.3 matrix is unchanged.
+
+It approves a period rather than a row, because that is how the act happens: a supervisor signs off a
+week, not a cell. Two consequences the integration test pins down: correcting an approved row
+**clears** `approved_by` and `approved_at`, since the figure that was signed for is no longer the
+figure on the row; and re-approving a period reports `{approved, alreadyApproved}` instead of
+refusing, so the second click after a correction is not an error.
+
+**Rejected: infer approval from the bill.** Treating "billed" as "approved" would make rule 2's
+`approved_at` filter dead code and remove the only check between a gate clerk's headcount and money
+leaving the company.
+
+### 18.4 The compliance gate reads the day worked, not today, and a NULL date does not block
+
+Rule 3's checks — labour licence, WC policy, blacklist — run against `attendance_date`, not against
+`today()`. For a licence that expired last week both readings agree; they differ only when a day from
+**before** the expiry is entered late, and refusing that would refuse to record labour that was on
+site while the cover was live. Cost that happened is recorded.
+
+A NULL `licence_valid_until` or `wc_policy_valid_until` does **not** block, because a column that was
+never filled has not "passed". A missing licence number is a separate reason and is reported
+separately.
+
+**A failure is overridable, a blacklisting is not.** Someone holding
+`hr.labour_contractor_manage` can force a day through an expired licence or lapsed WC cover; every
+reason forced is written into the `hr.contractor_attendance_record` audit payload as a list, so the
+override is a record rather than a bypass. A `blacklisted` contractor is refused outright with no
+override, since the point of the status is that no further work is authorised.
+
+### 18.5 The gross is summed, never typed, and an unapproved row stops the bill
+
+Rule 2's gross comes from `SUM(amount_paise)` over the attendance rows in the period. Nothing on the
+generate form can change it; everything typed there is a deduction applied afterwards. The rate is
+**snapshotted** onto each attendance row as `rate_paise` when the day is recorded, so a later rate
+change cannot restate a bill — the integration test records a raise effective 2026-08-06 and proves
+the 5 August row is still priced at the old rate.
+
+**An unapproved row inside the period refuses the bill instead of being skipped.** A bill that
+quietly left four days out would leave `bill_id` NULL on them and no later period covers those
+dates, so they would never surface again. The refusal names the count and the earliest date, and the
+fix is one button away on the same screen.
+
+**What stops a day reaching two bills is not a unique index.** `contractor_bills` has exactly one
+unique key, `uq_cb_no (bill_no)`; there is no unique constraint on
+`(contractor_id, project_id, period_from, period_to)` and overlapping periods are therefore
+permitted by the schema. The actual guard is that generation stamps `bill_id` on the rows it billed
+under `WHERE bill_id IS NULL` and refuses if the update count does not match the row count, having
+taken `FOR UPDATE` on those rows first. Correcting a billed row is refused by name, quoting the bill
+number. Anything asserting "one bill per period" has to assert it against that mechanism.
+
+The financial year on the bill number comes from the **first day of the period**, not from today, so
+a March period billed in April keeps its own year's series — the same rule as the leave year. A
+refused bill burns no number: the deduction check runs before `nextNumber`, and the transaction would
+roll it back regardless. The test proves consecutive serials across two bills with a refusal between
+them.
+
+### 18.6 Retention, TDS, advance and penalty: where each of the four numbers comes from
+
+Retention and TDS default from `settings` (`finance.retention_default_pct` = 500 bp,
+`finance.tds_default_pct` = 200 bp after migration 011) and can be overridden per bill on the form.
+A blank field means "use the setting", not "zero". Both are stored as the resulting **paise**;
+`contractor_bills` has no column for the percentage that produced them, so the rates and whether
+each came from the settings or was entered go into the `hr.contractor_bill_generate` audit payload,
+which is the only record of how the figure was reached.
+
+`net_payable_paise = gross − advance_recovered − retention − tds − penalty`. A negative net is
+**refused rather than stored**: the column is BIGINT and would hold it, but a bill saying the
+contractor owes the company is a debit note and §6.8 has no reading for a negative expense. The
+refusal says to recover the balance on the next bill.
+
+**Advance recovered is typed in, because no advance table exists.** Nothing in the schema records a
+loan or advance paid to a contractor, so there is nothing to look the figure up from and nothing to
+decrement. It is a number the person raising the bill enters and the audit log preserves. A real
+advance ledger is a finance concern and is not invented here.
+
+All four are BIGINT paise with a `_paise` suffix, computed by `applyPct` on integers. The integration
+test bills a day priced at ₹437.50 precisely so the arithmetic contains a half-paise tie, and asserts
+it resolves upward.
+
+### 18.7 §206AA's 20% is not applied; the missing PAN is surfaced instead
+
+A contractor with no PAN attracts TDS at 20% under §206AA rather than the 2% default. **That rule is
+not implemented.** `generateContractorBill` returns a `noPan` flag, the generate flash message and the
+bill page both warn on it, and the rate used is whatever was entered or defaulted.
+
+Rejected: raising the default to 20% when `pan IS NULL`. Section 206AA has conditions this codebase
+has no way to evaluate — the higher of 20% or the specified rate, interaction with the 194C
+threshold, and lower-deduction certificates under §197 — and a wrong deduction is money withheld from
+a contractor that has to be refunded through a return. Warning a human who can read the certificate is
+the honest behaviour until the rule is specified.
+
+### 18.8 The identity finance will key on is `contractor_bills.id`
+
+§6.8 rule 1 turns an approved contractor bill into an `expenses` row. That posting is **not built in
+this slice**, and `contractor_bills.expense_id` stays NULL. What this slice guarantees is that the row
+it leaves behind already carries the identity that posting will key on:
+
+```
+expenses.source_type  = 'contractor_bill'      -- ENUM member, 009_finance.sql
+expenses.source_table = 'contractor_bills'
+expenses.source_id    = contractor_bills.id
+contractor_bills.expense_id -> expenses.id     -- fk_cb_expense, added in 009
+```
+
+`contractor_bills.id` is that identity: immutable, auto-increment, what the FK from `expenses` points
+back at. `bill_no` (`VARCHAR(24)` UNIQUE, from `nextNumber`, e.g. `NCC/CB/2026-27/001`) is the
+human-facing form of the same thing and is what messages quote, but it is not what finance should key
+on. The four values above are written into the `hr.contractor_bill_approve` audit payload on every
+approval, so the link is legible before the posting exists.
+
+**Discrepancy, flagged not resolved.** §6.8 rule 1's prose calls `(source_table, source_id)` a
+**unique index**. `009_finance.sql` declares `KEY idx_exp_source (source_table, source_id)` — a plain
+index. So the database will not in fact refuse a second posting of the same bill, and the guard §6.8
+relies on has to be in code until the index is changed. Making it UNIQUE is a migration, not a
+decision this slice gets to take: `source_table` and `source_id` are both NULL for a manual expense
+and MySQL allows unlimited NULL duplicates in a unique index, so the change is safe, but it belongs to
+whoever builds §6.8 and it needs their reading of the `source_type` members. The integration test
+asserts `NON_UNIQUE = 1` today as a tripwire pointing here.
+
+### 18.9 A bill above the second-approval threshold is refused, not approved with one signature
+
+Approval resolves an `approval_limits` row for document type **`expense`**. There is no
+`contractor_bill` member in that ENUM, and inventing one by migration is a bigger change than reading
+a contractor bill as the expense it is about to become.
+
+**The figure checked is the gross, not the net payable.** The gross is the cost committed to the
+project; the net is what leaves the bank, and that belongs to `payment_release`.
+
+`approval_limits` is **seeded empty** pending §8.2, so today every approval is refused with a message
+saying no limit is set for the role. That is deliberate — a missing row read as "unlimited" is the
+failure this table exists to prevent — and the integration test asserts that state, then inserts a
+fixture row with a made-up `role_key` to exercise the paths behind it. No real limits are seeded.
+
+Above `requires_second_approval_above`, approval is **refused**. `contractor_bills` has one
+`approved_by` column and no `second_approved_by`, unlike `purchase_orders` and `expenses`. Writing a
+single signature as `approved` where the limit says two are required is exactly the failure the second
+signature exists to prevent, so the code refuses and says why. Unreachable until §8.2 supplies
+numbers. A second-approval column is the fix; the test is a tripwire pointing here.
+
+Self-approval is refused before the limit is even resolved: whoever generated the bill cannot approve
+it.
+
+### 18.10 What this slice deliberately did not touch
+
+- **§6.8 rule 1, the `expenses` posting.** 18.8 records the identity it will key on. `expense_id`
+  stays NULL and the bill page says so in words rather than leaving the field blank.
+- **Payment of a bill.** `payment_release` limits, part payments and the bank side are §6.8's.
+- **Piece-rate billing** (18.2) and **§206AA** (18.7).
+- **An advance ledger** (18.6).
+- **The Alpine keyboard matrix.** 17.2 gives it its own slice, immediately after this one. Nothing
+  client-side was introduced here: `src/` still contains no `x-data`.
+- **No new multipart route.** The 15.1 fence holds; contractor documents are not uploadable and the
+  compliance fields are typed dates and numbers.
+- **No new `json_valid` reader was needed, contrary to expectation.** `006_hr.sql` declares no JSON
+  column among `labour_contractors`, `contractor_rates`, `contractor_attendance` and
+  `contractor_bills`, so the count of `JSON_COLUMNS` entries lacking a reader is unchanged at eight of
+  twelve. The one JSON read this slice performs is `audit_log.after_json` in the integration test, and
+  it goes through `parseJsonColumn`.
+
+### 18.11 Verification record, 2026-09-05 — contractor labour and bills
+
+| Gate | Result |
+| --- | --- |
+| `npm run typecheck` | clean, no diagnostics |
+| `npx tsc -p tsconfig.json --noEmit --listFilesOnly \| grep -c '/src/'` | **71** files compiled |
+| `npm test` | 9 files, **246** tests passed |
+| `npm run test:integration` | 6 files, **175** tests passed — `hr-contractor-flow` contributes 32 |
+
+Run against the persistent dev MariaDB on 127.0.0.1:3307. The integration suite was run twice in
+succession and passed both times, which is also the evidence that the fixture cleanup works — a
+leftover `FIXLC-ANNA` would fail the duplicate-code test on the second run.
+
+`tests/integration/hr-contractor-flow.test.ts` covers, in order: the schema-level separation from the
+employee master (18.1); rate resolution, including a project rate beating a company-wide one, an
+`effective_to` closed by a later line, a refused same-day restatement and an unpriced skill (18.2); the
+`uq_ca` insert-then-update branch on the second post of a day, a refused future date, the override
+path with its audit payload, the permission refusal and the blacklist refusal (18.4); period approval,
+the approval cleared by a correction and the re-approval count (18.3); the unapproved-row refusal,
+`bill_id` stamping, the billed-day refusal quoting the bill number, consecutive serials across a
+refusal, half-up rounding on a ₹437.50 day and the negative-net refusal (18.5, 18.6); and self-approval,
+the empty-`approval_limits` refusal, the gross-versus-limit refusal, a successful approval with the
+finance identity in the audit payload and `expense_id` still NULL, the double-approval refusal and the
+second-signature refusal (18.8, 18.9).
+
+Two tripwires are deliberate: the `NON_UNIQUE = 1` assertion on `idx_exp_source` (18.8) and the
+second-approval refusal (18.9). Both fail when the schema gains what they describe as missing, and both
+carry a comment naming this section.

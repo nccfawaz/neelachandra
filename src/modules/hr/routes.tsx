@@ -1,5 +1,6 @@
 import { Hono } from 'hono'
 import type { Context } from 'hono'
+import type { Child } from 'hono/jsx'
 import type { AppEnv } from '../../types.js'
 import { currentUser } from '../../types.js'
 import { page, banner, okRedirect, errRedirect, queryParam } from '../../dashboard/render.js'
@@ -21,6 +22,7 @@ import { requirePermission, requireAllPermissions } from '../../middleware/requi
 import { PERMISSIONS } from '../../lib/permissions.js'
 import { readBody } from '../../middleware/csrf.js'
 import { NotFoundError, isAppError } from '../../lib/errors.js'
+import { formatPaise } from '../../lib/money.js'
 import {
   datesBetween,
   financialYear,
@@ -37,6 +39,11 @@ import {
   attendanceApproveSchema,
   attendanceBulkSchema,
   compensationSchema,
+  contractorAttendanceSchema,
+  contractorBillGenerateSchema,
+  contractorPeriodSchema,
+  contractorRateSchema,
+  contractorSchema,
   documentSchema,
   employeeSchema,
   exitSchema,
@@ -44,11 +51,15 @@ import {
   leaveDecisionSchema,
   leaveRequestSchema,
   ATTENDANCE_STATUSES,
+  CONTRACTOR_BILL_STATUSES,
+  CONTRACTOR_STATUSES,
   EMPLOYEE_STATUSES,
   EMPLOYMENT_TYPES,
   EXIT_TYPES,
   GENDERS,
   LEAVE_REQUEST_STATUSES,
+  RATE_UOMS,
+  SKILL_LEVELS,
 } from './schemas.js'
 
 /**
@@ -1996,39 +2007,1231 @@ hr.get('/app/hr/reports/muster', requirePermission(PERMISSIONS.HR_EMPLOYEE_VIEW)
   )
 })
 
-/* Still stubs: contractors, recruiting -------------------------------------- */
+/* Contractor labour and bills (spec 6.6 rules 2 and 3) --------------------- */
 
 /**
- * These two keep the shape the earlier phase left them in.
+ * The second population of 6.6.
  *
- * They are mounted, guarded by the permission their sidebar item names, and
- * report the real row count from their primary table, so no link a user can see
- * 404s or 403s while the rest of 6.6 is built out.
+ * No screen below reaches an `employees` row and none of them can create one.
+ * A contractor's workers are a headcount by skill level and are never named, so
+ * there is no person to link: `contractor_attendance` has a `headcount` column
+ * and no `employee_id`, which is the spec expressing the separation in DDL.
+ *
+ * The route table gives four routes and the page list gives five screens, so the
+ * GETs for attendance entry and for bills are additions -- a page cannot exist
+ * without a route to reach it. `POST /api/hr/contractor-attendance/approve` is
+ * the other addition, and the load-bearing one: rule 2 bills only rows whose
+ * `approved_at` is set, and nothing in the table can set it. Both are flagged in
+ * DECISIONS 18.3 rather than treated as licence to redesign the table.
  */
+function canApproveAttendance(c: Ctx): boolean {
+  return c.get('perms').has(PERMISSIONS.HR_ATTENDANCE_APPROVE)
+}
+
+function canContractors(c: Ctx): boolean {
+  return c.get('perms').has(PERMISSIONS.HR_LABOUR_CONTRACTOR_MANAGE)
+}
+
+/** An expiry that has passed, for the compliance column and the entry warning. */
+function expired(value: string | null, onDate: string): boolean {
+  return value !== null && value < onDate
+}
+
 hr.get('/app/hr/contractors', requirePermission(PERMISSIONS.HR_LABOUR_CONTRACTOR_MANAGE), async (c) => {
   const db = c.get('db')
-  const row = await db
-    .selectFrom('labour_contractors')
-    .select((eb) => eb.fn.countAll<number>().as('n'))
-    .executeTakeFirst()
-  const total = Number(row?.n ?? 0)
+  const status = queryParam(c, 'status')
+  const search = queryParam(c, 'q')
+  const rows = await q.listContractors(db, { status, search })
+  const now = today()
+
+  const columns: Column<q.ContractorListRow>[] = [
+    {
+      header: 'Contractor',
+      cell: (r) => (
+        <>
+          <a href={`/app/hr/contractors/${r.id}`}>
+            <strong>{r.name}</strong>
+          </a>
+          <div class="ncc-muted">{r.code}</div>
+        </>
+      ),
+    },
+    { header: 'Trade', cell: (r) => r.trade_specialisation ?? <span class="ncc-muted">-</span> },
+    { header: 'Phone', cell: (r) => r.contact_phone ?? <span class="ncc-muted">-</span> },
+    {
+      header: 'Licence',
+      cell: (r) =>
+        r.licence_valid_until === null ? (
+          <span class="ncc-muted">not recorded</span>
+        ) : expired(r.licence_valid_until, now) ? (
+          <span class="ncc-badge ncc-badge-danger">expired {formatDate(r.licence_valid_until)}</span>
+        ) : (
+          <DateText value={r.licence_valid_until} />
+        ),
+    },
+    {
+      header: 'WC policy',
+      cell: (r) =>
+        r.wc_policy_valid_until === null ? (
+          <span class="ncc-muted">not recorded</span>
+        ) : expired(r.wc_policy_valid_until, now) ? (
+          <span class="ncc-badge ncc-badge-danger">expired {formatDate(r.wc_policy_valid_until)}</span>
+        ) : (
+          <DateText value={r.wc_policy_valid_until} />
+        ),
+    },
+    {
+      header: 'ESI / PF',
+      cell: (r) => `${r.esi_registered ? 'ESI' : '-'} / ${r.pf_registered ? 'PF' : '-'}`,
+    },
+    { header: 'Status', cell: (r) => <StatusBadge status={r.status} /> },
+  ]
+
   return page(
     c,
-    { title: 'Labour contractors', path: '/app/hr/contractors' },
+    {
+      title: 'Labour contractors',
+      path: '/app/hr/contractors',
+      subtitle: `${rows.length} record${rows.length === 1 ? '' : 's'}`,
+      actions: (
+        <>
+          <a class="ncc-btn" href="/app/hr/contractor-attendance">
+            Attendance entry
+          </a>
+          <a class="ncc-btn" href="/app/hr/contractor-bills">
+            Bills
+          </a>
+          <a class="ncc-btn ncc-btn-primary" href="/app/hr/contractors/new">
+            New contractor
+          </a>
+        </>
+      ),
+    },
     <>
       {banner(c)}
-      <div class="ncc-kpi-row">
-        <KpiCard label="Records held" value={String(total)} hint="Live count from labour_contractors" />
-      </div>
+      <form class="ncc-card ncc-row" method="get" action="/app/hr/contractors">
+        <FormField label="Status" name="status" options={enumOptions(CONTRACTOR_STATUSES, status, 'Any')} />
+        <FormField label="Name or code contains" name="q" value={search ?? ''} />
+        <button class="ncc-btn" type="submit">
+          Filter
+        </button>
+      </form>
       <Panel title="Labour contractors">
-        <Alert tone="warn">
-          The data model behind this screen is migrated. The entry and approval
-          forms are the next build phase.
-        </Alert>
+        <DataTable columns={columns} rows={rows} empty="No contractor matches that filter." />
+        <p class="ncc-hint">
+          These are firms, not employees. Nothing on this screen creates a row in the employee master, and a
+          contractor's workers are counted by skill level rather than named (6.6 rules 2 and 3).
+        </p>
       </Panel>
     </>
   )
 })
+
+/* The contractor form, shared by create and edit ---------------------------- */
+
+type ContractorDetail = NonNullable<Awaited<ReturnType<typeof q.findContractor>>>
+
+/**
+ * One form for both create and edit, the same shape as `EmployeeForm`.
+ *
+ * The two compliance dates carry their consequence in the hint rather than in a
+ * validation rule, because leaving them blank is allowed and expired is only
+ * refused at the point of recording labour (rule 3). A user who has to discover
+ * that by being refused at a site gate has been told too late.
+ */
+function ContractorForm(props: {
+  action: string
+  csrf: string
+  contractor?: ContractorDetail
+  vendors: Awaited<ReturnType<typeof q.contractorVendorOptions>>
+  submit: string
+}) {
+  const r = props.contractor
+  return (
+    <form class="ncc-card ncc-stack" method="post" action={props.action}>
+      <CsrfInput token={props.csrf} />
+      <fieldset class="ncc-fieldset">
+        <legend>Who they are</legend>
+        <div class="ncc-grid ncc-grid--form">
+          <FormField label="Code" name="code" required value={r?.code} hint="Short, unique, upper case." />
+          <FormField label="Name" name="name" required value={r?.name} />
+          <FormField
+            label="Also a registered vendor"
+            name="vendorId"
+            options={idOptions(props.vendors, r?.vendor_id ?? null, 'Not on the vendor master')}
+            hint="Optional. Links this firm to its 6.4 vendor record for payments."
+          />
+          <FormField label="Contact phone" name="contactPhone" type="tel" value={r?.contact_phone} />
+          <FormField label="Trade" name="tradeSpecialisation" value={r?.trade_specialisation} />
+          <FormField
+            label="Status"
+            name="status"
+            options={enumOptions(CONTRACTOR_STATUSES, r?.status ?? 'active')}
+            hint="On hold can be overridden at entry; blacklisted cannot."
+          />
+        </div>
+      </fieldset>
+      <fieldset class="ncc-fieldset">
+        <legend>Statutory</legend>
+        <div class="ncc-grid ncc-grid--form">
+          <FormField label="PAN" name="pan" value={r?.pan} hint="Ten characters. Without it, TDS is not deducted at the higher rate here -- see the bill screen." />
+          <FormField label="GSTIN" name="gstin" value={r?.gstin} />
+          <FormField label="Labour licence no" name="licenceNo" value={r?.licence_no} />
+          <FormField
+            label="Licence valid until"
+            name="licenceValidUntil"
+            type="date"
+            value={r?.licence_valid_until}
+            hint="Once this date has passed, recording labour needs an override."
+          />
+          <FormField label="WC policy no" name="wcPolicyNo" value={r?.wc_policy_no} />
+          <FormField
+            label="WC policy valid until"
+            name="wcPolicyValidUntil"
+            type="date"
+            value={r?.wc_policy_valid_until}
+            hint="Workmen's compensation. Same override, same audit entry."
+          />
+          <FormField
+            label="Rating"
+            name="rating"
+            type="number"
+            min="1"
+            max="5"
+            value={r?.rating}
+            hint="1 to 5, or blank."
+          />
+        </div>
+        <div class="ncc-row">
+          <label class="ncc-field">
+            <span>Registered for ESI</span>
+            <input type="checkbox" name="esiRegistered" value="on" checked={Boolean(r?.esi_registered)} />
+          </label>
+          <label class="ncc-field">
+            <span>Registered for PF</span>
+            <input type="checkbox" name="pfRegistered" value="on" checked={Boolean(r?.pf_registered)} />
+          </label>
+        </div>
+      </fieldset>
+      <p>
+        <button class="ncc-btn ncc-btn-primary" type="submit">
+          {props.submit}
+        </button>
+      </p>
+    </form>
+  )
+}
+
+hr.get('/app/hr/contractors/new', requirePermission(PERMISSIONS.HR_LABOUR_CONTRACTOR_MANAGE), async (c) => {
+  const session = c.get('session')!
+  const vendors = await q.contractorVendorOptions(c.get('db'))
+  return page(
+    c,
+    { title: 'New labour contractor', path: '/app/hr/contractors' },
+    <>
+      {banner(c)}
+      <ContractorForm
+        action="/app/hr/contractors"
+        csrf={session.csrfToken}
+        vendors={vendors}
+        submit="Create contractor"
+      />
+    </>
+  )
+})
+
+hr.post('/app/hr/contractors', requirePermission(PERMISSIONS.HR_LABOUR_CONTRACTOR_MANAGE), async (c) => {
+  const parsed = contractorSchema.safeParse(await readBody(c))
+  if (!parsed.success) return errRedirect(c, '/app/hr/contractors/new', firstError(parsed.error))
+
+  try {
+    const id = await svc.createContractor(c.get('db'), actorOf(c), parsed.data)
+    return okRedirect(c, `/app/hr/contractors/${id}`, `${parsed.data.name} added.`)
+  } catch (err) {
+    if (!isAppError(err)) throw err
+    return errRedirect(c, '/app/hr/contractors/new', err.message)
+  }
+})
+
+hr.get(
+  '/app/hr/contractors/:contractorId/edit',
+  requirePermission(PERMISSIONS.HR_LABOUR_CONTRACTOR_MANAGE),
+  async (c) => {
+    const contractorId = idParam(c, 'contractorId')
+    const db = c.get('db')
+    const session = c.get('session')!
+    const [contractor, vendors] = await Promise.all([
+      q.findContractor(db, contractorId),
+      q.contractorVendorOptions(db),
+    ])
+    if (!contractor) throw new NotFoundError('That contractor does not exist.')
+
+    return page(
+      c,
+      { title: `Edit ${contractor.name}`, path: '/app/hr/contractors' },
+      <>
+        {banner(c)}
+        <ContractorForm
+          action={`/app/hr/contractors/${contractorId}`}
+          csrf={session.csrfToken}
+          contractor={contractor}
+          vendors={vendors}
+          submit="Save changes"
+        />
+      </>
+    )
+  }
+)
+
+hr.post('/app/hr/contractors/:contractorId', requirePermission(PERMISSIONS.HR_LABOUR_CONTRACTOR_MANAGE), async (c) => {
+  const contractorId = idParam(c, 'contractorId')
+  const back = `/app/hr/contractors/${contractorId}/edit`
+  const parsed = contractorSchema.safeParse(await readBody(c))
+  if (!parsed.success) return errRedirect(c, back, firstError(parsed.error))
+
+  try {
+    await svc.updateContractor(c.get('db'), actorOf(c), contractorId, parsed.data)
+    return okRedirect(c, `/app/hr/contractors/${contractorId}`, 'Contractor updated.')
+  } catch (err) {
+    if (!isAppError(err)) throw err
+    return errRedirect(c, back, err.message)
+  }
+})
+
+/* Contractor detail: profile, rate card, attendance, bills ------------------ */
+
+const CONTRACTOR_TABS = ['profile', 'rates', 'attendance', 'bills'] as const
+type ContractorTab = (typeof CONTRACTOR_TABS)[number]
+
+/**
+ * The attendance grid, shared by the contractor tab, the entry screen and a
+ * bill's own lines.
+ *
+ * `rate_paise` is shown beside the amount because it is a snapshot column, not a
+ * join: the figure on a six-month-old row is the rate that was on the card that
+ * day, and a reader comparing it against today's card needs to see both.
+ */
+function contractorAttendanceColumns(opts: { showContractor?: boolean } = {}): Column<q.ContractorAttendanceRow>[] {
+  return [
+    { header: 'Date', cell: (r) => <DateText value={r.attendance_date} /> },
+    ...(opts.showContractor
+      ? [
+          {
+            header: 'Contractor',
+            cell: (r: q.ContractorAttendanceRow) => (
+              <>
+                {r.contractor_name}
+                <div class="ncc-muted">{r.contractor_code}</div>
+              </>
+            ),
+          },
+        ]
+      : []),
+    { header: 'Project', cell: (r) => r.project_code ?? '-' },
+    { header: 'Skill', cell: (r) => titleCase(r.skill_level) },
+    { header: 'Head', numeric: true, cell: (r) => String(r.headcount) },
+    { header: 'OT hrs', numeric: true, cell: (r) => (r.overtime_hours === 0 ? '-' : String(r.overtime_hours)) },
+    { header: 'Rate', numeric: true, cell: (r) => <Money paise={r.rate_paise} /> },
+    { header: 'Amount', numeric: true, cell: (r) => <Money paise={r.amount_paise} /> },
+    {
+      header: 'State',
+      cell: (r) =>
+        r.bill_no !== null ? (
+          <a href={`/app/hr/contractor-bills/${r.bill_id}`}>{r.bill_no}</a>
+        ) : r.approved_at !== null ? (
+          <StatusBadge status="approved" />
+        ) : (
+          <StatusBadge status="pending" />
+        ),
+    },
+  ]
+}
+
+function billColumns(opts: { showContractor?: boolean } = {}): Column<q.ContractorBillRow>[] {
+  return [
+    {
+      header: 'Bill',
+      cell: (r) => (
+        <a href={`/app/hr/contractor-bills/${r.id}`}>
+          <strong>{r.bill_no}</strong>
+        </a>
+      ),
+    },
+    ...(opts.showContractor
+      ? [
+          {
+            header: 'Contractor',
+            cell: (r: q.ContractorBillRow) => (
+              <>
+                {r.contractor_name}
+                <div class="ncc-muted">{r.contractor_code}</div>
+              </>
+            ),
+          },
+        ]
+      : []),
+    { header: 'Project', cell: (r) => r.project_code },
+    {
+      header: 'Period',
+      cell: (r) => (
+        <>
+          <DateText value={r.period_from} /> to <DateText value={r.period_to} />
+        </>
+      ),
+    },
+    { header: 'Gross', numeric: true, cell: (r) => <Money paise={r.gross_paise} /> },
+    { header: 'Net payable', numeric: true, cell: (r) => <Money paise={r.net_payable_paise} /> },
+    { header: 'Status', cell: (r) => <StatusBadge status={r.status} /> },
+  ]
+}
+
+hr.get('/app/hr/contractors/:contractorId', requirePermission(PERMISSIONS.HR_LABOUR_CONTRACTOR_MANAGE), async (c) => {
+  const db = c.get('db')
+  const session = c.get('session')!
+  const contractorId = idParam(c, 'contractorId')
+  const contractor = await q.findContractor(db, contractorId)
+  if (!contractor) throw new NotFoundError('That contractor does not exist.')
+
+  const requested = (queryParam(c, 'tab') ?? 'profile') as ContractorTab
+  const tab: ContractorTab = CONTRACTOR_TABS.includes(requested) ? requested : 'profile'
+  const now = today()
+
+  let body: Child = null
+
+  if (tab === 'profile') {
+    const failures: string[] = []
+    if (expired(contractor.licence_valid_until, now)) failures.push('labour licence')
+    if (expired(contractor.wc_policy_valid_until, now)) failures.push('workmen’s compensation policy')
+
+    body = (
+      <div class="ncc-stack">
+        {contractor.status === 'blacklisted' ? (
+          <Alert tone="error">
+            This contractor is blacklisted. No labour can be recorded against them and there is no override for
+            it, because the permission that would override it is the one that set the status.
+          </Alert>
+        ) : failures.length > 0 ? (
+          <Alert tone="warn">
+            The {failures.join(' and the ')} {failures.length === 1 ? 'has' : 'have'} expired. Recording labour
+            for a day after the expiry needs an override, and the override is written to the audit log (6.6 rule
+            3).
+          </Alert>
+        ) : null}
+        <Panel title="The firm">
+          <DefinitionList
+            rows={[
+              ['Code', contractor.code],
+              ['Name', contractor.name],
+              ['Trade', contractor.trade_specialisation ?? '-'],
+              ['Phone', contractor.contact_phone ?? '-'],
+              ['Vendor record', contractor.vendor_name ?? 'not on the vendor master'],
+              ['Status', <StatusBadge status={contractor.status} />],
+              ['Rating', contractor.rating === null ? '-' : `${contractor.rating} of 5`],
+            ]}
+          />
+        </Panel>
+        <Panel title="Statutory and compliance">
+          <DefinitionList
+            rows={[
+              ['PAN', contractor.pan ?? 'not recorded'],
+              ['GSTIN', contractor.gstin ?? 'not recorded'],
+              ['Labour licence', contractor.licence_no ?? 'not recorded'],
+              [
+                'Licence valid until',
+                contractor.licence_valid_until === null ? (
+                  'not recorded'
+                ) : (
+                  <DateText value={contractor.licence_valid_until} />
+                ),
+              ],
+              ['WC policy', contractor.wc_policy_no ?? 'not recorded'],
+              [
+                'WC policy valid until',
+                contractor.wc_policy_valid_until === null ? (
+                  'not recorded'
+                ) : (
+                  <DateText value={contractor.wc_policy_valid_until} />
+                ),
+              ],
+              ['ESI', contractor.esi_registered ? 'registered' : 'not registered'],
+              ['PF', contractor.pf_registered ? 'registered' : 'not registered'],
+            ]}
+          />
+          <p class="ncc-hint">
+            A date left blank does not block anything: rule 3 refuses a date that has passed, and a column
+            nobody filled in has not passed. Whether a missing licence should block is an 8.1 question.
+          </p>
+        </Panel>
+      </div>
+    )
+  }
+
+  if (tab === 'rates') {
+    const [rates, projects] = await Promise.all([q.contractorRates(db, contractorId), q.projectOptions(db)])
+    body = (
+      <div class="ncc-stack">
+        <Panel title="Rate card">
+          <DataTable
+            columns={[
+              { header: 'Work', cell: (r: q.ContractorRateRow) => r.work_type },
+              { header: 'Skill', cell: (r: q.ContractorRateRow) => (r.skill_level ? titleCase(r.skill_level) : '-') },
+              { header: 'Unit', cell: (r: q.ContractorRateRow) => titleCase(r.uom) },
+              { header: 'Project', cell: (r: q.ContractorRateRow) => r.project_code ?? 'any project' },
+              {
+                header: 'Rate',
+                numeric: true,
+                cell: (r: q.ContractorRateRow) => <Money paise={r.rate_paise} />,
+              },
+              { header: 'From', cell: (r: q.ContractorRateRow) => <DateText value={r.effective_from} /> },
+              {
+                header: 'To',
+                cell: (r: q.ContractorRateRow) =>
+                  r.effective_to === null ? <span class="ncc-muted">open</span> : <DateText value={r.effective_to} />,
+              },
+            ]}
+            rows={rates}
+            empty="No rate is on the card yet. Attendance cannot be priced until one is."
+            caption="A rate is superseded, not edited: adding one closes the open line for the same scope the day before."
+          />
+        </Panel>
+        <Panel title="Add a rate">
+          <form class="ncc-stack" method="post" action={`/api/hr/contractors/${contractorId}/rates`}>
+            <CsrfInput token={session.csrfToken} />
+            <div class="ncc-grid ncc-grid--form">
+              <FormField label="Work type" name="workType" required hint="For example: block masonry." />
+              <FormField label="Unit" name="uom" required options={enumOptions(RATE_UOMS, 'per_day')} />
+              <FormField
+                label="Skill level"
+                name="skillLevel"
+                options={enumOptions(SKILL_LEVELS, null, 'Not skill-based')}
+                hint="Required for a per-day rate: that is what a headcount is priced against."
+              />
+              <FormField
+                label="Project"
+                name="projectId"
+                options={idOptions(projects, null, 'Any project')}
+                hint="A project rate is preferred over the company-wide one for that project."
+              />
+              <FormField label="Rate in rupees" name="rate" type="number" step="0.01" min="0" required />
+              <FormField label="Effective from" name="effectiveFrom" type="date" required value={now} />
+              <FormField label="Effective to" name="effectiveTo" type="date" hint="Blank leaves it open." />
+            </div>
+            <p>
+              <button class="ncc-btn ncc-btn-primary" type="submit">
+                Add rate
+              </button>
+            </p>
+            <p class="ncc-hint">
+              Only <code>per_day</code> can price a day's attendance: <code>contractor_attendance</code> holds a
+              headcount and no quantity, so a piece rate has nowhere to multiply. The other units are recorded
+              here and cannot be billed through this screen -- a structural gap in 6.6, flagged in DECISIONS.
+            </p>
+          </form>
+        </Panel>
+      </div>
+    )
+  }
+
+  if (tab === 'attendance') {
+    const rows = await q.contractorAttendance(db, { contractorId })
+    body = (
+      <Panel title="Recorded labour">
+        <DataTable
+          columns={contractorAttendanceColumns()}
+          rows={rows}
+          empty="No labour has been recorded against this contractor."
+          caption={`${rows.length} row${rows.length === 1 ? '' : 's'}, newest period last. A row with a bill number cannot be changed.`}
+        />
+        <p>
+          <a class="ncc-btn" href={`/app/hr/contractor-attendance?contractorId=${contractorId}`}>
+            Record a day
+          </a>
+        </p>
+      </Panel>
+    )
+  }
+
+  if (tab === 'bills') {
+    const bills = await q.listContractorBills(db, { contractorId })
+    body = (
+      <Panel title="Bills">
+        <DataTable
+          columns={billColumns()}
+          rows={bills}
+          empty="No bill has been generated for this contractor."
+        />
+      </Panel>
+    )
+  }
+
+  return page(
+    c,
+    {
+      title: contractor.name,
+      path: '/app/hr/contractors',
+      subtitle: `${contractor.code}${contractor.trade_specialisation ? `, ${contractor.trade_specialisation}` : ''}`,
+      actions: (
+        <>
+          <StatusBadge status={contractor.status} />
+          <a class="ncc-btn" href={`/app/hr/contractors/${contractorId}/edit`}>
+            Edit
+          </a>
+        </>
+      ),
+    },
+    <>
+      {banner(c)}
+      <Tabs
+        tabs={CONTRACTOR_TABS.map((t) => ({
+          label: titleCase(t),
+          href: `/app/hr/contractors/${contractorId}?tab=${t}`,
+        }))}
+        active={`/app/hr/contractors/${contractorId}?tab=${tab}`}
+      />
+      {body}
+    </>
+  )
+})
+
+hr.post(
+  '/api/hr/contractors/:contractorId/rates',
+  requirePermission(PERMISSIONS.HR_LABOUR_CONTRACTOR_MANAGE),
+  async (c) => {
+    const contractorId = idParam(c, 'contractorId')
+    const back = `/app/hr/contractors/${contractorId}?tab=rates`
+    const parsed = contractorRateSchema.safeParse(await readBody(c))
+    if (!parsed.success) return errRedirect(c, back, firstError(parsed.error))
+
+    return guard(c, back, async () => {
+      await svc.addContractorRate(c.get('db'), actorOf(c), contractorId, parsed.data)
+      return `${parsed.data.workType} rate added with effect from ${parsed.data.effectiveFrom}.`
+    })
+  }
+)
+
+/* Contractor attendance entry (6.6 rule 2, first half) ---------------------- */
+
+/** Projects with their code in the label, which `idOptions` drops. */
+const projectSelect = (
+  projects: Array<{ id: number; code: string; name: string }>,
+  selected: number | null,
+  blank: string
+) => [
+  { value: '', label: blank, selected: !selected },
+  ...projects.map((p) => ({
+    value: String(p.id),
+    label: `${p.code} ${p.name}`,
+    selected: Number(p.id) === selected,
+  })),
+]
+
+/**
+ * The entry screen: one contractor, one project, one day, a row per skill level.
+ *
+ * The grid is server-rendered and the date is a query parameter, exactly like the
+ * employee attendance screen, and for the same reason: the rows have to be
+ * prefilled with what is already recorded, and nothing in `src/` is client-side
+ * yet. The keyboard-driven matrix spec line 1761 asks for is the slice that
+ * follows this one (DECISIONS 17.2); it is not quietly dropped and it is not
+ * introduced mid-slice.
+ *
+ * Which skill rows appear is not a guess: they are the skills the contractor has
+ * a per-day rate for on that date. A skill with no rate cannot be priced, so
+ * offering it would be offering a row the service must refuse.
+ */
+hr.get('/app/hr/contractor-attendance', requirePermission(PERMISSIONS.HR_ATTENDANCE_RECORD), async (c) => {
+  const db = c.get('db')
+  const session = c.get('session')!
+  const contractorId = Number(queryParam(c, 'contractorId') ?? '') || null
+  const projectId = Number(queryParam(c, 'projectId') ?? '') || null
+  const dateParam = queryParam(c, 'date')
+  const date = dateParam && isValidIsoDate(dateParam) ? dateParam : today()
+
+  const [contractors, projects] = await Promise.all([q.contractorOptions(db), q.projectOptions(db)])
+  const contractor = contractorId === null ? undefined : await q.findContractor(db, contractorId)
+
+  const rates = contractor ? await q.contractorRates(db, Number(contractor.id)) : []
+  const perDay = rates.filter(
+    (r) =>
+      r.uom === 'per_day' &&
+      r.skill_level !== null &&
+      r.effective_from <= date &&
+      (r.effective_to === null || r.effective_to >= date) &&
+      (r.project_id === null || projectId === null || r.project_id === projectId)
+  )
+  const skills = [...new Set(perDay.map((r) => r.skill_level as string))].sort()
+
+  const prior =
+    contractor && projectId !== null
+      ? await q.contractorAttendance(db, { contractorId: Number(contractor.id), projectId, from: date, to: date })
+      : []
+  const priorBySkill = new Map(prior.map((r) => [r.skill_level, r]))
+  const billed = prior.filter((r) => r.bill_id !== null).length
+
+  const failures: string[] = []
+  if (contractor) {
+    if (expired(contractor.licence_valid_until, date)) failures.push('the labour licence had expired')
+    if (expired(contractor.wc_policy_valid_until, date)) failures.push('the WC policy had expired')
+    if (contractor.status === 'on_hold') failures.push('the contractor is on hold')
+  }
+
+  return page(
+    c,
+    {
+      title: 'Contractor attendance',
+      path: '/app/hr/contractors',
+      subtitle: contractor ? `${contractor.name} — ${formatDate(date)}` : 'Choose a contractor and a day',
+      actions: (
+        <a class="ncc-btn" href="/app/hr/contractors">
+          All contractors
+        </a>
+      ),
+    },
+    <>
+      {banner(c)}
+      <form class="ncc-toolbar" method="get" action="/app/hr/contractor-attendance">
+        <FormField
+          label="Contractor"
+          name="contractorId"
+          options={idOptions(contractors, contractorId, 'Choose one')}
+        />
+        <FormField label="Project" name="projectId" options={projectSelect(projects, projectId, 'Choose one')} />
+        <FormField label="Date" name="date" type="date" value={date} />
+        <button class="ncc-btn" type="submit">
+          Show
+        </button>
+      </form>
+      {contractor === undefined || projectId === null ? (
+        <Alert tone="warn">
+          Pick a contractor, the project the labour worked on and the day. Unlike employee attendance, a project
+          is required: contractor labour is always charged to a site.
+        </Alert>
+      ) : contractor.status === 'blacklisted' ? (
+        <Alert tone="error">
+          {contractor.name} is blacklisted. No labour can be recorded against them, and this one has no
+          override.
+        </Alert>
+      ) : skills.length === 0 ? (
+        <Alert tone="warn">
+          {contractor.name} has no per-day rate in force on {formatDate(date)}, so nothing here can be priced.
+          Add one on the <a href={`/app/hr/contractors/${contractor.id}?tab=rates`}>rate card</a> first.
+        </Alert>
+      ) : (
+        <>
+          {failures.length > 0 ? (
+            <Alert tone="warn">
+              On {formatDate(date)} {failures.join(' and ')}. Recording this day needs the override below, and it
+              is written to the audit log with the reason list (6.6 rule 3).
+            </Alert>
+          ) : null}
+          {billed > 0 ? (
+            <Alert tone="warn">
+              {billed} of the rows for this day {billed === 1 ? 'is' : 'are'} already on a bill and cannot be
+              changed here.
+            </Alert>
+          ) : null}
+          <Panel title={`Headcount for ${formatDate(date)}`}>
+            <form method="post" action="/api/hr/contractor-attendance">
+              <CsrfInput token={session.csrfToken} />
+              <input type="hidden" name="contractorId" value={String(contractor.id)} />
+              <input type="hidden" name="projectId" value={String(projectId)} />
+              <input type="hidden" name="attendanceDate" value={date} />
+              <DataTable
+                columns={[
+                  {
+                    header: 'Skill',
+                    cell: (skill: string) => (
+                      <>
+                        <input type="hidden" name="skillLevel" value={skill} />
+                        {titleCase(skill)}
+                      </>
+                    ),
+                  },
+                  {
+                    header: 'Rate that day',
+                    numeric: true,
+                    cell: (skill: string) => {
+                      const best = perDay
+                        .filter((r) => r.skill_level === skill)
+                        .sort(
+                          (a, b) =>
+                            (b.project_id === null ? 0 : 1) - (a.project_id === null ? 0 : 1) ||
+                            b.effective_from.localeCompare(a.effective_from)
+                        )[0]
+                      return <Money paise={best?.rate_paise ?? null} />
+                    },
+                  },
+                  {
+                    header: 'Headcount',
+                    numeric: true,
+                    cell: (skill: string) => {
+                      const p = priorBySkill.get(skill)
+                      return p && p.bill_id !== null ? (
+                        <>
+                          <input type="hidden" name="headcount" value="" />
+                          <span class="ncc-num">{p.headcount}</span>
+                        </>
+                      ) : (
+                        <input
+                          type="number"
+                          name="headcount"
+                          min="1"
+                          max="999"
+                          step="1"
+                          style="max-width:6rem"
+                          value={p ? String(p.headcount) : ''}
+                          aria-label={`Headcount for ${titleCase(skill)}`}
+                        />
+                      )
+                    },
+                  },
+                  {
+                    header: 'OT hours',
+                    numeric: true,
+                    cell: (skill: string) => {
+                      const p = priorBySkill.get(skill)
+                      return p && p.bill_id !== null ? (
+                        <>
+                          <input type="hidden" name="overtimeHours" value="" />
+                          <span class="ncc-num">{p.overtime_hours}</span>
+                        </>
+                      ) : (
+                        <input
+                          type="number"
+                          name="overtimeHours"
+                          min="0"
+                          step="0.5"
+                          style="max-width:6rem"
+                          value={p && p.overtime_hours !== 0 ? String(p.overtime_hours) : ''}
+                          aria-label={`Overtime hours for ${titleCase(skill)}`}
+                        />
+                      )
+                    },
+                  },
+                  {
+                    header: 'State',
+                    cell: (skill: string) => {
+                      const p = priorBySkill.get(skill)
+                      if (!p) return <span class="ncc-muted">nothing recorded</span>
+                      if (p.bill_no !== null)
+                        return <a href={`/app/hr/contractor-bills/${p.bill_id}`}>{p.bill_no}</a>
+                      return p.approved_at !== null ? (
+                        <StatusBadge status="approved" />
+                      ) : (
+                        <StatusBadge status="pending" />
+                      )
+                    },
+                  },
+                ]}
+                rows={skills}
+                empty="No priced skill for this day."
+                caption="A blank headcount writes nothing. Changing an approved row clears its approval, because the figure that was approved is not the figure it now carries."
+              />
+              {failures.length > 0 ? (
+                <label class="ncc-field">
+                  <span>Override the compliance failure</span>
+                  <input type="checkbox" name="overrideCompliance" value="on" />
+                  <span class="ncc-hint">
+                    Needs <code>hr.labour_contractor_manage</code>. Recorded against your name.
+                  </span>
+                </label>
+              ) : null}
+              <p style="margin-top:1rem">
+                <button class="ncc-btn ncc-btn-primary" type="submit">
+                  Post the day
+                </button>
+              </p>
+              <p class="ncc-hint">
+                Overtime is recorded and not priced: 6.6 gives no multiplier and 8.6 has not answered, so the
+                amount on each row is headcount times the day rate. DECISIONS records that.
+              </p>
+            </form>
+          </Panel>
+          {canApproveAttendance(c) ? (
+            <Panel title="Approve a period">
+              <form class="ncc-stack" method="post" action="/api/hr/contractor-attendance/approve">
+                <CsrfInput token={session.csrfToken} />
+                <input type="hidden" name="contractorId" value={String(contractor.id)} />
+                <input type="hidden" name="projectId" value={String(projectId)} />
+                <div class="ncc-row">
+                  <FormField label="From" name="from" type="date" required value={monthBounds(monthOf(date)).start} />
+                  <FormField label="To" name="to" type="date" required value={date} />
+                  <button class="ncc-btn" type="submit">
+                    Approve
+                  </button>
+                </div>
+                <p class="ncc-hint">
+                  Rule 2 bills approved attendance only. The 6.6 route table has no route that sets{' '}
+                  <code>approved_at</code> on these rows, so this one is an addition rather than a spec route --
+                  it carries <code>hr.attendance_approve</code>, the permission rule 4 uses for the same act on
+                  employees. Flagged in DECISIONS 18.3.
+                </p>
+              </form>
+            </Panel>
+          ) : null}
+        </>
+      )}
+    </>
+  )
+})
+
+hr.post('/api/hr/contractor-attendance', requirePermission(PERMISSIONS.HR_ATTENDANCE_RECORD), async (c) => {
+  const body = await readBody(c)
+  const parsed = contractorAttendanceSchema.safeParse(body)
+  const back = (() => {
+    const cid = String(body['contractorId'] ?? '')
+    const pid = String(body['projectId'] ?? '')
+    const date = String(body['attendanceDate'] ?? '')
+    return `/app/hr/contractor-attendance?contractorId=${cid}&projectId=${pid}&date=${date}`
+  })()
+  if (!parsed.success) return errRedirect(c, back, firstError(parsed.error))
+
+  return guard(c, back, async () => {
+    const result = await svc.recordContractorAttendance(c.get('db'), actorOf(c), parsed.data, {
+      canManageContractors: canContractors(c),
+    })
+    const parts = [`${result.inserted} written, ${result.updated} corrected, ${result.headcount} on site`]
+    if (result.complianceOverride.length > 0) {
+      parts.push(`compliance override recorded (${result.complianceOverride.join('; ')})`)
+    }
+    if (result.ambiguousRates.length > 0) {
+      parts.push(`two rates were equally applicable, the newest was used (${result.ambiguousRates.join('; ')})`)
+    }
+    return `${parts.join('. ')}.`
+  })
+})
+
+hr.post(
+  '/api/hr/contractor-attendance/approve',
+  requirePermission(PERMISSIONS.HR_ATTENDANCE_APPROVE),
+  async (c) => {
+    const body = await readBody(c)
+    const parsed = contractorPeriodSchema.safeParse(body)
+    const back = `/app/hr/contractor-attendance?contractorId=${String(body['contractorId'] ?? '')}&projectId=${String(
+      body['projectId'] ?? ''
+    )}`
+    if (!parsed.success) return errRedirect(c, back, firstError(parsed.error))
+
+    return guard(c, back, async () => {
+      const result = await svc.approveContractorAttendance(c.get('db'), actorOf(c), parsed.data)
+      return `${result.approved} row${result.approved === 1 ? '' : 's'} approved, ${result.alreadyApproved} already were. They can now be billed.`
+    })
+  }
+)
+
+/* Contractor bills (6.6 rule 2, second half) -------------------------------- */
+
+/**
+ * The bill list, and the generate form.
+ *
+ * The generate form shows what the bill would come to before it burns a bill
+ * number: `unbilledSummary` runs the same filter the generator will, so the
+ * operator sees the gross rule 2 will compute and the count of unapproved rows
+ * that are keeping it down.
+ */
+hr.get('/app/hr/contractor-bills', requirePermission(PERMISSIONS.HR_LABOUR_CONTRACTOR_MANAGE), async (c) => {
+  const db = c.get('db')
+  const session = c.get('session')!
+  const status = queryParam(c, 'status')
+  const contractorId = Number(queryParam(c, 'contractorId') ?? '') || null
+  const projectId = Number(queryParam(c, 'projectId') ?? '') || null
+  const from = queryParam(c, 'from')
+  const to = queryParam(c, 'to')
+
+  const [bills, contractors, projects] = await Promise.all([
+    q.listContractorBills(db, {
+      ...(status ? { status } : {}),
+      ...(contractorId !== null ? { contractorId } : {}),
+      ...(projectId !== null ? { projectId } : {}),
+    }),
+    q.contractorOptions(db),
+    q.projectOptions(db),
+  ])
+
+  const period =
+    from && to && isValidIsoDate(from) && isValidIsoDate(to) && to >= from
+      ? { from, to }
+      : { from: monthBounds(monthOf(today())).start, to: monthBounds(monthOf(today())).end }
+  const summary =
+    contractorId !== null && projectId !== null
+      ? await q.unbilledSummary(db, { contractorId, projectId, from: period.from, to: period.to })
+      : null
+
+  return page(
+    c,
+    {
+      title: 'Contractor bills',
+      path: '/app/hr/contractor-bills',
+      subtitle: `${bills.length} bill${bills.length === 1 ? '' : 's'}`,
+      actions: (
+        <a class="ncc-btn" href="/app/hr/contractors">
+          All contractors
+        </a>
+      ),
+    },
+    <>
+      {banner(c)}
+      <form class="ncc-card ncc-row" method="get" action="/app/hr/contractor-bills">
+        <FormField
+          label="Contractor"
+          name="contractorId"
+          options={idOptions(contractors, contractorId, 'Any')}
+        />
+        <FormField label="Project" name="projectId" options={projectSelect(projects, projectId, 'Any')} />
+        <FormField label="Status" name="status" options={enumOptions(CONTRACTOR_BILL_STATUSES, status, 'Any')} />
+        <FormField label="Period from" name="from" type="date" value={period.from} />
+        <FormField label="to" name="to" type="date" value={period.to} />
+        <button class="ncc-btn" type="submit">
+          Filter
+        </button>
+      </form>
+      <Panel title="Bills">
+        <DataTable columns={billColumns({ showContractor: true })} rows={bills} empty="No bill matches that filter." />
+      </Panel>
+      {canContractors(c) ? (
+        <Panel title="Generate a bill">
+          {contractorId === null || projectId === null ? (
+            <Alert tone="warn">
+              Choose a contractor and a project above. A bill covers one contractor on one site for one period.
+              Nothing in <code>contractor_bills</code> enforces that -- its only unique key is{' '}
+              <code>bill_no</code> -- so what stops a day reaching two bills is <code>bill_id</code> being
+              stamped on each attendance row under a <code>WHERE bill_id IS NULL</code> guard.
+            </Alert>
+          ) : (
+            <>
+              <DefinitionList
+                rows={[
+                  ['Period', `${formatDate(period.from)} to ${formatDate(period.to)}`],
+                  ['Approved rows, unbilled', String(summary?.rows ?? 0)],
+                  ['Days', String(summary?.days ?? 0)],
+                  ['Person-days', String(summary?.headcountDays ?? 0)],
+                  ['Overtime hours (recorded, unpriced)', String(summary?.overtimeHours ?? 0)],
+                  ['Gross this would bill', <Money paise={summary?.grossPaise ?? 0} />],
+                ]}
+              />
+              {summary !== null && summary.unapproved > 0 ? (
+                <Alert tone="error">
+                  {summary.unapproved} row{summary.unapproved === 1 ? '' : 's'} in this period{' '}
+                  {summary.unapproved === 1 ? 'is' : 'are'} not approved, and generation will refuse rather than
+                  leave {summary.unapproved === 1 ? 'it' : 'them'} behind unbilled for good. Approve{' '}
+                  {summary.unapproved === 1 ? 'it' : 'them'} on the{' '}
+                  <a
+                    href={`/app/hr/contractor-attendance?contractorId=${contractorId}&projectId=${projectId}&date=${period.to}`}
+                  >
+                    entry screen
+                  </a>{' '}
+                  first.
+                </Alert>
+              ) : null}
+              <form class="ncc-stack" method="post" action="/api/hr/contractor-bills/generate">
+                <CsrfInput token={session.csrfToken} />
+                <input type="hidden" name="contractorId" value={String(contractorId)} />
+                <input type="hidden" name="projectId" value={String(projectId)} />
+                <input type="hidden" name="from" value={period.from} />
+                <input type="hidden" name="to" value={period.to} />
+                <div class="ncc-row">
+                  <FormField
+                    label="Retention %"
+                    name="retentionPct"
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    max="100"
+                    hint="Blank uses finance.retention_default_pct."
+                  />
+                  <FormField
+                    label="TDS %"
+                    name="tdsPct"
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    max="100"
+                    hint="Blank uses finance.tds_default_pct."
+                  />
+                  <FormField
+                    label="Advance recovered (rupees)"
+                    name="advanceRecovered"
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    hint="Typed: no advance table exists. DECISIONS 18.6."
+                  />
+                  <FormField
+                    label="Penalty (rupees)"
+                    name="penalty"
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    hint="Liquidated damages, a judgement."
+                  />
+                </div>
+                <p>
+                  <button class="ncc-btn ncc-btn-primary" type="submit">
+                    Generate the bill
+                  </button>
+                </p>
+                <p class="ncc-hint">
+                  The gross is never typed: rule 2 sums it from approved attendance inside the transaction and
+                  stamps <code>bill_id</code> on every row it consumed, so the same day cannot reach two bills.
+                </p>
+              </form>
+            </>
+          )}
+        </Panel>
+      ) : null}
+    </>
+  )
+})
+
+/**
+ * One bill, with the attendance it was built from.
+ *
+ * The finance line at the bottom is the point of this page. 6.8 rule 1 creates
+ * the `expenses` row when the bill is approved, and that posting is not built
+ * yet, so an approved bill with no `expense_id` is the normal state today. A page
+ * that showed an approved bill without saying so is the screen somebody posts a
+ * second time from.
+ */
+hr.get('/app/hr/contractor-bills/:billId', requirePermission(PERMISSIONS.HR_LABOUR_CONTRACTOR_MANAGE), async (c) => {
+  const db = c.get('db')
+  const session = c.get('session')!
+  const billId = idParam(c, 'billId')
+  const bill = await q.findContractorBill(db, billId)
+  if (bill === undefined) throw new NotFoundError('That contractor bill does not exist.')
+  const lines = await q.contractorAttendance(db, { billId })
+
+  const deduction = (label: string, paise: number) =>
+    [label, paise === 0 ? <span class="ncc-muted">nil</span> : <Money paise={-paise} />] as [string, Child]
+
+  return page(
+    c,
+    {
+      title: bill.bill_no,
+      path: '/app/hr/contractor-bills',
+      subtitle: `${bill.contractor_name} · ${bill.project_code} · ${formatDate(bill.period_from)} to ${formatDate(bill.period_to)}`,
+      actions: (
+        <a class="ncc-btn" href="/app/hr/contractor-bills">
+          All bills
+        </a>
+      ),
+    },
+    <>
+      {banner(c)}
+      <div class="ncc-grid ncc-grid--kpi">
+        <KpiCard label="Gross" value={<Money paise={bill.gross_paise} />} hint={`${lines.length} attendance rows`} />
+        <KpiCard label="Net payable" value={<Money paise={bill.net_payable_paise} />} hint="after deductions" />
+        <KpiCard label="Status" value={<StatusBadge status={bill.status} />} hint={`bill ${bill.id}`} />
+      </div>
+      <Panel title="The figures">
+        <DefinitionList
+          rows={[
+            ['Gross from approved attendance', <Money paise={bill.gross_paise} />],
+            deduction('Retention', bill.retention_paise),
+            deduction('TDS', bill.tds_paise),
+            deduction('Advance recovered', bill.advance_recovered_paise),
+            deduction('Penalty', bill.penalty_paise),
+            ['Net payable', <Money paise={bill.net_payable_paise} />],
+            ['PAN', bill.contractor_pan ?? <span class="ncc-badge ncc-badge-warn">not recorded</span>],
+            ['GSTIN', bill.contractor_gstin ?? <span class="ncc-muted">-</span>],
+            ['Raised by', bill.created_by_name ?? <span class="ncc-muted">-</span>],
+            [
+              'Approved',
+              bill.approved_at === null ? (
+                <span class="ncc-muted">not yet</span>
+              ) : (
+                <>
+                  <DateText value={bill.approved_at} withTime /> by {bill.approved_by_name ?? 'unknown'}
+                </>
+              ),
+            ],
+          ]}
+        />
+        {bill.contractor_pan === null ? (
+          <Alert tone="warn">
+            No PAN is on file. Section 206AA would put TDS at 20% and this bill has not applied that -- the rate
+            used is whatever was entered or defaulted. DECISIONS 18.7 records 206AA as unimplemented.
+          </Alert>
+        ) : null}
+      </Panel>
+      <Panel title="Attendance on this bill">
+        <DataTable
+          columns={contractorAttendanceColumns({ showContractor: false })}
+          rows={lines}
+          empty="No attendance row points at this bill."
+          caption="These rows carry bill_id and can no longer be corrected on the entry screen."
+        />
+      </Panel>
+      <Panel title="Finance">
+        <DefinitionList
+          rows={[
+            ['Identity finance keys on', <code>(contractor_bills, {String(bill.id)})</code>],
+            [
+              'Expense row',
+              bill.expense_id === null ? (
+                <span class="ncc-muted">none yet -- 6.8 rule 1 is not built</span>
+              ) : (
+                <>#{bill.expense_id}</>
+              ),
+            ],
+          ]}
+        />
+        <p class="ncc-hint">
+          When 6.8 lands, approving a bill writes one <code>expenses</code> row with{' '}
+          <code>source_type='contractor_bill'</code>, <code>source_table='contractor_bills'</code> and{' '}
+          <code>source_id={String(bill.id)}</code>, and <code>expense_id</code> above becomes the back-link. That
+          id is immutable; <code>{bill.bill_no}</code> is its human-facing form.
+        </p>
+      </Panel>
+      {bill.approved_at === null && canContractors(c) ? (
+        <Panel title="Approve">
+          <form method="post" action={`/api/hr/contractor-bills/${bill.id}/approve`}>
+            <CsrfInput token={session.csrfToken} />
+            <button class="ncc-btn ncc-btn-primary" type="submit">
+              Approve this bill
+            </button>
+            <p class="ncc-hint">
+              Checked against your approval limit for document type <code>expense</code> -- the ENUM in 002 has no{' '}
+              <code>contractor_bill</code> member -- and against the gross, not the net, because the gross is what
+              the project commits. <code>approval_limits</code> is empty pending 8.2, so this refuses for now.
+            </p>
+          </form>
+        </Panel>
+      ) : null}
+    </>
+  )
+})
+
+hr.post('/api/hr/contractor-bills/generate', requirePermission(PERMISSIONS.HR_LABOUR_CONTRACTOR_MANAGE), async (c) => {
+  const body = await readBody(c)
+  const parsed = contractorBillGenerateSchema.safeParse(body)
+  const back = `/app/hr/contractor-bills?contractorId=${String(body['contractorId'] ?? '')}&projectId=${String(
+    body['projectId'] ?? ''
+  )}&from=${String(body['from'] ?? '')}&to=${String(body['to'] ?? '')}`
+  if (!parsed.success) return errRedirect(c, back, firstError(parsed.error))
+
+  return guard(c, back, async () => {
+    const r = await svc.generateContractorBill(c.get('db'), actorOf(c), parsed.data)
+    const warn = r.noPan ? ' The contractor has no PAN on file; 206AA is not applied.' : ''
+    return `${r.billNo} raised from ${r.rows} approved row${r.rows === 1 ? '' : 's'} over ${r.days} day${r.days === 1 ? '' : 's'}: gross ${formatPaise(r.grossPaise)}, net payable ${formatPaise(r.netPayablePaise)} after ${r.retentionBp / 100}% retention and ${r.tdsBp / 100}% TDS.${warn}`
+  })
+})
+
+hr.post(
+  '/api/hr/contractor-bills/:billId/approve',
+  requirePermission(PERMISSIONS.HR_LABOUR_CONTRACTOR_MANAGE),
+  async (c) => {
+    const billId = idParam(c, 'billId')
+    const back = `/app/hr/contractor-bills/${billId}`
+    return guard(c, back, async () => {
+      const r = await svc.approveContractorBill(c.get('db'), actorOf(c), billId, c.get('roleKeys'))
+      return `${r.billNo} approved as ${r.limitRoleKey}: gross ${formatPaise(r.grossPaise)}, net payable ${formatPaise(r.netPayablePaise)}. It does not reach finance until 6.8 rule 1 is built.`
+    })
+  }
+)
+
+
+
+
 
 hr.get('/app/hr/recruiting', requirePermission(PERMISSIONS.HR_RECRUIT_MANAGE), async (c) => {
   const db = c.get('db')

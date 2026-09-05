@@ -790,3 +790,424 @@ export async function hrDashboard(db: Db) {
     openPositions: Number(openPositions?.n ?? 0),
   }
 }
+
+/* Contractor labour (spec 6.6 rules 2 and 3) ------------------------------ */
+
+/**
+ * The second population of 6.6.
+ *
+ * Nothing below joins `employees`. A contractor's workers are a headcount per
+ * skill per day and the company holds no identity for them, which is why
+ * `contractor_attendance` has a `headcount` where `attendance` has an
+ * `employee_id`. Keeping the two apart in the reads as well as in the tables is
+ * what stops a headcount from ever being counted as a person on the muster roll.
+ */
+
+export interface ContractorListRow {
+  id: number
+  code: string
+  name: string
+  status: string
+  trade_specialisation: string | null
+  contact_phone: string | null
+  licence_valid_until: string | null
+  wc_policy_valid_until: string | null
+  esi_registered: number
+  pf_registered: number
+  rating: number | null
+  vendor_name: string | null
+}
+
+export async function listContractors(
+  db: Queryable,
+  opts: { status?: string; search?: string } = {}
+): Promise<ContractorListRow[]> {
+  let query = db
+    .selectFrom('labour_contractors')
+    .leftJoin('vendors', 'vendors.id', 'labour_contractors.vendor_id')
+    .select([
+      'labour_contractors.id',
+      'labour_contractors.code',
+      'labour_contractors.name',
+      'labour_contractors.status',
+      'labour_contractors.trade_specialisation',
+      'labour_contractors.contact_phone',
+      'labour_contractors.licence_valid_until',
+      'labour_contractors.wc_policy_valid_until',
+      'labour_contractors.esi_registered',
+      'labour_contractors.pf_registered',
+      'labour_contractors.rating',
+      'vendors.name as vendor_name',
+    ])
+    .orderBy('labour_contractors.code')
+  if (opts.status) query = query.where('labour_contractors.status', '=', opts.status as 'active')
+  if (opts.search) {
+    const like = `%${opts.search}%`
+    query = query.where((eb) =>
+      eb.or([eb('labour_contractors.name', 'like', like), eb('labour_contractors.code', 'like', like)])
+    )
+  }
+  return (await query.execute()) as unknown as ContractorListRow[]
+}
+
+export async function findContractor(db: Queryable, id: number) {
+  return db
+    .selectFrom('labour_contractors')
+    .leftJoin('vendors', 'vendors.id', 'labour_contractors.vendor_id')
+    .select([
+      'labour_contractors.id',
+      'labour_contractors.code',
+      'labour_contractors.name',
+      'labour_contractors.vendor_id',
+      'labour_contractors.contact_phone',
+      'labour_contractors.pan',
+      'labour_contractors.gstin',
+      'labour_contractors.trade_specialisation',
+      'labour_contractors.licence_no',
+      'labour_contractors.licence_valid_until',
+      'labour_contractors.esi_registered',
+      'labour_contractors.pf_registered',
+      'labour_contractors.wc_policy_no',
+      'labour_contractors.wc_policy_valid_until',
+      'labour_contractors.rating',
+      'labour_contractors.status',
+      'labour_contractors.created_at',
+      'vendors.name as vendor_name',
+    ])
+    .where('labour_contractors.id', '=', id)
+    .executeTakeFirst()
+}
+
+/** Active contractors for a select. Blacklisted ones are left out on purpose. */
+export async function contractorOptions(db: Queryable) {
+  return db
+    .selectFrom('labour_contractors')
+    .select(['id', 'code', 'name', 'status'])
+    .where('status', '!=', 'blacklisted')
+    .orderBy('code')
+    .execute()
+}
+
+/**
+ * Vendors a contractor can be linked to, for the optional `vendor_id`.
+ *
+ * Subcontractors and service vendors only: a labour contractor who is also on
+ * the vendor master is one of those two, and offering the cement supplier in
+ * that select invites a link that means nothing to 6.4.
+ */
+export async function contractorVendorOptions(db: Queryable) {
+  return db
+    .selectFrom('vendors')
+    .select(['id', 'code', 'name'])
+    .where('status', '=', 'active')
+    .where('vendor_type', 'in', ['subcontractor', 'service'])
+    .orderBy('name')
+    .execute()
+}
+
+export interface ContractorRateRow {
+  id: number
+  project_id: number | null
+  work_type: string
+  uom: string
+  skill_level: string | null
+  rate_paise: number
+  effective_from: string
+  effective_to: string | null
+  project_code: string | null
+}
+
+export async function contractorRates(db: Queryable, contractorId: number): Promise<ContractorRateRow[]> {
+  const rows = await db
+    .selectFrom('contractor_rates')
+    .leftJoin('projects', 'projects.id', 'contractor_rates.project_id')
+    .select([
+      'contractor_rates.id',
+      'contractor_rates.project_id',
+      'contractor_rates.work_type',
+      'contractor_rates.uom',
+      'contractor_rates.skill_level',
+      'contractor_rates.rate_paise',
+      'contractor_rates.effective_from',
+      'contractor_rates.effective_to',
+      'projects.code as project_code',
+    ])
+    .where('contractor_rates.contractor_id', '=', contractorId)
+    .orderBy('contractor_rates.effective_from', 'desc')
+    .orderBy('contractor_rates.id', 'desc')
+    .execute()
+  return rows.map((r) => ({ ...r, rate_paise: Number(r.rate_paise) })) as unknown as ContractorRateRow[]
+}
+
+/**
+ * The rate a day is priced at, resolved to exactly one row.
+ *
+ * `contractor_attendance.rate_paise` is a snapshot rather than a join, so this
+ * runs once at entry and the figure never moves afterwards. The ordering is the
+ * whole content of the function:
+ *
+ *   1. `uom = 'per_day'`. A headcount cannot be multiplied by a per-sqft rate,
+ *      and the table has no quantity column to multiply anything else by.
+ *   2. A rate for THIS project beats a company-wide one, which is what a
+ *      nullable `contractor_rates.project_id` is for.
+ *   3. Then the latest `effective_from` that has begun, then the highest id.
+ *
+ * Step 3 is deterministic but not unambiguous, and the ambiguity is structural:
+ * `contractor_rates.work_type` is NOT NULL while `contractor_attendance` has no
+ * work_type at all, so a contractor with a mason rate for shuttering and another
+ * for plastering has two rows this can only choose between by date. The service
+ * records the chosen `rate_id` in the audit log for that reason. Recorded in
+ * DECISIONS rather than resolved by refusing, because a refusal would stop a
+ * site gate at 8am over a data condition nobody there can fix.
+ */
+export async function applicableRate(
+  db: Queryable,
+  opts: { contractorId: number; projectId: number; skillLevel: string; onDate: string }
+) {
+  const rows = await db
+    .selectFrom('contractor_rates')
+    .select(['id', 'project_id', 'work_type', 'rate_paise', 'effective_from', 'effective_to'])
+    .where('contractor_id', '=', opts.contractorId)
+    .where('uom', '=', 'per_day')
+    .where('skill_level', '=', opts.skillLevel as 'skilled')
+    .where('effective_from', '<=', opts.onDate)
+    .where((eb) => eb.or([eb('effective_to', 'is', null), eb('effective_to', '>=', opts.onDate)]))
+    .where((eb) => eb.or([eb('project_id', 'is', null), eb('project_id', '=', opts.projectId)]))
+    .execute()
+  if (rows.length === 0) return undefined
+
+  const ranked = [...rows].sort((a, b) => {
+    const scope = (r: typeof a) => (r.project_id === null ? 0 : 1)
+    if (scope(a) !== scope(b)) return scope(b) - scope(a)
+    if (a.effective_from !== b.effective_from) return String(a.effective_from) < String(b.effective_from) ? 1 : -1
+    return Number(b.id) - Number(a.id)
+  })
+  const best = ranked[0]!
+  const runnerUp = ranked[1]
+  return {
+    id: Number(best.id),
+    projectId: best.project_id === null ? null : Number(best.project_id),
+    workType: best.work_type,
+    ratePaise: Number(best.rate_paise),
+    // A project rate sitting above a company-wide one is not ambiguous: rule 2
+    // decides it. A tie on both scope and start date is, and the entry screen
+    // says so rather than presenting one figure as the only one.
+    ambiguous:
+      runnerUp !== undefined &&
+      (runnerUp.project_id === null) === (best.project_id === null) &&
+      String(runnerUp.effective_from) === String(best.effective_from),
+  }
+}
+
+export interface ContractorAttendanceRow {
+  id: number
+  contractor_id: number
+  project_id: number
+  attendance_date: string
+  skill_level: string
+  headcount: number
+  overtime_hours: number
+  rate_paise: number
+  amount_paise: number
+  approved_at: string | null
+  bill_id: number | null
+  contractor_code: string | null
+  contractor_name: string | null
+  project_code: string | null
+  bill_no: string | null
+}
+
+/**
+ * Contractor attendance over a range, for the approval sweep, the day's prefill
+ * and a bill's own lines.
+ *
+ * `billId` and `unbilledOnly` are separate options rather than one nullable
+ * filter, because they answer different questions: a bill page asks for the rows
+ * it consumed, and the generator asks for the rows nothing has consumed.
+ */
+export async function contractorAttendance(
+  db: Queryable,
+  opts: {
+    contractorId?: number
+    projectId?: number
+    from?: string
+    to?: string
+    billId?: number
+    unbilledOnly?: boolean
+    approvedOnly?: boolean
+  }
+): Promise<ContractorAttendanceRow[]> {
+  let query = db
+    .selectFrom('contractor_attendance')
+    .innerJoin('labour_contractors', 'labour_contractors.id', 'contractor_attendance.contractor_id')
+    .leftJoin('projects', 'projects.id', 'contractor_attendance.project_id')
+    .leftJoin('contractor_bills', 'contractor_bills.id', 'contractor_attendance.bill_id')
+    .select([
+      'contractor_attendance.id',
+      'contractor_attendance.contractor_id',
+      'contractor_attendance.project_id',
+      'contractor_attendance.attendance_date',
+      'contractor_attendance.skill_level',
+      'contractor_attendance.headcount',
+      'contractor_attendance.overtime_hours',
+      'contractor_attendance.rate_paise',
+      'contractor_attendance.amount_paise',
+      'contractor_attendance.approved_at',
+      'contractor_attendance.bill_id',
+      'labour_contractors.code as contractor_code',
+      'labour_contractors.name as contractor_name',
+      'projects.code as project_code',
+      'contractor_bills.bill_no',
+    ])
+    .orderBy('contractor_attendance.attendance_date')
+    .orderBy('contractor_attendance.skill_level')
+  if (opts.contractorId) query = query.where('contractor_attendance.contractor_id', '=', opts.contractorId)
+  if (opts.projectId) query = query.where('contractor_attendance.project_id', '=', opts.projectId)
+  if (opts.from) query = query.where('contractor_attendance.attendance_date', '>=', opts.from)
+  if (opts.to) query = query.where('contractor_attendance.attendance_date', '<=', opts.to)
+  if (opts.billId) query = query.where('contractor_attendance.bill_id', '=', opts.billId)
+  if (opts.unbilledOnly) query = query.where('contractor_attendance.bill_id', 'is', null)
+  if (opts.approvedOnly) query = query.where('contractor_attendance.approved_at', 'is not', null)
+
+  const rows = await query.execute()
+  return rows.map((r) => ({
+    ...r,
+    headcount: Number(r.headcount),
+    overtime_hours: Number(r.overtime_hours),
+    rate_paise: Number(r.rate_paise),
+    amount_paise: Number(r.amount_paise),
+  })) as unknown as ContractorAttendanceRow[]
+}
+
+export interface UnbilledSummary {
+  rows: number
+  days: number
+  headcountDays: number
+  overtimeHours: number
+  grossPaise: number
+  unapproved: number
+}
+
+/**
+ * What a bill for this period would come to, before it is generated.
+ *
+ * The generate form shows this so the operator sees the gross the rule will
+ * compute rather than discovering it after a bill number has been burned.
+ * `unapproved` is counted and shown separately because those rows are the usual
+ * reason a figure looks too small, and rule 2 excludes them.
+ */
+export async function unbilledSummary(
+  db: Queryable,
+  opts: { contractorId: number; projectId: number; from: string; to: string }
+): Promise<UnbilledSummary> {
+  const rows = await contractorAttendance(db, { ...opts, unbilledOnly: true })
+  const approved = rows.filter((r) => r.approved_at !== null)
+  return {
+    rows: approved.length,
+    days: new Set(approved.map((r) => String(r.attendance_date))).size,
+    headcountDays: approved.reduce((sum, r) => sum + r.headcount, 0),
+    overtimeHours: Math.round(approved.reduce((sum, r) => sum + r.overtime_hours, 0) * 10) / 10,
+    grossPaise: approved.reduce((sum, r) => sum + r.amount_paise, 0),
+    unapproved: rows.length - approved.length,
+  }
+}
+
+export interface ContractorBillRow {
+  id: number
+  bill_no: string
+  contractor_id: number
+  project_id: number
+  period_from: string
+  period_to: string
+  gross_paise: number
+  advance_recovered_paise: number
+  retention_paise: number
+  tds_paise: number
+  penalty_paise: number
+  net_payable_paise: number
+  status: string
+  approved_at: string | null
+  expense_id: number | null
+  contractor_code: string
+  contractor_name: string
+  project_code: string
+}
+
+/** Every paise column is widened through Number: mysql2 returns BIGINT as text. */
+function billRow<T extends Record<string, unknown>>(r: T) {
+  return {
+    ...r,
+    gross_paise: Number(r['gross_paise']),
+    advance_recovered_paise: Number(r['advance_recovered_paise']),
+    retention_paise: Number(r['retention_paise']),
+    tds_paise: Number(r['tds_paise']),
+    penalty_paise: Number(r['penalty_paise']),
+    net_payable_paise: Number(r['net_payable_paise']),
+  }
+}
+
+const BILL_COLUMNS = [
+  'contractor_bills.id',
+  'contractor_bills.bill_no',
+  'contractor_bills.contractor_id',
+  'contractor_bills.project_id',
+  'contractor_bills.period_from',
+  'contractor_bills.period_to',
+  'contractor_bills.gross_paise',
+  'contractor_bills.advance_recovered_paise',
+  'contractor_bills.retention_paise',
+  'contractor_bills.tds_paise',
+  'contractor_bills.penalty_paise',
+  'contractor_bills.net_payable_paise',
+  'contractor_bills.status',
+  'contractor_bills.approved_at',
+  'contractor_bills.expense_id',
+  'labour_contractors.code as contractor_code',
+  'labour_contractors.name as contractor_name',
+  'projects.code as project_code',
+] as const
+
+export async function listContractorBills(
+  db: Queryable,
+  opts: { contractorId?: number; projectId?: number; status?: string } = {}
+): Promise<ContractorBillRow[]> {
+  let query = db
+    .selectFrom('contractor_bills')
+    .innerJoin('labour_contractors', 'labour_contractors.id', 'contractor_bills.contractor_id')
+    .innerJoin('projects', 'projects.id', 'contractor_bills.project_id')
+    .select([...BILL_COLUMNS])
+    .orderBy('contractor_bills.id', 'desc')
+  if (opts.contractorId) query = query.where('contractor_bills.contractor_id', '=', opts.contractorId)
+  if (opts.projectId) query = query.where('contractor_bills.project_id', '=', opts.projectId)
+  if (opts.status) query = query.where('contractor_bills.status', '=', opts.status as 'draft')
+  return (await query.execute()).map(billRow) as unknown as ContractorBillRow[]
+}
+
+/**
+ * One bill, with the two names the page has to show and the approver's.
+ *
+ * `expense_id` is selected even though nothing writes it yet: it is the back-link
+ * to the `expenses` row 6.8 will create at approval, and a bill page that showed
+ * an approved bill without saying whether it had reached finance would be the
+ * screen somebody double-posts from.
+ */
+export async function findContractorBill(db: Queryable, id: number) {
+  const row = await db
+    .selectFrom('contractor_bills')
+    .innerJoin('labour_contractors', 'labour_contractors.id', 'contractor_bills.contractor_id')
+    .innerJoin('projects', 'projects.id', 'contractor_bills.project_id')
+    .leftJoin('users as approver', 'approver.id', 'contractor_bills.approved_by')
+    .leftJoin('users as creator', 'creator.id', 'contractor_bills.created_by')
+    .select([
+      ...BILL_COLUMNS,
+      'projects.name as project_name',
+      'labour_contractors.pan as contractor_pan',
+      'labour_contractors.gstin as contractor_gstin',
+      'contractor_bills.created_at',
+      'approver.full_name as approved_by_name',
+      'creator.full_name as created_by_name',
+    ])
+    .where('contractor_bills.id', '=', id)
+    .executeTakeFirst()
+  return row === undefined ? undefined : billRow(row)
+}

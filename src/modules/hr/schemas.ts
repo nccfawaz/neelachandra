@@ -482,3 +482,356 @@ export const leaveDecisionSchema = z
     message: 'Give the reason for the rejection. The employee sees it.',
     path: ['rejectReason'],
   })
+
+/* Contractor labour and bills (spec 6.6 rules 2 and 3) -------------------- */
+
+/**
+ * The second population of 6.6, and it never mixes with the first.
+ *
+ * Nothing in this half of the file names an employee column. A contractor's
+ * workers are a headcount per skill per day, not people the company holds
+ * identity documents for, and that is the whole reason `contractor_attendance`
+ * has a `headcount SMALLINT` where `attendance` has an `employee_id`.
+ */
+
+export const SKILL_LEVELS = [
+  'skilled',
+  'semi_skilled',
+  'unskilled',
+  'mason',
+  'carpenter',
+  'barbender',
+  'plumber',
+  'electrician',
+  'painter',
+  'helper',
+] as const
+
+export const RATE_UOMS = ['per_day', 'per_sqft', 'per_cum', 'per_kg', 'lumpsum'] as const
+
+export type SkillLevel = (typeof SKILL_LEVELS)[number]
+export type RateUom = (typeof RATE_UOMS)[number]
+
+export const CONTRACTOR_STATUSES = ['active', 'on_hold', 'blacklisted'] as const
+
+export const CONTRACTOR_BILL_STATUSES = [
+  'draft',
+  'submitted',
+  'verified',
+  'approved',
+  'paid',
+  'disputed',
+] as const
+
+/**
+ * The contractor master.
+ *
+ * `code` is entered rather than generated: labour contractors are already known
+ * on site by a short name, and 6.6 gives no numbering series for them the way
+ * 6.3 gives one for projects.
+ *
+ * The compliance dates are optional because a contractor who has not produced a
+ * licence yet is still a row somebody has to record before the first day is
+ * marked. What the absence means is settled in the service: rule 3 refuses a
+ * date that HAS PASSED, and a NULL has not passed, so an unrecorded licence
+ * does not block. That is the spec's wording, and DECISIONS records it as a hole
+ * rather than tightening beyond it here.
+ */
+export const contractorSchema = z.object({
+  code: z
+    .string()
+    .trim()
+    .min(2, 'Give the contractor a short code.')
+    .max(20, 'The code column holds 20 characters.')
+    .transform((v) => v.toUpperCase()),
+  name: z.string().trim().min(3, 'Give the contractor a name.').max(180),
+  vendorId: optionalId,
+  contactPhone: optionalText(20),
+  pan: z
+    .string()
+    .trim()
+    .optional()
+    .transform((v) => (v === '' || v === undefined ? null : v.toUpperCase()))
+    .refine((v) => v === null || /^[A-Z]{5}[0-9]{4}[A-Z]$/.test(v), 'A PAN is 10 characters, for example ABCDE1234F.'),
+  gstin: z
+    .string()
+    .trim()
+    .optional()
+    .transform((v) => (v === '' || v === undefined ? null : v.toUpperCase()))
+    .refine(
+      (v) => v === null || /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][0-9A-Z]{3}$/.test(v),
+      'A GSTIN is 15 characters, for example 29ABCDE1234F1Z5.'
+    ),
+  tradeSpecialisation: optionalText(160),
+  licenceNo: optionalText(60),
+  licenceValidUntil: optionalDate,
+  esiRegistered: checkbox,
+  pfRegistered: checkbox,
+  wcPolicyNo: optionalText(60),
+  wcPolicyValidUntil: optionalDate,
+  rating: z
+    .string()
+    .trim()
+    .optional()
+    .transform((v) => {
+      if (v === '' || v === undefined) return null
+      const n = Number.parseInt(v, 10)
+      return Number.isInteger(n) ? n : Number.NaN
+    })
+    .refine((v) => v === null || (Number.isInteger(v) && v >= 1 && v <= 5), 'Rate from 1 to 5, or leave it blank.'),
+  status: z.enum(CONTRACTOR_STATUSES).default('active'),
+})
+
+/** Rupees in, paise stored, for a figure that must be present and positive. */
+const rupeesRequired = (message: string) =>
+  z
+    .string()
+    .trim()
+    .min(1, message)
+    .transform((v) => {
+      const n = Number(v.replace(/,/g, ''))
+      return Number.isFinite(n) ? Math.round(n * 100) : Number.NaN
+    })
+    .refine((n) => Number.isFinite(n) && n > 0, message)
+
+/** Rupees in, paise stored, for a figure that is usually nothing. */
+const rupeesOptional = (message: string) =>
+  z
+    .string()
+    .trim()
+    .optional()
+    .transform((v) => {
+      if (v === '' || v === undefined) return 0
+      const n = Number(v.replace(/,/g, ''))
+      return Number.isFinite(n) ? Math.round(n * 100) : Number.NaN
+    })
+    .refine((n) => Number.isFinite(n) && n >= 0, message)
+
+/**
+ * A percentage held as basis points, which is how this codebase carries one
+ * outside a DECIMAL(5,2) column (migration 011, spec 4.3).
+ *
+ * The form shows a percent and this converts, so 2.5 arrives as 250. Two decimal
+ * places is the ceiling because that is what the finance columns hold, and a
+ * third would be silently rounded in the column instead of refused here.
+ */
+const percentToBasisPoints = (message: string) =>
+  z
+    .string()
+    .trim()
+    .optional()
+    .transform((v) => {
+      if (v === '' || v === undefined) return null
+      const n = Number(v)
+      if (!Number.isFinite(n) || n < 0 || n > 100) return Number.NaN
+      return Math.round(n * 100)
+    })
+    .refine((n) => n === null || Number.isFinite(n), message)
+
+/**
+ * A rate card line.
+ *
+ * `effectiveFrom` is required and `effectiveTo` is not: a rate runs until it is
+ * superseded, and the service closes the previous line rather than asking the
+ * user to date both ends of it.
+ *
+ * `uom` matters more than it looks. `contractor_attendance` records a headcount
+ * and no quantity, so only a `per_day` rate can be priced from a day's
+ * attendance. The other four members are recorded here because the column has
+ * them and a piece-rate agreement is real, but the service refuses to snapshot
+ * one onto an attendance row -- see DECISIONS, this is a structural gap in 6.6
+ * rather than a validation choice.
+ */
+export const contractorRateSchema = z
+  .object({
+    projectId: optionalId,
+    workType: z.string().trim().min(2, 'Name the work this rate is for.').max(120),
+    uom: z.enum(RATE_UOMS),
+    skillLevel: z
+      .string()
+      .trim()
+      .optional()
+      .transform((v) => (v === '' || v === undefined ? null : v))
+      .pipe(
+        z
+          .enum(SKILL_LEVELS, { errorMap: () => ({ message: 'That is not one of the skill levels.' }) })
+          .nullable()
+      ),
+    rate: rupeesRequired('Enter the rate in rupees.'),
+    effectiveFrom: requiredDate,
+    effectiveTo: optionalDate,
+  })
+  .refine((v) => v.effectiveTo === null || v.effectiveTo >= v.effectiveFrom, {
+    message: 'The rate cannot end before it starts.',
+    path: ['effectiveTo'],
+  })
+  .refine((v) => v.uom !== 'per_day' || v.skillLevel !== null, {
+    message: 'A per-day rate is priced against a skill level, so choose one.',
+    path: ['skillLevel'],
+  })
+
+export interface ContractorAttendanceRowInput {
+  skillLevel: (typeof SKILL_LEVELS)[number]
+  headcount: number
+  overtimeHours: number
+}
+
+export interface ContractorAttendanceInput {
+  contractorId: number
+  projectId: number
+  attendanceDate: string
+  rows: ContractorAttendanceRowInput[]
+  overrideCompliance: boolean
+}
+
+/**
+ * A day's contractor headcount, one row per skill level.
+ *
+ * The same `repeated` shape as the employee grid and for the same reason: one
+ * skill row posts scalars and two post arrays. A blank headcount is dropped
+ * rather than refused, because the entry screen renders a row per skill level
+ * the contractor has a rate for and a site gate marks two of them.
+ *
+ * A headcount of 0 IS refused. Blank means "no masons today" and needs no row;
+ * a typed zero beside three overtime hours is a contradiction, and the row it
+ * would write is one the UNIQUE key then blocks the real figure from taking.
+ *
+ * `overtimeHours` is the row's total, not per worker: it sits beside a headcount,
+ * so a per-worker figure would have to be multiplied by something to mean
+ * anything. The ceiling follows from that reading -- twelve extra hours per
+ * person is already a very long day. Nothing prices this figure yet; DECISIONS
+ * records that overtime is recorded and unpriced until 8.6 gives a multiplier.
+ *
+ * `projectId` is required, unlike the employee grid's, because
+ * `contractor_attendance.project_id` is NOT NULL: contractor labour is always
+ * charged to a site, never to overhead.
+ */
+export const contractorAttendanceSchema = z
+  .object({
+    contractorId: z.coerce.number().int().min(1, 'Choose a contractor.'),
+    projectId: z.coerce.number().int().min(1, 'Choose the project this labour worked on.'),
+    attendanceDate: requiredDate,
+    skillLevel: repeated,
+    headcount: repeated,
+    overtimeHours: repeated,
+    overrideCompliance: checkbox,
+  })
+  .transform((v, ctx) => {
+    const rows: ContractorAttendanceRowInput[] = []
+    const refuse = (message: string) => {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message })
+      return z.NEVER
+    }
+
+    for (let i = 0; i < v.skillLevel.length; i += 1) {
+      const headRaw = (v.headcount[i] ?? '').trim()
+      if (headRaw === '') continue
+
+      const skill = (v.skillLevel[i] ?? '').trim()
+      if (!(SKILL_LEVELS as readonly string[]).includes(skill)) {
+        return refuse(`'${skill}' is not one of the skill levels.`)
+      }
+
+      const headcount = Number(headRaw)
+      if (!Number.isInteger(headcount) || headcount < 1 || headcount > 999) {
+        return refuse('A headcount is a whole number of people from 1 to 999. Leave it blank for none.')
+      }
+
+      const otRaw = (v.overtimeHours[i] ?? '').trim()
+      const overtimeHours = otRaw === '' ? 0 : Number(otRaw)
+      if (!Number.isFinite(overtimeHours) || overtimeHours < 0) {
+        return refuse('Overtime is a number of hours, or blank for none.')
+      }
+      if (overtimeHours > headcount * 12) {
+        return refuse(
+          `${overtimeHours} overtime hours across ${headcount} ${headcount === 1 ? 'person' : 'people'} is more than twelve each. Check the figure.`
+        )
+      }
+
+      rows.push({
+        skillLevel: skill as ContractorAttendanceRowInput['skillLevel'],
+        headcount,
+        overtimeHours: Math.round(overtimeHours * 10) / 10,
+      })
+    }
+
+    if (rows.length === 0) {
+      return refuse('No headcount was entered. Fill in at least one skill row.')
+    }
+
+    const seen = new Set<string>()
+    for (const row of rows) {
+      if (seen.has(row.skillLevel)) {
+        return refuse(`That form counts ${row.skillLevel.replace(/_/g, ' ')} twice for one day.`)
+      }
+      seen.add(row.skillLevel)
+    }
+
+    return {
+      contractorId: v.contractorId,
+      projectId: v.projectId,
+      attendanceDate: v.attendanceDate,
+      rows,
+      overrideCompliance: v.overrideCompliance,
+    } satisfies ContractorAttendanceInput
+  })
+
+/**
+ * A contractor, a project and a date range: the key both the approval sweep and
+ * the bill generator work on.
+ *
+ * Not in the 6.6 route table for the approval, which is a gap rather than a
+ * choice -- rule 2 bills only rows with `approved_at IS NOT NULL` and the table
+ * gives no route that could set it. Flagged in DECISIONS; the route added for it
+ * carries `hr.attendance_approve`, the permission rule 4 already uses for the
+ * employee side of the same act.
+ */
+export const contractorPeriodSchema = z
+  .object({
+    contractorId: z.coerce.number().int().min(1, 'Choose a contractor.'),
+    projectId: z.coerce.number().int().min(1, 'Choose a project.'),
+    from: requiredDate,
+    to: requiredDate,
+  })
+  .refine((v) => v.to >= v.from, {
+    message: 'The last day of the period cannot fall before the first.',
+    path: ['to'],
+  })
+
+/**
+ * Generating a bill (6.6 rule 2).
+ *
+ * The gross is never in this form: it is summed from approved attendance inside
+ * the transaction, because "generated from approved attendance, never typed" is
+ * the rule the whole table exists to serve. What IS in the form is the four
+ * figures the rule says are applied afterwards, and each of them is here for a
+ * different reason:
+ *
+ *   retentionPct and tdsPct default from `settings` (`finance.retention_default_pct`,
+ *   `finance.tds_default_pct`, both basis points since migration 011) and are
+ *   overridable per bill, because `contractor_bills` stores the resulting paise
+ *   and has no column for the rate that produced them. The service records the
+ *   rate in the audit log for that reason.
+ *
+ *   advanceRecovered is typed because there is nowhere to read it from. No
+ *   migration creates a contractor advance table; 6.8 rule 6 tracks advances to
+ *   EMPLOYEES as `expenses` rows with `advance_settlement_of`. Recorded in
+ *   DECISIONS as a blocking gap rather than invented as a table.
+ *
+ *   penalty is typed by nature: a liquidated-damages figure is a judgement.
+ */
+export const contractorBillGenerateSchema = z
+  .object({
+    contractorId: z.coerce.number().int().min(1, 'Choose a contractor.'),
+    projectId: z.coerce.number().int().min(1, 'Choose a project.'),
+    from: requiredDate,
+    to: requiredDate,
+    retentionPct: percentToBasisPoints('Retention is a percentage between 0 and 100.'),
+    tdsPct: percentToBasisPoints('TDS is a percentage between 0 and 100.'),
+    advanceRecovered: rupeesOptional('Advance recovery is an amount in rupees, or blank for none.'),
+    penalty: rupeesOptional('A penalty is an amount in rupees, or blank for none.'),
+  })
+  .refine((v) => v.to >= v.from, {
+    message: 'The last day of the period cannot fall before the first.',
+    path: ['to'],
+  })

@@ -1,8 +1,10 @@
 import { randomUUID } from 'node:crypto'
 import type { Db, Trx } from '../../db/kysely.js'
 import { writeAudit } from '../../lib/audit.js'
-import { sequenceCode } from '../../lib/numbering.js'
+import { nextNumber, sequenceCode } from '../../lib/numbering.js'
 import { ConflictError, ForbiddenError, NotFoundError, UnprocessableError } from '../../lib/errors.js'
+import { resolveApprovalLimit } from '../../lib/permissions.js'
+import { applyPct, formatPaise } from '../../lib/money.js'
 import {
   addDays,
   datesBetween,
@@ -16,8 +18,14 @@ import {
   today,
   workingDaysBetween,
 } from '../../lib/dates.js'
-import { attendanceMonthState, blockerCount, employeeLoginId, exitBlockers, type ExitBlockers } from './queries.js'
-import type { AttendanceBulkInput } from './schemas.js'
+import { attendanceMonthState, blockerCount, employeeLoginId, exitBlockers, applicableRate, type ExitBlockers } from './queries.js'
+import type {
+  AttendanceBulkInput,
+  ContractorAttendanceInput,
+  RateUom,
+  SkillLevel,
+} from './schemas.js'
+import { getSetting } from '../../lib/settings.js'
 
 /**
  * HR policy (spec 6.6).
@@ -1276,3 +1284,957 @@ export async function withdrawLeave(
     })
   })
 }
+
+/* ------------------------------------------------------------------ *
+ * Contractor labour and bills (spec 6.6 rules 2 and 3)
+ *
+ * Nothing below reads or writes `employees`. The two populations of 6.6 are
+ * separate tables with separate identity, and a contractor's workers are
+ * counted by skill level and never named -- `contractor_attendance` has a
+ * headcount column and no person column, which is the spec expressing that.
+ *
+ * Money: every figure is BIGINT paise. `contractor_bills` stores the resulting
+ * paise for retention and TDS and has no column for the percentage that
+ * produced them, so `generateContractorBill` writes the rate it used into the
+ * audit log. That is the only record of it.
+ * ------------------------------------------------------------------ */
+
+export interface ContractorInput {
+  code: string
+  name: string
+  vendorId: number | null
+  contactPhone: string | null
+  pan: string | null
+  gstin: string | null
+  tradeSpecialisation: string | null
+  licenceNo: string | null
+  licenceValidUntil: string | null
+  esiRegistered: boolean
+  pfRegistered: boolean
+  wcPolicyNo: string | null
+  wcPolicyValidUntil: string | null
+  rating: number | null
+  status: 'active' | 'on_hold' | 'blacklisted'
+}
+
+/** TINYINT(1) columns take 1/0, not a JS boolean: the generated type is number. */
+function flag(v: boolean): number {
+  return v ? 1 : 0
+}
+
+export async function createContractor(db: Db, actor: Actor, input: ContractorInput): Promise<number> {
+  return db.transaction().execute(async (trx) => {
+    const clash = await trx
+      .selectFrom('labour_contractors')
+      .select(['id', 'name'])
+      .where('code', '=', input.code)
+      .executeTakeFirst()
+    if (clash) {
+      throw new ConflictError(`Code ${input.code} already belongs to ${clash.name}.`)
+    }
+
+    const result = await trx
+      .insertInto('labour_contractors')
+      .values({
+        code: input.code,
+        name: input.name,
+        vendor_id: input.vendorId,
+        contact_phone: input.contactPhone,
+        pan: input.pan,
+        gstin: input.gstin,
+        trade_specialisation: input.tradeSpecialisation,
+        licence_no: input.licenceNo,
+        licence_valid_until: input.licenceValidUntil,
+        esi_registered: flag(input.esiRegistered),
+        pf_registered: flag(input.pfRegistered),
+        wc_policy_no: input.wcPolicyNo,
+        wc_policy_valid_until: input.wcPolicyValidUntil,
+        rating: input.rating,
+        status: input.status,
+        created_by: actor.userId,
+      })
+      .executeTakeFirst()
+
+    const id = Number(result.insertId)
+
+    await writeAudit(trx, {
+      userId: actor.userId,
+      action: 'hr.contractor_create',
+      entityType: 'labour_contractor',
+      entityId: id,
+      after: { code: input.code, name: input.name, status: input.status, vendor_id: input.vendorId },
+      ip: actor.ip,
+    })
+
+    return id
+  })
+}
+
+/**
+ * Editing the master.
+ *
+ * The code is editable, unlike an employee code, because a contractor code is
+ * not printed on anything statutory and a typo in one is worth fixing. The
+ * unique key is re-checked against other rows for that reason.
+ */
+export async function updateContractor(
+  db: Db,
+  actor: Actor,
+  contractorId: number,
+  input: ContractorInput
+): Promise<void> {
+  await db.transaction().execute(async (trx) => {
+    const before = await trx
+      .selectFrom('labour_contractors')
+      .select(['id', 'code', 'name', 'status', 'licence_valid_until', 'wc_policy_valid_until'])
+      .where('id', '=', contractorId)
+      .executeTakeFirst()
+    if (!before) throw new NotFoundError('That contractor does not exist.')
+
+    const clash = await trx
+      .selectFrom('labour_contractors')
+      .select(['id', 'name'])
+      .where('code', '=', input.code)
+      .where('id', '!=', contractorId)
+      .executeTakeFirst()
+    if (clash) {
+      throw new ConflictError(`Code ${input.code} already belongs to ${clash.name}.`)
+    }
+
+    await trx
+      .updateTable('labour_contractors')
+      .set({
+        code: input.code,
+        name: input.name,
+        vendor_id: input.vendorId,
+        contact_phone: input.contactPhone,
+        pan: input.pan,
+        gstin: input.gstin,
+        trade_specialisation: input.tradeSpecialisation,
+        licence_no: input.licenceNo,
+        licence_valid_until: input.licenceValidUntil,
+        esi_registered: flag(input.esiRegistered),
+        pf_registered: flag(input.pfRegistered),
+        wc_policy_no: input.wcPolicyNo,
+        wc_policy_valid_until: input.wcPolicyValidUntil,
+        rating: input.rating,
+        status: input.status,
+      })
+      .where('id', '=', contractorId)
+      .execute()
+
+    await writeAudit(trx, {
+      userId: actor.userId,
+      action: 'hr.contractor_update',
+      entityType: 'labour_contractor',
+      entityId: contractorId,
+      before: {
+        code: before.code,
+        name: before.name,
+        status: before.status,
+        licence_valid_until: before.licence_valid_until === null ? null : String(before.licence_valid_until),
+        wc_policy_valid_until:
+          before.wc_policy_valid_until === null ? null : String(before.wc_policy_valid_until),
+      },
+      after: {
+        code: input.code,
+        name: input.name,
+        status: input.status,
+        licence_valid_until: input.licenceValidUntil,
+        wc_policy_valid_until: input.wcPolicyValidUntil,
+      },
+      ip: actor.ip,
+    })
+  })
+}
+
+export interface ContractorRateInput {
+  projectId: number | null
+  workType: string
+  uom: RateUom
+  skillLevel: SkillLevel | null
+  rate: number
+  effectiveFrom: string
+  effectiveTo: string | null
+}
+
+/**
+ * Adding a line to the rate card.
+ *
+ * A rate is superseded, not edited: the amount on a bill has to stay explicable
+ * from the card as it stood on the day worked, so the previous open line for the
+ * same scope is closed the day before the new one starts rather than overwritten.
+ * "Same scope" is (project_id, work_type, uom, skill_level) -- a rate for one
+ * project does not close the company-wide one, because `applicableRate` reads
+ * the project-specific line in preference and both have to remain readable.
+ *
+ * An exact restatement (same scope, same effective_from) is a conflict rather
+ * than a second line, because the two would be indistinguishable to the rate
+ * lookup and it would pick one by id.
+ */
+export async function addContractorRate(
+  db: Db,
+  actor: Actor,
+  contractorId: number,
+  input: ContractorRateInput
+): Promise<number> {
+  return db.transaction().execute(async (trx) => {
+    const contractor = await trx
+      .selectFrom('labour_contractors')
+      .select(['id', 'code', 'status'])
+      .where('id', '=', contractorId)
+      .executeTakeFirst()
+    if (!contractor) throw new NotFoundError('That contractor does not exist.')
+
+    if (input.projectId !== null) {
+      const project = await trx
+        .selectFrom('projects')
+        .select(['id'])
+        .where('id', '=', input.projectId)
+        .executeTakeFirst()
+      if (!project) throw new UnprocessableError('That project no longer exists.')
+    }
+
+    const existing = await trx
+      .selectFrom('contractor_rates')
+      .select(['id', 'effective_from', 'effective_to', 'rate_paise'])
+      .where('contractor_id', '=', contractorId)
+      .where('work_type', '=', input.workType)
+      .where('uom', '=', input.uom)
+      .where((eb) =>
+        input.skillLevel === null
+          ? eb('skill_level', 'is', null)
+          : eb('skill_level', '=', input.skillLevel)
+      )
+      .where((eb) =>
+        input.projectId === null ? eb('project_id', 'is', null) : eb('project_id', '=', input.projectId)
+      )
+      .forUpdate()
+      .execute()
+
+    const duplicate = existing.find((r) => String(r.effective_from) === input.effectiveFrom)
+    if (duplicate) {
+      throw new ConflictError(
+        `A ${input.workType} rate for that scope already starts on ${input.effectiveFrom}. Edit the period rather than adding a second line for the same day.`
+      )
+    }
+
+    // Close the open line this one supersedes. Only a line that starts earlier
+    // is closed: a rate backdated behind an existing one is a correction to
+    // history and closing the later line would silently delete the current rate.
+    const superseded = existing
+      .filter((r) => r.effective_to === null && String(r.effective_from) < input.effectiveFrom)
+      .sort((a, b) => String(b.effective_from).localeCompare(String(a.effective_from)))[0]
+    if (superseded) {
+      await trx
+        .updateTable('contractor_rates')
+        .set({ effective_to: addDays(input.effectiveFrom, -1) })
+        .where('id', '=', Number(superseded.id))
+        .execute()
+    }
+
+    const result = await trx
+      .insertInto('contractor_rates')
+      .values({
+        contractor_id: contractorId,
+        project_id: input.projectId,
+        work_type: input.workType,
+        uom: input.uom,
+        skill_level: input.skillLevel,
+        rate_paise: input.rate,
+        effective_from: input.effectiveFrom,
+        effective_to: input.effectiveTo,
+        created_by: actor.userId,
+      })
+      .executeTakeFirst()
+
+    const id = Number(result.insertId)
+
+    await writeAudit(trx, {
+      userId: actor.userId,
+      action: 'hr.contractor_rate_add',
+      entityType: 'contractor_rate',
+      entityId: id,
+      after: {
+        contractor_id: contractorId,
+        project_id: input.projectId,
+        work_type: input.workType,
+        uom: input.uom,
+        skill_level: input.skillLevel,
+        rate_paise: input.rate,
+        effective_from: input.effectiveFrom,
+        effective_to: input.effectiveTo,
+        superseded_rate_id: superseded ? Number(superseded.id) : null,
+      },
+      ip: actor.ip,
+    })
+
+    return id
+  })
+}
+
+export interface ContractorAttendanceResult {
+  inserted: number
+  updated: number
+  headcount: number
+  grossPaise: number
+  complianceOverride: string[]
+  ambiguousRates: string[]
+}
+
+/**
+ * The compliance gate of rule 3, as a list of reasons rather than a boolean.
+ *
+ * Read against the day worked, not against today. Rule 3 says the check is on a
+ * date that "has passed", and for a licence that expired last week both
+ * readings agree; they differ only when a day from BEFORE the expiry is entered
+ * late, and refusing that would refuse to record labour that was on site while
+ * the cover was live. Cost that happened is recorded. DECISIONS 18.4 carries
+ * this reading and the fact that a NULL date does not block, because a column
+ * that was never filled has not "passed".
+ */
+function complianceFailures(
+  contractor: {
+    status: 'active' | 'on_hold' | 'blacklisted'
+    licence_no: string | null
+    licence_valid_until: unknown
+    wc_policy_no: string | null
+    wc_policy_valid_until: unknown
+  },
+  onDate: string
+): string[] {
+  const reasons: string[] = []
+  const licence = contractor.licence_valid_until === null ? null : String(contractor.licence_valid_until)
+  const policy = contractor.wc_policy_valid_until === null ? null : String(contractor.wc_policy_valid_until)
+
+  if (licence !== null && licence < onDate) {
+    reasons.push(`the labour licence expired on ${licence}`)
+  }
+  if (policy !== null && policy < onDate) {
+    reasons.push(`the workmen's compensation policy expired on ${policy}`)
+  }
+  if (contractor.status === 'on_hold') {
+    reasons.push('the contractor is on hold')
+  }
+  return reasons
+}
+
+/**
+ * A day's contractor headcount (6.6 rule 2, first half).
+ *
+ * Three things happen here that do not happen on the employee side.
+ *
+ * The rate is snapshotted. `contractor_attendance.rate_paise` is a column and
+ * not a join, so the amount survives a later change to the rate card. The rate
+ * is resolved for the day worked, which is why re-entering a day re-resolves it:
+ * the answer only moves if the card for that day itself changed, and then it
+ * should.
+ *
+ * The compliance gate refuses before anything is written, overridably. A
+ * blacklisted contractor is the one refusal with no override, because the
+ * permission that would override it is the same one that set the blacklist --
+ * `hr.labour_contractor_manage` on both -- so an override there would make the
+ * status mean nothing.
+ *
+ * Correcting a row clears its approval. An approved row is billable, and a
+ * headcount that changed after someone approved it has not been approved at the
+ * figure it now carries. A row already carried onto a bill cannot be corrected
+ * at all: the bill is the record and a credit note is finance's, not HR's.
+ */
+export async function recordContractorAttendance(
+  db: Db,
+  actor: Actor,
+  input: ContractorAttendanceInput,
+  opts: { canManageContractors: boolean }
+): Promise<ContractorAttendanceResult> {
+  if (input.attendanceDate > today()) {
+    throw new UnprocessableError('That date has not happened yet. Attendance is recorded for a day that has passed.')
+  }
+
+  return db.transaction().execute(async (trx) => {
+    const contractor = await trx
+      .selectFrom('labour_contractors')
+      .select([
+        'id',
+        'code',
+        'name',
+        'status',
+        'licence_no',
+        'licence_valid_until',
+        'wc_policy_no',
+        'wc_policy_valid_until',
+      ])
+      .where('id', '=', input.contractorId)
+      .executeTakeFirst()
+    if (!contractor) throw new UnprocessableError('That contractor no longer exists.')
+
+    if (contractor.status === 'blacklisted') {
+      throw new UnprocessableError(
+        `${contractor.name} is blacklisted, so no labour can be recorded against them. Change the status on the contractor record first -- there is no override for this one.`
+      )
+    }
+
+    const project = await trx
+      .selectFrom('projects')
+      .select(['id', 'code'])
+      .where('id', '=', input.projectId)
+      .executeTakeFirst()
+    if (!project) throw new UnprocessableError('That project no longer exists.')
+
+    const failures = complianceFailures(contractor, input.attendanceDate)
+    if (failures.length > 0) {
+      if (!input.overrideCompliance) {
+        throw new UnprocessableError(
+          `${contractor.name} cannot be given labour on ${input.attendanceDate}: ${failures.join(' and ')}. Someone holding hr.labour_contractor_manage can override this, and the override is recorded.`
+        )
+      }
+      if (!opts.canManageContractors) {
+        throw new ForbiddenError(
+          `Overriding a compliance failure needs hr.labour_contractor_manage. Unresolved: ${failures.join(' and ')}.`
+        )
+      }
+    }
+
+    const priorRows = await trx
+      .selectFrom('contractor_attendance')
+      .select(['id', 'skill_level', 'headcount', 'amount_paise', 'approved_at', 'bill_id'])
+      .where('contractor_id', '=', input.contractorId)
+      .where('project_id', '=', input.projectId)
+      .where('attendance_date', '=', input.attendanceDate)
+      .forUpdate()
+      .execute()
+    const priorBySkill = new Map(priorRows.map((r) => [String(r.skill_level), r]))
+
+    let inserted = 0
+    let updated = 0
+    let headcount = 0
+    let grossPaise = 0
+    const ambiguousRates: string[] = []
+
+    for (const row of input.rows) {
+      const readable = row.skillLevel.replace(/_/g, ' ')
+      const prior = priorBySkill.get(row.skillLevel)
+
+      if (prior && prior.bill_id !== null) {
+        // The bill number, not the id: whoever hits this has to go and find the
+        // bill, and a bill is identified by `bill_no` everywhere a person looks
+        // at one. One extra SELECT on a path that ends in a refusal anyway.
+        const billed = await trx
+          .selectFrom('contractor_bills')
+          .select('bill_no')
+          .where('id', '=', Number(prior.bill_id))
+          .executeTakeFirst()
+        throw new ConflictError(
+          `The ${readable} row for ${input.attendanceDate} is already on bill ${billed?.bill_no ?? `#${Number(prior.bill_id)}`} and cannot be changed. Correcting a billed day is a finance adjustment.`
+        )
+      }
+
+      const rate = await applicableRate(trx, {
+        contractorId: input.contractorId,
+        projectId: input.projectId,
+        skillLevel: row.skillLevel,
+        onDate: input.attendanceDate,
+      })
+      if (!rate) {
+        throw new UnprocessableError(
+          `${contractor.name} has no per-day ${readable} rate effective on ${input.attendanceDate}. Add it to the rate card before recording the day.`
+        )
+      }
+      if (rate.ambiguous) ambiguousRates.push(`${readable}: rate ${rate.id} (${rate.workType})`)
+
+      const amount = rate.ratePaise * row.headcount
+      headcount += row.headcount
+      grossPaise += amount
+
+      if (prior) {
+        await trx
+          .updateTable('contractor_attendance')
+          .set({
+            headcount: row.headcount,
+            overtime_hours: row.overtimeHours,
+            rate_paise: rate.ratePaise,
+            amount_paise: amount,
+            recorded_by: actor.userId,
+            approved_by: null,
+            approved_at: null,
+          })
+          .where('id', '=', Number(prior.id))
+          .execute()
+        updated += 1
+      } else {
+        await trx
+          .insertInto('contractor_attendance')
+          .values({
+            contractor_id: input.contractorId,
+            project_id: input.projectId,
+            attendance_date: input.attendanceDate,
+            skill_level: row.skillLevel,
+            headcount: row.headcount,
+            overtime_hours: row.overtimeHours,
+            rate_paise: rate.ratePaise,
+            amount_paise: amount,
+            recorded_by: actor.userId,
+          })
+          .execute()
+        inserted += 1
+      }
+    }
+
+    await writeAudit(trx, {
+      userId: actor.userId,
+      action: 'hr.contractor_attendance_record',
+      entityType: 'contractor_attendance',
+      entityId: null,
+      after: {
+        contractor_id: input.contractorId,
+        contractor_code: contractor.code,
+        project_id: input.projectId,
+        attendance_date: input.attendanceDate,
+        inserted,
+        updated,
+        headcount,
+        gross_paise: grossPaise,
+        rows: input.rows.map((r) => `${r.skillLevel}:${r.headcount}`),
+        // The override and the ambiguity are the two facts that cannot be
+        // reconstructed from the rows afterwards, so they are recorded here.
+        compliance_override: failures.length > 0 ? failures : undefined,
+        ambiguous_rates: ambiguousRates.length > 0 ? ambiguousRates : undefined,
+      },
+      ip: actor.ip,
+    })
+
+    return {
+      inserted,
+      updated,
+      headcount,
+      grossPaise,
+      complianceOverride: failures,
+      ambiguousRates,
+    }
+  })
+}
+
+export interface ContractorPeriodInput {
+  contractorId: number
+  projectId: number
+  from: string
+  to: string
+}
+
+/**
+ * Approving a period's contractor attendance.
+ *
+ * Not in the 6.6 route table, and that is a gap in the spec rather than a
+ * design choice here: rule 2 bills only rows whose `approved_at` is set and no
+ * route in the table can set it. The permission is `hr.attendance_approve`, the
+ * one rule 4 already uses to close an employee month, because it is the same
+ * act on the other population.
+ *
+ * There is deliberately no self-approval refusal, matching
+ * `approveAttendanceMonth`. The money control on this chain is the bill
+ * approval, which does refuse it.
+ *
+ * Rows already carried onto a bill are left alone. Their approval is what let
+ * them be billed, and restamping it would move the date on which the figure
+ * that is now on a bill was agreed.
+ */
+export async function approveContractorAttendance(
+  db: Db,
+  actor: Actor,
+  input: ContractorPeriodInput
+): Promise<{ approved: number; alreadyApproved: number; grossPaise: number }> {
+  return db.transaction().execute(async (trx) => {
+    const rows = await trx
+      .selectFrom('contractor_attendance')
+      .select(['id', 'approved_at', 'amount_paise', 'bill_id'])
+      .where('contractor_id', '=', input.contractorId)
+      .where('project_id', '=', input.projectId)
+      .where('attendance_date', '>=', input.from)
+      .where('attendance_date', '<=', input.to)
+      .forUpdate()
+      .execute()
+
+    if (rows.length === 0) {
+      throw new UnprocessableError(
+        `No contractor attendance is recorded for that project between ${input.from} and ${input.to}, so there is nothing to approve.`
+      )
+    }
+
+    const pending = rows.filter((r) => r.approved_at === null)
+    if (pending.length === 0) {
+      throw new ConflictError(
+        `All ${rows.length} ${rows.length === 1 ? 'row' : 'rows'} in that period are already approved.`
+      )
+    }
+
+    const ids = pending.map((r) => Number(r.id))
+    await trx
+      .updateTable('contractor_attendance')
+      .set({ approved_by: actor.userId, approved_at: nowSqlDateTime() })
+      .where('id', 'in', ids)
+      .execute()
+
+    const grossPaise = pending.reduce((sum, r) => sum + Number(r.amount_paise), 0)
+
+    await writeAudit(trx, {
+      userId: actor.userId,
+      action: 'hr.contractor_attendance_approve',
+      entityType: 'contractor_attendance',
+      entityId: null,
+      after: {
+        contractor_id: input.contractorId,
+        project_id: input.projectId,
+        from: input.from,
+        to: input.to,
+        approved: ids.length,
+        already_approved: rows.length - pending.length,
+        gross_paise: grossPaise,
+      },
+      ip: actor.ip,
+    })
+
+    return { approved: ids.length, alreadyApproved: rows.length - pending.length, grossPaise }
+  })
+}
+
+export interface ContractorBillGenerateInput {
+  contractorId: number
+  projectId: number
+  from: string
+  to: string
+  retentionPct: number | null
+  tdsPct: number | null
+  advanceRecovered: number
+  penalty: number
+}
+
+export interface ContractorBillResult {
+  billId: number
+  billNo: string
+  rows: number
+  days: number
+  grossPaise: number
+  retentionPaise: number
+  tdsPaise: number
+  netPayablePaise: number
+  retentionBp: number
+  tdsBp: number
+  noPan: boolean
+}
+
+/**
+ * Generating a bill (6.6 rule 2).
+ *
+ * Rule 2 is quoted in DECISIONS 18.5: the gross is summed from approved
+ * attendance and is never typed. Everything typed on the form is a deduction
+ * applied afterwards.
+ *
+ * Two refusals are worth the words:
+ *
+ * Unapproved rows inside the period stop the bill instead of being skipped. A
+ * bill that silently omits four days keeps `bill_id` NULL on them, and nothing
+ * would ever surface them again -- the next period's bill does not cover those
+ * dates. The refusal names the count, and the fix is one click away on the same
+ * screen.
+ *
+ * A negative net payable is refused rather than stored. `net_payable_paise` is
+ * BIGINT and would hold it, but a bill that says the contractor owes us is a
+ * debit note, and 6.8 has no reading for a negative expense.
+ *
+ * The percentages: `retention_paise` and `tds_paise` are stored, the rates that
+ * produced them are not -- there is no column. They go in the audit entry, which
+ * is the only record of how the figure was reached. Section 206AA's 20% for a
+ * contractor with no PAN is NOT applied; `noPan` is returned so the screen can
+ * warn, and DECISIONS records it as unimplemented rather than invented.
+ */
+export async function generateContractorBill(
+  db: Db,
+  actor: Actor,
+  input: ContractorBillGenerateInput
+): Promise<ContractorBillResult> {
+  const defaultRetentionBp = Number(await getSetting(db, 'finance.retention_default_pct', 500))
+  const defaultTdsBp = Number(await getSetting(db, 'finance.tds_default_pct', 200))
+
+  return db.transaction().execute(async (trx) => {
+    const contractor = await trx
+      .selectFrom('labour_contractors')
+      .select(['id', 'code', 'name', 'pan', 'status'])
+      .where('id', '=', input.contractorId)
+      .executeTakeFirst()
+    if (!contractor) throw new UnprocessableError('That contractor no longer exists.')
+
+    const project = await trx
+      .selectFrom('projects')
+      .select(['id', 'code'])
+      .where('id', '=', input.projectId)
+      .executeTakeFirst()
+    if (!project) throw new UnprocessableError('That project no longer exists.')
+
+    // FOR UPDATE, then re-check bill_id: two operators generating the same
+    // period at once would otherwise both read the rows as unbilled and the
+    // second bill would double-count them.
+    const rows = await trx
+      .selectFrom('contractor_attendance')
+      .select(['id', 'attendance_date', 'skill_level', 'headcount', 'amount_paise', 'approved_at', 'bill_id'])
+      .where('contractor_id', '=', input.contractorId)
+      .where('project_id', '=', input.projectId)
+      .where('attendance_date', '>=', input.from)
+      .where('attendance_date', '<=', input.to)
+      .forUpdate()
+      .execute()
+
+    const unbilled = rows.filter((r) => r.bill_id === null)
+    const pending = unbilled.filter((r) => r.approved_at === null)
+    if (pending.length > 0) {
+      const earliest = pending
+        .map((r) => String(r.attendance_date))
+        .sort((a, b) => a.localeCompare(b))[0]
+      throw new UnprocessableError(
+        `${pending.length} ${pending.length === 1 ? 'row is' : 'rows are'} not approved yet, the earliest on ${earliest}. Rule 2 bills approved attendance only, and a bill that quietly left them out would never pick them up again. Approve or remove them first.`
+      )
+    }
+
+    const billable = unbilled.filter((r) => r.approved_at !== null)
+    if (billable.length === 0) {
+      throw new UnprocessableError(
+        `There is no approved unbilled attendance for ${contractor.name} on ${project.code} between ${input.from} and ${input.to}.`
+      )
+    }
+
+    const grossPaise = billable.reduce((sum, r) => sum + Number(r.amount_paise), 0)
+    const retentionBp = input.retentionPct ?? defaultRetentionBp
+    const tdsBp = input.tdsPct ?? defaultTdsBp
+    const retentionPaise = applyPct(grossPaise, retentionBp / 100)
+    const tdsPaise = applyPct(grossPaise, tdsBp / 100)
+    const netPayablePaise =
+      grossPaise - input.advanceRecovered - retentionPaise - tdsPaise - input.penalty
+
+    if (netPayablePaise < 0) {
+      throw new UnprocessableError(
+        `The deductions come to more than the bill: ${formatPaise(grossPaise)} gross against ${formatPaise(input.advanceRecovered + retentionPaise + tdsPaise + input.penalty)} of advance, retention, TDS and penalty. A bill cannot be negative -- recover the balance on the next one.`
+      )
+    }
+
+    // The financial year comes from the first day of the period, not from today,
+    // so a March bill raised in April keeps its own year's series. Same rule as
+    // the leave year.
+    const billNo = await nextNumber(trx, 'contractor_bill', input.from)
+
+    const result = await trx
+      .insertInto('contractor_bills')
+      .values({
+        bill_no: billNo,
+        contractor_id: input.contractorId,
+        project_id: input.projectId,
+        period_from: input.from,
+        period_to: input.to,
+        gross_paise: grossPaise,
+        advance_recovered_paise: input.advanceRecovered,
+        retention_paise: retentionPaise,
+        tds_paise: tdsPaise,
+        penalty_paise: input.penalty,
+        net_payable_paise: netPayablePaise,
+        status: 'draft',
+        created_by: actor.userId,
+      })
+      .executeTakeFirst()
+
+    const billId = Number(result.insertId)
+
+    const ids = billable.map((r) => Number(r.id))
+    const stamped = await trx
+      .updateTable('contractor_attendance')
+      .set({ bill_id: billId })
+      .where('id', 'in', ids)
+      .where('bill_id', 'is', null)
+      .executeTakeFirst()
+
+    if (Number(stamped.numUpdatedRows) !== ids.length) {
+      throw new ConflictError(
+        'Some of those attendance rows were billed while this bill was being generated. Nothing has been saved -- reload and try again.'
+      )
+    }
+
+    const days = new Set(billable.map((r) => String(r.attendance_date))).size
+
+    await writeAudit(trx, {
+      userId: actor.userId,
+      action: 'hr.contractor_bill_generate',
+      entityType: 'contractor_bill',
+      entityId: billId,
+      after: {
+        bill_no: billNo,
+        contractor_id: input.contractorId,
+        contractor_code: contractor.code,
+        project_id: input.projectId,
+        period_from: input.from,
+        period_to: input.to,
+        attendance_rows: ids.length,
+        days,
+        gross_paise: grossPaise,
+        advance_recovered_paise: input.advanceRecovered,
+        retention_paise: retentionPaise,
+        tds_paise: tdsPaise,
+        penalty_paise: input.penalty,
+        net_payable_paise: netPayablePaise,
+        // The only record of the rates: the table stores the resulting paise
+        // and has no column for the percentage.
+        retention_bp: retentionBp,
+        retention_source: input.retentionPct === null ? 'settings' : 'entered',
+        tds_bp: tdsBp,
+        tds_source: input.tdsPct === null ? 'settings' : 'entered',
+        contractor_has_pan: contractor.pan !== null,
+        status: 'draft',
+      },
+      ip: actor.ip,
+    })
+
+    return {
+      billId,
+      billNo,
+      rows: ids.length,
+      days,
+      grossPaise,
+      retentionPaise,
+      tdsPaise,
+      netPayablePaise,
+      retentionBp,
+      tdsBp,
+      noPan: contractor.pan === null,
+    }
+  })
+}
+
+export interface ContractorBillApprovalResult {
+  billNo: string
+  grossPaise: number
+  netPayablePaise: number
+  limitRoleKey: string
+}
+
+/**
+ * Approving a bill (6.6 route table, "+ limit").
+ *
+ * This is the last step HR takes. 6.8 rule 1 says approving the bill creates the
+ * `expenses` row; that posting is 6.8's and is deliberately not written here.
+ * What this function guarantees is that the row it leaves behind carries the
+ * identity finance will key on:
+ *
+ *     expenses.source_type = 'contractor_bill'
+ *     expenses.source_table = 'contractor_bills'
+ *     expenses.source_id    = contractor_bills.id
+ *     contractor_bills.expense_id -> expenses.id   (FK added in 009)
+ *
+ * `contractor_bills.id` is that identity. It is immutable, it is what the FK
+ * from `expenses` points back at, and `bill_no` (UNIQUE, from `nextNumber`) is
+ * the human-facing form of it. DECISIONS 18.8 records that 6.8 rule 1 describes
+ * `(source_table, source_id)` as a UNIQUE index while 009 declares it as a plain
+ * KEY, so today the database would not in fact refuse a double posting.
+ *
+ * The limit is resolved against document_type 'expense'. `approval_limits`
+ * (002_rbac.sql) has a four-member ENUM with no `contractor_bill`, so the
+ * alternative was a migration inventing one; the bill becomes an expense and
+ * that is the ceiling it should be measured against. The figure checked is the
+ * GROSS, not the net payable: the gross is the cost committed to the project,
+ * while the net is what leaves the bank and belongs to `payment_release`.
+ */
+export async function approveContractorBill(
+  db: Db,
+  actor: Actor,
+  billId: number,
+  roleKeys: readonly string[]
+): Promise<ContractorBillApprovalResult> {
+  return db.transaction().execute(async (trx) => {
+    const bill = await trx
+      .selectFrom('contractor_bills')
+      .select([
+        'id', 'bill_no', 'status', 'gross_paise', 'net_payable_paise',
+        'created_by', 'approved_by', 'contractor_id', 'project_id',
+      ])
+      .where('id', '=', billId)
+      .forUpdate()
+      .executeTakeFirst()
+    if (!bill) throw new NotFoundError('That contractor bill does not exist.')
+
+    // Only `draft` is reachable today -- `generateContractorBill` writes it and
+    // nothing writes `submitted` or `verified`. They are accepted because they
+    // are upstream of approval in the ENUM's order and a later slice that adds a
+    // verification step should not have to change this check.
+    if (bill.status !== 'draft' && bill.status !== 'submitted' && bill.status !== 'verified') {
+      throw new ConflictError(
+        `Bill ${bill.bill_no} is ${bill.status}. Only a bill that has not been approved yet can be approved.`
+      )
+    }
+    if (Number(bill.created_by) === actor.userId) {
+      throw new UnprocessableError(
+        `You generated bill ${bill.bill_no}, so you cannot approve it. Someone else holding the approval permission has to.`
+      )
+    }
+
+    const gross = Number(bill.gross_paise)
+    const limit = await resolveApprovalLimit(trx, roleKeys, 'expense', today())
+    if (limit === null) {
+      throw new UnprocessableError(
+        'No expense approval limit is set for your role, so no amount can be approved yet. An administrator sets these under Roles and approval limits.'
+      )
+    }
+    if (gross > limit.maxValue) {
+      throw new UnprocessableError(
+        `${formatPaise(gross)} is above your approval limit of ${formatPaise(limit.maxValue)}. This needs someone with a higher limit.`
+      )
+    }
+    if (limit.requiresSecondApprovalAbove !== null && gross > limit.requiresSecondApprovalAbove) {
+      // `contractor_bills` has one `approved_by` column and no
+      // `second_approved_by`, unlike `purchase_orders`. A single signature
+      // written as `approved` where two are required is the failure the second
+      // signature exists to prevent, so this refuses rather than approving.
+      // Flagged in DECISIONS 18.9 as a schema gap; unreachable until 8.2 fills
+      // `approval_limits`.
+      throw new UnprocessableError(
+        `${formatPaise(gross)} is above the ${formatPaise(limit.requiresSecondApprovalAbove)} single-approval threshold for your role, and contractor_bills has no column for a second approval. This bill cannot be approved until that is added.`
+      )
+    }
+
+    await trx
+      .updateTable('contractor_bills')
+      .set({ status: 'approved', approved_by: actor.userId, approved_at: nowSqlDateTime() })
+      .where('id', '=', billId)
+      .execute()
+
+    await writeAudit(trx, {
+      userId: actor.userId,
+      action: 'hr.contractor_bill_approve',
+      entityType: 'contractor_bill',
+      entityId: billId,
+      before: { status: bill.status, approved_by: null },
+      after: {
+        status: 'approved',
+        approved_by: actor.userId,
+        bill_no: bill.bill_no,
+        gross_paise: gross,
+        net_payable_paise: Number(bill.net_payable_paise),
+        limit_role_key: limit.roleKey,
+        limit_document_type: 'expense',
+        // The identity 6.8 will post against. Nothing is written to `expenses`
+        // in this slice; `expense_id` stays NULL until 6.8 lands.
+        finance_source_type: 'contractor_bill',
+        finance_source_table: 'contractor_bills',
+        finance_source_id: billId,
+        expense_id: null,
+      },
+      ip: actor.ip,
+    })
+
+    return {
+      billNo: bill.bill_no,
+      grossPaise: gross,
+      netPayablePaise: Number(bill.net_payable_paise),
+      limitRoleKey: limit.roleKey,
+    }
+  })
+}
+
+
+
+
+
