@@ -165,3 +165,49 @@ sentinel default and a CHECK that keeps the sentinel unreachable where it would 
 something (016: `''` on a day row, `chk_ca_work_type`). Or add a CHECK beside the index
 for the shape an index cannot express (015). Prefer the first: it needs no second
 constraint to stay true.
+
+## A tripwire on a constraint's shape has to evaluate the clause, not match its text
+
+**MariaDB stores a CHECK re-rendered from its parse tree, so the clause you wrote is not
+the clause you can string-match.** `information_schema.CHECK_CONSTRAINTS.CHECK_CLAUSE`
+comes back with identifiers backquoted, keywords lower-cased, and **redundant parentheses
+dropped**. Migration 019 wrote:
+
+```sql
+AND (uom <> 'lumpsum' OR (quantity IS NOT NULL AND quantity = 1))
+```
+
+and the server stores ``and (`uom` <> 'lumpsum' or `quantity` is not null and `quantity` =
+1)``. The inner pair is gone — `AND` binds tighter than `OR`, so it changed nothing about
+the parse and the server does not keep it. The grouping 019 exists to establish is exactly
+what the stored text will not show you.
+
+That breaks a text tripwire in both directions, and one of them is silent. Matching the
+written form fails immediately, which is survivable because it is loud. Matching a
+substring instead — ``/`quantity` is not null/`` anywhere in the clause — passes while
+saying nothing about *which* conjunct governs which comparison, which is the same defect
+as the section above wearing a test's clothes. Presence is not governance.
+
+**The rule: read the clause, cut out the fragment, and make the server evaluate it over a
+synthetic row.** Assert FALSE (`0`) against UNKNOWN (`NULL`), not text. The pattern to copy
+is the second tripwire in the lumpsum test in
+`tests/integration/hr-contractor-flow.test.ts`, and four details in it are load bearing:
+
+- Extract with a regex that tolerates one level of nesting —
+  ``/\(`uom` <> 'lumpsum'(?:[^()]|\([^()]*\))*\)/``. A `[^)]*` body stops at the first close
+  paren, so it truncates the fragment on any server that *does* keep the inner pair, and a
+  truncated fragment still parses.
+- Evaluate it alone: `select (<fragment>) as v from (select 'lumpsum' as uom, NULL as
+  quantity) t`, through `sql.raw` on schema text this repository wrote. Evaluating the
+  whole clause proves nothing here — the whole clause was already FALSE under 018, which
+  is what made the dependency invisible.
+- Keep NULL distinguishable from 0. `Number(null)` is 0, so coercing the result destroys
+  the one distinction the test exists for.
+- Assert the positive control as well (`('lumpsum', 1)` → `1`). A fragment that is
+  constantly false satisfies the FALSE assertion while enforcing nothing.
+
+**Then prove the tripwire can fail.** Swap the live clause back to the old text, run the
+one test, watch it go red *for the stated reason*, swap it forward. 019's failed with
+`expected null to be +0`, which is the disjunct returning UNKNOWN. A tripwire nobody has
+watched fail is a green of the kind the first section of this file is about.
+
