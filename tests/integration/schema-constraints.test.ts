@@ -64,17 +64,72 @@ const EXPLICIT_CHECKS = [
  */
 const PERMISSIVE_OVER_NULL: Record<string, string> = {}
 
-/** Columns whose json_valid CHECK is reachable by a NULL, i.e. the column is nullable. */
-const NULLABLE_JSON_COLUMNS = [
-  'audit_log.after_json',
-  'audit_log.before_json',
-  'dashboard_daily_snapshot.detail_json',
-  'email_log.response_json',
-  'project_documents.visible_to_roles',
-  'quotes.payment_schedule_json',
-  'site_page_revisions.schema_types',
-  'site_services.body_json',
-] as const
+/**
+ * Every automatic json_valid constraint, as `table.column` -> the nullability
+ * that was decided for it and where the decision is recorded.
+ *
+ * MariaDB creates one of these for every JSON column, so this set grows whenever
+ * a migration adds one and no migration says the word CHECK. That is the failure
+ * mode this list exists for: `nullable` is the path of least resistance -- it is
+ * what you get by not writing NOT NULL -- and on a JSON column it silently means
+ * "this document may be absent", because json_valid(NULL) is NULL and the CHECK
+ * admits the row. Twelve of these were written before anyone noticed.
+ *
+ * An entry is a decision, not an inventory line. `why` cites the migration that
+ * declared it and, where the column's absence changes what a feature can do, the
+ * spec or DECISIONS section that says so. A new JSON column fails the enumeration
+ * test until it is recorded here.
+ */
+const AUTO_JSON_CHECKS: Record<string, { nullable: boolean; why: string }> = {
+  'audit_log.before_json': {
+    nullable: true,
+    why: '001:110. Absent on a create -- there is no before state. Read via parseJsonColumn.',
+  },
+  'audit_log.after_json': {
+    nullable: true,
+    why: '001:111. Absent on a delete -- there is no after state.',
+  },
+  'email_log.response_json': {
+    nullable: true,
+    why: '001:144. Absent until the SMTP attempt returns, and on a send that threw.',
+  },
+  'settings.value_json': {
+    nullable: false,
+    why: '003:54, re-declared 011:71. A setting with no value is not a setting; coerceSetting has no absent case.',
+  },
+  'dashboard_daily_snapshot.detail_json': {
+    nullable: true,
+    why: '003:151. The breakdown behind a metric is optional; metric_value_paise carries the number.',
+  },
+  'project_documents.visible_to_roles': {
+    nullable: true,
+    why: '004:342. NULL is "no role restriction", which is not the same as an empty array.',
+  },
+  'site_pages.schema_types': {
+    nullable: false,
+    why: '007:27. Every published page emits JSON-LD, so the list is never absent.',
+  },
+  'site_pages.content_json': {
+    nullable: false,
+    why: '007:35. A page with no blocks has nothing to render.',
+  },
+  'site_page_revisions.content_json': {
+    nullable: false,
+    why: '007:48. A revision that snapshots nothing cannot be rolled back to.',
+  },
+  'site_page_revisions.schema_types': {
+    nullable: true,
+    why: 'DECISIONS 21.4: NOT recorded as intentional. 007:51 declares it NULL while the column it snapshots (site_pages.schema_types, 007:27) is NOT NULL, and spec :1387 says every publish snapshots the previous state. Open as a precondition on the §7 CMS work.',
+  },
+  'quotes.payment_schedule_json': {
+    nullable: true,
+    why: '008:180. A quote may be a single sum with no schedule.',
+  },
+  'site_services.body_json': {
+    nullable: true,
+    why: '007:111. A service may be a name and a summary with no long-form body.',
+  },
+}
 
 /** The sentinel row the json_valid proof writes and removes. */
 const SENTINEL_KEY = 'zz_schema_constraints_probe'
@@ -116,6 +171,11 @@ function isAutoJsonCheck(row: CheckRow): boolean {
 function referencedColumns(row: CheckRow): string[] {
   const names = (row.check_clause.match(/`[^`]+`/g) ?? []).map((s) => s.slice(1, -1))
   return [...new Set(names)].filter((name) => nullable.has(`${row.table_name}.${name}`))
+}
+
+/** Every auto json_valid constraint as `table.column`, which is also its name. */
+function autoKeys(): string[] {
+  return checks.filter(isAutoJsonCheck).map((row) => `${row.table_name}.${row.constraint_name}`)
 }
 
 beforeAll(async () => {
@@ -184,9 +244,10 @@ describe('the CHECK constraint inventory', () => {
     expect(auto).toHaveLength(checks.length - EXPLICIT_CHECKS.length)
     // MariaDB implements JSON as LONGTEXT plus this constraint, so the count is
     // the number of JSON columns. json-columns.test.ts asserts the same set
-    // equals JSON_COLUMNS; here it only has to be separable from the explicit
-    // ones, because an auto constraint is not something a migration chose.
-    expect(auto).toHaveLength(12)
+    // equals JSON_COLUMNS; here it has to be separable from the explicit ones and
+    // accounted for one by one, because an auto constraint is not something a
+    // migration chose to write and so is not something anyone reviewed.
+    expect(auto).toHaveLength(Object.keys(AUTO_JSON_CHECKS).length)
   })
 
   it('records a NULL decision for every nullable column an explicit CHECK compares', () => {
@@ -213,17 +274,49 @@ describe('the CHECK constraint inventory', () => {
 })
 
 describe('the twelve json_valid constraints, left permissive on purpose', () => {
+  it('holds exactly the JSON columns whose nullability has been recorded', () => {
+    // TRIPWIRE, and the one that will fire most often. A migration that adds a
+    // JSON column adds a CHECK constraint without containing the word, so this is
+    // the only place the addition is visible. Failing here means: decide whether
+    // the column is nullable on purpose, write the reason in AUTO_JSON_CHECKS,
+    // and register it in src/lib/json.ts so it is read through the shared reader.
+    expect(autoKeys().sort()).toEqual(Object.keys(AUTO_JSON_CHECKS).sort())
+  })
+
+  it('matches the recorded nullability column by column', () => {
+    // Separate from the set test, because the two failures mean different things.
+    // A set mismatch is a column nobody classified. A nullability mismatch is a
+    // column whose declaration changed under a recorded decision -- which on a
+    // JSON column means the CHECK quietly started or stopped admitting an absent
+    // document, and nothing else in the repository would say so.
+    const drifted = Object.entries(AUTO_JSON_CHECKS)
+      .filter(([key, decision]) => nullable.has(key) && nullable.get(key) !== decision.nullable)
+      .map(([key, decision]) => `${key}: recorded ${decision.nullable ? 'NULL' : 'NOT NULL'}, schema says the opposite`)
+    expect(drifted).toEqual([])
+  })
+
+  it('records a reason for every nullable one, citing the migration', () => {
+    // A reason that cites nothing is how the source-pair hole survived: an
+    // assertion justified by a comment written in the same session as itself.
+    // See CLAUDE.md, "An exemption cites the spec or DECISIONS".
+    const unjustified = Object.entries(AUTO_JSON_CHECKS)
+      .filter(([, d]) => d.nullable)
+      .filter(([, d]) => !/\d{3}:\d+|DECISIONS \d+(\.\d+)?|spec :\d+/.test(d.why))
+      .map(([key]) => key)
+    expect(unjustified).toEqual([])
+  })
+
   it('is reachable by a NULL on exactly the eight nullable columns', () => {
-    const reachable = checks
-      .filter(isAutoJsonCheck)
-      .map((row) => `${row.table_name}.${row.constraint_name}`)
-      .filter((key) => nullable.get(key))
+    const reachable = autoKeys().filter((key) => nullable.get(key)).sort()
+    const recorded = Object.entries(AUTO_JSON_CHECKS)
+      .filter(([, decision]) => decision.nullable)
+      .map(([key]) => key)
       .sort()
 
-    // The other four are NOT NULL (settings.value_json, site_pages.content_json,
-    // site_pages.schema_types, site_page_revisions.content_json), so the NULL
-    // shape cannot arise and the question does not apply to them.
-    expect(reachable).toEqual([...NULLABLE_JSON_COLUMNS])
+    // The other four are NOT NULL, so the NULL shape cannot arise and the
+    // question does not apply to them.
+    expect(reachable).toEqual(recorded)
+    expect(reachable).toHaveLength(8)
   })
 
   it('evaluates to UNKNOWN over NULL and to FALSE over every other non-JSON', async () => {

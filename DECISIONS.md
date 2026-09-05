@@ -2154,6 +2154,17 @@ NULL and refuses malformed text with `errno 4025`.
 the test fails naming `chk_ca_quantity` and `quantity`. 014's clause: it passes. A tripwire nobody has
 seen fail is a tripwire nobody knows is connected.
 
+**The same mechanism now covers the twelve, because that is the set that grows.** An explicit CHECK is
+written by hand and reviewed; an automatic one arrives with a `JSON` column and is invisible in the
+migration. So `AUTO_JSON_CHECKS` in the same test file records each of the twelve as `table.column` ->
+the nullability decided for it plus the migration line that declared it, and three assertions hold it:
+the enumerated set must equal the recorded set, the recorded nullability must still match the schema
+column by column, and every nullable entry must cite something. Adding a JSON column therefore fails the
+suite until someone states whether its nullability is intentional — which is the decision that was never
+made for the twelve that already exist. **Verified the same way:** a throwaway `zz_throwaway_json JSON
+NULL` on `dashboard_daily_snapshot` produced 4 failures across 2 files, each naming the column, and the
+column was dropped again.
+
 **Side finding, reported and left.** `site_pages.schema_types` is `JSON NOT NULL` (007:27) while
 `site_page_revisions.schema_types` is `JSON NULL` (007:51), uncommented, and spec :1387 says "every
 publish snapshots the previous state". A snapshot column that can be NULL where the column it snapshots
