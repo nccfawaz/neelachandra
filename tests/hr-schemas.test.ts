@@ -458,4 +458,86 @@ describe('contractorAttendanceSchema, the day and measured split', () => {
       reject({ skillLevel: 'mason', uom: 'per_hour', workType: 'Plastering', headcount: '4', quantity: '8' })
     ).toMatch(/not one of the rate units/)
   })
+
+  // A lumpsum is the fourth measured unit and the only one whose rate is a whole
+  // contract sum rather than a unit price, so `rate x quantity` makes the quantity
+  // box a multiplier over the sum. Pinned to 1 by chk_ca_quantity since migration
+  // 018; the basis for these four is that constraint and DECISIONS 21.7, which
+  // records why the unit was pinned rather than refused on this table. Asserting
+  // the refusals rather than the permission, per CLAUDE.md.
+  it('gives a lumpsum row a quantity of 1 without being told one', () => {
+    const parsed = contractorAttendanceSchema.safeParse({
+      ...base,
+      skillLevel: 'carpenter',
+      uom: 'lumpsum',
+      workType: 'False ceiling, Flat 3B',
+      headcount: '3',
+      quantity: '',
+      overtimeHours: '',
+    })
+    expect(parsed.success).toBe(true)
+    // Not null, which is what a per_day row gets: the amount is rate x quantity
+    // for every measured unit and a lumpsum takes that path with no third branch.
+    expect(parsed.success && parsed.data.rows[0]!.quantity).toBe(1)
+  })
+
+  it('refuses a quantity on a lumpsum row, which would multiply the contract sum', () => {
+    expect(
+      reject({
+        skillLevel: 'carpenter',
+        uom: 'lumpsum',
+        workType: 'False ceiling, Flat 3B',
+        headcount: '3',
+        quantity: '300',
+        overtimeHours: '',
+      })
+    ).toMatch(/one sum for the whole scope and takes no quantity/)
+  })
+
+  it('refuses a fractional lumpsum quantity too, not just a large one', () => {
+    // 0.999 is the shape a stage payment would be entered as, and it is refused
+    // for the same reason 300 is: the row states a fraction of a contract sum
+    // that nothing downstream reads as a stage.
+    expect(
+      reject({
+        skillLevel: 'carpenter',
+        uom: 'lumpsum',
+        workType: 'False ceiling, Flat 3B',
+        headcount: '3',
+        quantity: '0.999',
+        overtimeHours: '',
+      })
+    ).toMatch(/takes no quantity/)
+  })
+
+  it('refuses a lumpsum row with no work type, because the sum is for a named scope', () => {
+    expect(
+      reject({
+        skillLevel: 'carpenter',
+        uom: 'lumpsum',
+        workType: '',
+        headcount: '3',
+        quantity: '',
+        overtimeHours: '',
+      })
+    ).toMatch(/has to name the work the sum is for/)
+  })
+
+  it('skips an untouched lumpsum line rather than posting its implied 1', () => {
+    // The form posts a blank quantity for every lumpsum line it renders, so the
+    // blank-headcount skip has to be what drops an untouched one. A hidden
+    // quantity of 1 would instead trip "a quantity with no headcount beside it"
+    // and refuse the whole grid over a line nobody filled in.
+    const parsed = contractorAttendanceSchema.safeParse({
+      ...base,
+      skillLevel: ['mason', 'carpenter'],
+      uom: ['per_day', 'lumpsum'],
+      workType: ['', 'False ceiling, Flat 3B'],
+      headcount: ['4', ''],
+      quantity: ['', ''],
+      overtimeHours: ['', ''],
+    })
+    expect(parsed.success).toBe(true)
+    expect(parsed.success && parsed.data.rows.map((r) => r.skillLevel)).toEqual(['mason'])
+  })
 })

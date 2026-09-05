@@ -1647,6 +1647,11 @@ function complianceFailures(
  * other four UOMs multiply it by the quantity. That is the whole of the
  * difference -- the compliance gate, the snapshot, the approval clearing and the
  * billed-row refusal are identical either way. DECISIONS 19.2.
+ *
+ * `lumpsum` is the fourth of those four and its quantity is always 1, because the
+ * rate it multiplies is a whole contract sum rather than a unit price. Migration
+ * 018 pins it, and the arithmetic above needs no third branch as a result --
+ * which is why it was pinned to 1 and not to NULL. DECISIONS 21.7.
  */
 export async function recordContractorAttendance(
   db: Db,
@@ -1783,7 +1788,12 @@ export async function recordContractorAttendance(
       // measure has nothing to multiply, and saying so with the unit named is more
       // use than "no rate found" would be -- the rate card is not the problem.
       // The schema refuses this first; this is the check that holds for any caller.
-      if (measured && (row.quantity === null || !(row.quantity > 0))) {
+      //
+      // `lumpsum` is excluded and handled below, because this message would be
+      // actively wrong for it: it asks for a quantity above zero, and on a lumpsum
+      // row every quantity except 1 is refused by chk_ca_quantity. Following that
+      // instruction produces the row migration 018 exists to make unwritable.
+      if (measured && row.uom !== 'lumpsum' && (row.quantity === null || !(row.quantity > 0))) {
         throw new UnprocessableError(
           `The ${readable} line is quoted ${unit}, so it needs a quantity above zero to price. ${
             row.quantity === null ? 'None was given' : `${row.quantity} was given`
@@ -1808,6 +1818,25 @@ export async function recordContractorAttendance(
       if (!measured && row.quantity !== null) {
         throw new UnprocessableError(
           `The ${readable} line is quoted per day, which is priced by headcount, so it takes no quantity. Remove the ${row.quantity}, or quote the line in the unit that measure belongs to.`
+        )
+      }
+      // A lumpsum is one sum for the whole scope, so its quantity is 1 and is not
+      // a figure anyone enters. The amount is rate x quantity like every other
+      // measured row, and rate_paise here is the agreed sum -- so a quantity of
+      // 300 bills the contract three hundred times over. chk_ca_quantity has
+      // refused that since migration 018 and is the guarantee; this is the message,
+      // and it is reachable by any caller that builds rows without the form.
+      // DECISIONS 21.7 for why the unit was pinned rather than refused outright.
+      //
+      // It sits after the work-type gate deliberately: a lumpsum row with no work
+      // type is refused up there, so `row.workType` is never '' in the message
+      // below. Both branches are reachable, which is why the quantity gate above
+      // steps around lumpsum rather than catching the NULL case first.
+      if (row.uom === 'lumpsum' && row.quantity !== 1) {
+        throw new UnprocessableError(
+          row.quantity === null
+            ? `The ${row.workType} line for ${input.attendanceDate} is a lumpsum, which is one agreed sum for the whole scope, so its quantity is 1 rather than blank. The entry screen supplies the 1 and shows no quantity box; a caller that builds rows itself has to supply it too.`
+            : `The ${row.workType} line for ${input.attendanceDate} is a lumpsum, which is one agreed sum for the whole scope, so its quantity is 1 and not ${row.quantity}. A quantity there multiplies the contract sum. Record a second occurrence on its own date instead.`
         )
       }
 

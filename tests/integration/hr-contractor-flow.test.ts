@@ -1196,6 +1196,14 @@ describe('a measured rate reaches a bill (migration 013)', () => {
   const M_DAY_5 = '2026-06-21'
   const M_DAY_6 = '2026-06-22'
 
+  /* The lumpsum line, migration 018, and one more date outside the period for the
+     same reason. 25,000 rupees is the WHOLE agreed sum for the scope rather than a
+     unit price, which is what makes a quantity beside it a defect and not a
+     rounding question: at the 300 below the row carries 75,00,00,000 paise. */
+  const SCAFFOLD = 'Scaffolding, full site'
+  const SCAFFOLD_PAISE = 2_500_000
+  const M_DAY_7 = '2026-06-23'
+
   beforeAll(async () => {
     chitId = await svc.createContractor(
       db,
@@ -1240,6 +1248,16 @@ describe('a measured rate reaches a bill (migration 013)', () => {
       actor,
       chitId,
       rateInput({ skillLevel: 'helper', rate: '400', workType: 'General labour', effectiveFrom: '2026-04-01' })
+    )
+
+    // The fifth member of the spec's UOM enum (`NCC_BUILD_SPEC.md:1645`), which
+    // §18.2 recorded as unreachable and 013 made billable. No skill level: a lump
+    // sum for a scope is not priced against who does it. The rate is the whole sum.
+    await svc.addContractorRate(
+      db,
+      actor,
+      chitId,
+      rateInput({ uom: 'lumpsum', workType: SCAFFOLD, rate: '25000', effectiveFrom: '2026-04-01' })
     )
   })
 
@@ -1456,6 +1474,160 @@ describe('a measured rate reaches a bill (migration 013)', () => {
       .where('attendance_date', '=', M_TO)
       .executeTakeFirstOrThrow()
     expect(Number(left.n)).toBe(0)
+  })
+
+  it('pins a lumpsum quantity to 1 in the database, and chk_ca_quantity is what refuses 300 (migration 018)', async () => {
+    // TRIPWIRE, the same one the test above needs for a different clause. Every
+    // refusal below is asserted to be this constraint's, so the clause is read off
+    // the live server before any of them runs: if 018 were never applied the four
+    // inserts would land and the failure would read as a wrong expectation rather
+    // than as a missing migration.
+    const clause = (
+      await sql<{ CONSTRAINT_NAME: string; CHECK_CLAUSE: string }>`
+        select CONSTRAINT_NAME, CHECK_CLAUSE from information_schema.CHECK_CONSTRAINTS
+        where CONSTRAINT_SCHEMA = database() and TABLE_NAME = 'contractor_attendance'
+      `.execute(db)
+    ).rows.find((r) => r.CONSTRAINT_NAME === 'chk_ca_quantity')?.CHECK_CLAUSE
+    expect(clause).toMatch(/lumpsum/)
+    expect(clause).toMatch(/`quantity` = 1/)
+    // And 014's guard is still ahead of the new conjunct in the AND chain, which is
+    // the only reason the NULL case below is refused: `(uom <> 'lumpsum' OR
+    // quantity = 1)` against a NULL quantity is UNKNOWN on its own, and a CHECK
+    // admits UNKNOWN. 19.3 is that bug; this is the fourth appearance of the class.
+    expect(clause).toMatch(/`quantity` is not null/)
+
+    const raw = (over: Record<string, unknown>) =>
+      db
+        .insertInto('contractor_attendance')
+        .values({
+          contractor_id: chitId,
+          project_id: projectId,
+          attendance_date: M_DAY_7,
+          skill_level: 'barbender',
+          uom: 'lumpsum',
+          work_type: SCAFFOLD,
+          headcount: 4,
+          quantity: 1,
+          rate_paise: SCAFFOLD_PAISE,
+          amount_paise: SCAFFOLD_PAISE,
+          recorded_by: actor.userId,
+          ...over,
+        })
+        .executeTakeFirst()
+
+    const refused = async (over: Record<string, unknown>) => {
+      let err: (Error & { errno?: number }) | undefined
+      try {
+        await raw(over)
+      } catch (caught) {
+        err = caught as Error & { errno?: number }
+      }
+      // The constraint name and 4025 together are the proof of which layer said no.
+      // The service's refusal is prose and carries no errno at all, which the
+      // second half of this test asserts separately.
+      expect(err?.message, 'a lumpsum quantity was admitted by the database').toMatch(/chk_ca_quantity/)
+      expect(err?.errno).toBe(4025)
+    }
+
+    // The row that cost the most, and the one 014's clause admitted: the square
+    // footage typed into the quantity box of a line whose rate_paise is a whole
+    // contract sum. 25,00,000 x 300 is 75,00,00,000 paise.
+    await refused({ quantity: 300, amount_paise: SCAFFOLD_PAISE * 300 })
+    // Not a magnitude check. Two occurrences is the reading 19.2 implemented and is
+    // refused too, because whether a lumpsum is due per occurrence at all is an
+    // owner question (19.2's last paragraph, on the blocking list at 17.3). 018
+    // makes the wrong answer unrepresentable rather than answering it.
+    await refused({ quantity: 2, amount_paise: SCAFFOLD_PAISE * 2 })
+    // Below one, which no reading of the unit makes sense of.
+    await refused({ quantity: 0.999 })
+    // And NULL, which is 014's guard rather than the new conjunct.
+    await refused({ quantity: null })
+
+    // The shape that must keep working. The basis for asserting a PERMITTED shape
+    // here is the spec and not 018's own header: `NCC_BUILD_SPEC.md:1645` declares
+    // `lumpsum` a member of the rate-card UOM enum, and §18.2 records a declared
+    // unit that cannot reach a bill as a structural gap -- so a constraint that
+    // made every lumpsum row unwritable would reopen that gap for one enum member.
+    // DECISIONS 21.7 records the choice; this assertion does not rest on it.
+    await raw({})
+    const admitted = await line(chitId, M_DAY_7, 'barbender', SCAFFOLD)
+    expect(Number(admitted?.quantity)).toBe(1)
+    expect(Number(admitted?.amount_paise)).toBe(SCAFFOLD_PAISE)
+
+    // The adjacent shape 018 must not have touched, and it needs its own basis:
+    // DECISIONS 19.2 prices a measured row rate x quantity with the quantity a free
+    // measure above zero. Per CLAUDE.md's second clause that citation covers
+    // per_sqft and says nothing about lumpsum, which is why the line above cites
+    // the spec instead of inheriting this one.
+    await raw({
+      uom: 'per_sqft',
+      work_type: PLASTER,
+      quantity: 300,
+      rate_paise: PLASTER_PAISE,
+      amount_paise: PLASTER_PAISE * 300,
+    })
+    expect(Number((await line(chitId, M_DAY_7, 'barbender', PLASTER))?.quantity)).toBe(300)
+
+    await sql`delete from contractor_attendance where contractor_id = ${chitId} and attendance_date = ${M_DAY_7}`.execute(
+      db
+    )
+
+    // The other half, and the half that has to be reachable without a form:
+    // `contractorAttendanceSchema` supplies the 1, so no posted body can carry a
+    // lumpsum quantity of 300 at all. A caller that builds rows itself can, and the
+    // input is spread past the schema here exactly as the per-day mirror above does
+    // it.
+    const base = day(M_DAY_7, chitId, [{ skill: 'barbender', headcount: '4', uom: 'lumpsum', work: SCAFFOLD }])
+    expect(base.rows[0]?.quantity).toBe(1)
+
+    const typed = await svc
+      .recordContractorAttendance(db, actor, { ...base, rows: [{ ...base.rows[0]!, quantity: 300 }] }, {
+        canManageContractors: true,
+      })
+      .then(
+        () => null,
+        (e: Error & { errno?: number }) => e
+      )
+    expect(typed?.message).toMatch(/is a lumpsum, which is one agreed sum for the whole scope/)
+    expect(typed?.message).toMatch(/so its quantity is 1 and not 300/)
+    // No errno, so this refusal was not 4025 relayed off the wire: the service
+    // refused before the insert. Same distinction 017's tests draw between the
+    // trigger's 128-character message and the one a clerk should meet.
+    expect(typed?.errno).toBeUndefined()
+    expect(await lines(chitId, M_DAY_7, 'barbender')).toHaveLength(0)
+
+    // Blank is refused as well, by the SAME gate and not by the general measured
+    // one above it, which is the second thing this test pins. Left to that gate the
+    // message read "it needs a quantity above zero to price" -- an instruction that,
+    // followed on a lumpsum line, produces exactly the row 018 makes unwritable. So
+    // the general gate steps around lumpsum and this branch has to be reachable.
+    const blank = await svc
+      .recordContractorAttendance(db, actor, { ...base, rows: [{ ...base.rows[0]!, quantity: null }] }, {
+        canManageContractors: true,
+      })
+      .then(
+        () => null,
+        (e: Error) => e
+      )
+    expect(blank?.message).toMatch(/its quantity is 1 rather than blank/)
+    expect(blank?.message).not.toMatch(/quantity above zero/)
+    expect(await lines(chitId, M_DAY_7, 'barbender')).toHaveLength(0)
+
+    // And the whole way through with nobody having typed a 1 anywhere. The
+    // arithmetic is the same `rate x quantity` the other three measured units use,
+    // which is why 018 pinned the quantity to 1 and not to NULL: there is no third
+    // branch here to get wrong. The headcount of 4 multiplies nothing.
+    expect(await svc.recordContractorAttendance(db, actor, base, { canManageContractors: true })).toMatchObject({
+      inserted: 1,
+      updated: 0,
+      headcount: 4,
+      grossPaise: SCAFFOLD_PAISE,
+    })
+    const priced = await line(chitId, M_DAY_7, 'barbender', SCAFFOLD)
+    expect(priced).toMatchObject({ uom: 'lumpsum', work_type: SCAFFOLD, headcount: 4, bill_id: null })
+    expect(Number(priced?.quantity)).toBe(1)
+    expect(Number(priced?.rate_paise)).toBe(SCAFFOLD_PAISE)
+    expect(Number(priced?.amount_paise)).toBe(SCAFFOLD_PAISE)
   })
 
   it('records two work types at one skill level on one day (migration 016)', async () => {

@@ -2342,12 +2342,16 @@ function contractorAttendanceColumns(opts: { showContractor?: boolean } = {}): C
     {
       // Without this column a measured row shows a rate, a headcount and an
       // amount that do not multiply together, and the reader is left to guess
-      // which figure is wrong. `per_day` is the row that has no measure.
+      // which figure is wrong. `per_day` is the row that has no measure. A
+      // lumpsum's measure is always 1, so printing "1 lumpsum" would invite the
+      // question the row cannot answer -- whether it could have been 2.
       header: 'Measure',
       numeric: true,
       cell: (r) =>
         r.uom === 'per_day' || r.quantity === null ? (
           <span class="ncc-muted">-</span>
+        ) : r.uom === 'lumpsum' ? (
+          <span class="ncc-muted">one sum</span>
         ) : (
           <>
             {String(r.quantity)} <span class="ncc-muted">{uomLabel(r.uom)}</span>
@@ -3001,6 +3005,21 @@ hr.get('/app/hr/contractor-attendance', requirePermission(PERMISSIONS.HR_ATTENDA
                         numeric: true,
                         cell: (r: (typeof measuredLines)[number]) => {
                           const p = priorByWork.get(workKey(r.uom, r.work_type))
+                          // A lumpsum has no measure to enter: the rate IS the sum
+                          // for the whole scope, so a box here would be a
+                          // multiplier over a contract sum and the number nearest
+                          // to hand is the square footage. Hidden and blank rather
+                          // than hidden and 1, because a blank headcount is what
+                          // skips an untouched line and a filled quantity beside a
+                          // blank headcount is refused. The schema supplies the 1.
+                          // Migration 018, DECISIONS 21.7.
+                          if (r.uom === 'lumpsum')
+                            return (
+                              <>
+                                <input type="hidden" name="quantity" value="" />
+                                <span class="ncc-muted">one sum</span>
+                              </>
+                            )
                           return p && p.bill_id !== null ? (
                             <>
                               <input type="hidden" name="quantity" value="" />
@@ -3035,15 +3054,17 @@ hr.get('/app/hr/contractor-attendance', requirePermission(PERMISSIONS.HR_ATTENDA
                       },
                     ]}
                     rows={measuredLines}
-                    caption="Priced by the measure, not by the day: the amount is the rate times the quantity, and the people count is recorded rather than charged. Overtime does not apply to a piece rate and is not offered."
+                    caption="Priced by the measure, not by the day: the amount is the rate times the quantity, and the people count is recorded rather than charged. A lumpsum line takes no quantity, because its rate is the whole agreed sum for the scope. Overtime does not apply to a piece rate and is not offered."
                   />
                 </>
               ) : null}
               {measuredLines.length > 0 && skills.length > 0 ? (
                 <p class="ncc-hint">
-                  A day holds one row per skill level, whatever the unit, so filling the same skill in both
-                  grids for one date is refused rather than written twice. Recording both a day rate and a
-                  piece rate for one gang on one site needs the wider key noted in DECISIONS 19.2.
+                  A day holds one row per skill level per work type, so the same masons can be recorded
+                  plastering and tiling on one date. What is refused is one skill level on a day rate and on
+                  a measured rate for the same date: if it is the same gang the day rate already pays for
+                  the work, and if it is two gangs the second belongs under its own skill level or on its
+                  own date.
                 </p>
               ) : null}
               {failures.length > 0 ? (

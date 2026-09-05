@@ -727,8 +727,12 @@ export const uomLabel = (uom: string) => uom.replace(/_/g, ' ')
  *
  * `uom`, `workType` and `quantity` arrived with migration 013 (DECISIONS 19.2).
  * A blank `uom` reads as `per_day`, which is what every row posted before 013
- * meant and what the day grid still posts. The split is strict in both
- * directions: a day row may not carry a quantity, and a measured row must.
+ * meant and what the day grid still posts. The split is strict in all three
+ * directions: a day row may not carry a quantity, a measured row must, and a
+ * lumpsum row is given one of exactly 1 rather than allowed to state one. The
+ * last of those is migration 018 and DECISIONS 21.7 -- `rate_paise` on a lumpsum
+ * row is a whole contract sum, so a quantity beside it is a multiplier over a
+ * contract sum, and the number a clerk would reach for is the square footage.
  *
  * `overtimeHours` is the row's total, not per worker: it sits beside a headcount,
  * so a per-worker figure would have to be multiplied by something to mean
@@ -809,6 +813,25 @@ export const contractorAttendanceSchema = z
             `The ${skill.replace(/_/g, ' ')} line is priced per day, which is decided by the skill level, so it cannot also name a work type. Remove '${workType}', or quote the line in the unit that work is measured in.`
           )
         }
+      } else if (uom === 'lumpsum') {
+        // A lumpsum row is one sum, once. `rate_paise` is the whole agreed sum for
+        // the scope named in `work_type`, and `amount_paise = rate_paise *
+        // quantity`, so a quantity is a multiplier over a contract sum -- which is
+        // why the form does not offer one and this branch will not read one. The
+        // guarantee is chk_ca_quantity since migration 018, which pins it to
+        // exactly 1; this is the form-level echo, and it accepts a posted 1
+        // because that is what the row will hold, not because the box exists.
+        if (workType === '') {
+          return refuse(
+            'A lumpsum row has to name the work the sum is for, so that one rate card line prices it.'
+          )
+        }
+        if (qtyRaw !== '' && Number(qtyRaw) !== 1) {
+          return refuse(
+            `The ${workType} line is a lumpsum, so it is one sum for the whole scope and takes no quantity. Remove the ${qtyRaw} beside it -- a quantity there would multiply the agreed sum. If ${qtyRaw} of them are genuinely due, record them on their own dates.`
+          )
+        }
+        quantity = 1
       } else {
         // A measured row names its work type, and this is not decoration. Skill
         // level picks a day rate; it cannot pick between plastering and tiling

@@ -2081,6 +2081,12 @@ before — no existing row or code path changed meaning. `per_sqft`, `per_cum` a
 `quantity` read as the number of times the sum is due, which is a reading rather than a spec statement
 and is flagged below. So: **five of five reachable, one of them on an assumed interpretation.**
 
+> **Superseded in part by 21.7, migration 018.** That reading was implemented *and left unconstrained*, so
+> a lumpsum row could carry any quantity the entry grid accepted and bill a whole contract sum that many
+> times. `chk_ca_quantity` now pins a lumpsum quantity to exactly 1. The arithmetic above is unchanged;
+> what changed is that the multiplier is no longer free. The owner question in the last paragraph of this
+> entry is still open — 018 makes the wrong answer unrepresentable rather than answering it.
+
 **Three columns, because pricing a measured line needs three facts** — `quantity DECIMAL(14,3)` (the
 type §6.8 already uses for `budget_lines.qty`, so the eventual posting is a copy rather than a
 conversion), `uom` (snapshot beside `rate_paise` for the same reason `rate_paise` is snapshot at all: the
@@ -2114,7 +2120,8 @@ question says which units Neelachandra actually bills contractors in, in what pr
 that attendance should not touch at all. Every UOM is reachable, and which ones matter is a guess. Two
 things follow if the answer arrives differently: the `lumpsum` arithmetic may be wrong, and the `uq_ca`
 consequence above may be a daily obstruction rather than a rare one. **Do not read the five reachable
-units as evidence that five are used.**
+units as evidence that five are used.** (016 widened `uq_ca` to include `work_type`, and 018 pinned the
+`lumpsum` quantity to 1. Both of those narrow what a wrong answer here can cost; neither answers it.)
 
 **A headcount is still required on a measured row**, and that is a choice. The quantity is what prices
 such a row, so the headcount is not arithmetically needed — but `headcount SMALLINT UNSIGNED NOT NULL`
@@ -2580,3 +2587,99 @@ and say so — and it is the **third** instance of that pattern, after `:2013` v
 `:1387`. 21.3 gathers the three when it is written. What is *not* claimed: that the spec author intended the
 widening. Nobody has been asked. If the answer is that the four-column key was meant literally, 016 is
 reversible only by refusing measured work, and that is the conversation to have.
+
+### 21.7 A lumpsum quantity is pinned to exactly 1 — migration 018
+
+Cited by name from `migrations/018_ca_lumpsum_single.sql`, from the `lumpsum` branch of
+`contractorAttendanceSchema` and from the gate in `recordContractorAttendance` before this entry existed.
+
+**The defect.** 19.2 made all five members of the rate card's UOM enum billable, and priced the four
+non-day ones as `amount_paise = rate_paise * quantity`. For `per_sqft`, `per_cum` and `per_kg` that is a
+unit price times a measure. For `lumpsum` the rate **is the whole agreed sum**, so the same arithmetic
+makes the quantity a multiplier over a contract sum. 19.2 says as much — *"`quantity` read as the number
+of times the sum is due, which is a reading rather than a spec statement"* — and then left it
+unconstrained. The entry grid offered the same quantity box it offers a per-sqft line, `min=0.001`, with
+no ceiling below the schema's 1,000,000. A clerk who typed the square footage into the quantity box of a
+lumpsum line billed the contract sum that many times: at a sum of 25,00,000 paise and a typed 300, one
+row carrying 75,00,00,000 paise.
+
+**The choice: pin it in the constraint.** `chk_ca_quantity` gained one conjunct, `(uom <> 'lumpsum' OR
+quantity = 1)`, so no row on this table can claim more than one occurrence of a lump sum. Three layers,
+the same division of labour as 017: the CHECK is the guarantee and holds against any caller; the gate in
+`recordContractorAttendance` is the readable refusal; the schema branch supplies the 1 so the form never
+renders a multiplier box at all.
+
+**The rejected alternative, and why it is not merely less convenient.** The instruction offered a second
+option: refuse `lumpsum` on `contractor_attendance` outright and require it as a directly entered bill
+line. **There is no such line to enter it on.** `contractor_bills` is a header in the schema
+(`006_hr.sql:274` — `gross_paise` and the four deduction columns) and a header in the spec
+(`:1663-1670`), and §6.6 has no bill-lines table anywhere in it. The spec's own comment on the attendance
+table, `:1650`, reads *"headcount per day, the basis of the contractor bill"*: the attendance rows **are**
+the bill's detail. Adding `contractor_bill_lines` would give `gross_paise` a second contributing source
+and put the reconciliation of the two in the one place §6.6 rule 2 exists to close — *"Double-billed
+labour days are the most common leak in a site business"*. That is a spec-scale change, the spec outranks
+the prompt, so it is flagged here rather than taken.
+
+The narrower reason: refusing the unit on this table would leave it on the rate card and unbillable,
+which is precisely the §18.2 gap that 013 was written to close, reopened for one enum member. 19.2
+already rejected trimming the rate card, because the five-member enum at `NCC_BUILD_SPEC.md:1645`
+describes the business correctly and the attendance table was the side that was short.
+
+**Pinned to 1 and not to NULL**, which was the other sub-choice. At 1 the arithmetic
+`amount_paise = rate_paise * quantity` stays correct for all four measured units with no third branch to
+remember — in `recordContractorAttendance` and in `generateContractorBill` both — and the clause is one
+added conjunct rather than a restructure of a clause that has already been got wrong once (013 → 014). A
+branch is a thing a later reader can drop; an invariant is not.
+
+**Proven before the migration was written, per CLAUDE.md.** On a `CREATE TABLE … LIKE` copy of
+`contractor_attendance`, first checked to carry `chk_ca_quantity` verbatim so the result could not be
+vacuous:
+
+| row | under 014's clause | under 018's |
+| --- | --- | --- |
+| lumpsum, quantity 300 | **admitted** — the hole | refused 4025 |
+| lumpsum, quantity 2 | admitted | refused 4025 |
+| lumpsum, quantity 0.999 | admitted | refused 4025 |
+| lumpsum, quantity NULL | refused 4025 | refused 4025 |
+| lumpsum, quantity 1 | admitted | admitted |
+| per_sqft, quantity 300 | admitted | admitted |
+| per_day, quantity NULL | admitted | admitted |
+
+The row that cost the most was the row the constraint admitted, and the shapes that must keep working
+still do. `contractor_attendance` held 0 rows when 018 ran, so nothing was at stake in the ALTER — but
+MariaDB validates a CHECK against already-stored rows when it is added, proven on a second copy holding
+one lumpsum row at quantity 300 where the ALTER came back 4025 rather than succeeding, which is what
+makes the migration safe on a database that is not this one. A trigger has no such validation, which is
+why 017 had to build a temporary key to prove its own precondition and 018 did not.
+
+**The three-valued class again, one guard away.** `(uom <> 'lumpsum' OR quantity = 1)` evaluated on its
+own against a NULL quantity is NULL — `select (null = 1)` is NULL and so is the whole disjunction — and a
+CHECK admits UNKNOWN. It refuses only because 014's `quantity IS NOT NULL` sits ahead of it in the same
+AND chain and `FALSE AND UNKNOWN` is FALSE. Both were run on the server. So this clause is safe **because
+of 014, not on its own**: the fourth appearance of the class CLAUDE.md names, and the first that was
+harmless on arrival. The integration test asserts the guard is still in the live clause for exactly this
+reason.
+
+**Found while testing it: a refusal message that instructed the caller to write the forbidden row.** The
+quantity gate 19.2 shipped covers every non-day unit — *"it needs a quantity above zero to price"* — and a
+lumpsum row with a NULL quantity reached that gate first. On a lumpsum line every quantity above zero
+except 1 is refused by the CHECK, so following the instruction produces the row 018 exists to make
+unwritable. The gate now steps around `lumpsum` and the pinned gate below it names blank as blank. This
+was invisible until an integration test asked which layer refused a NULL: the wrong message was a *passing*
+path.
+
+**What this does not settle.** Whether a lumpsum is due per occurrence or once for a whole scope is still
+an owner question — 19.2's last paragraph, and on the blocking list at 17.3. 018 does not answer it; it
+makes the wrong answer unrepresentable. No row can now claim more than one occurrence, so if the answer is
+"once per scope, and attendance should not touch it at all", the narrowing starts from a table where every
+lumpsum row is exactly one sum and there is no backfill decision to make. Narrowing from an unbounded
+multiplier would have needed one.
+
+**Tests.** Five unit cases in `tests/hr-schemas.test.ts` (40 → 45) pin the form contract: the 1 is
+supplied rather than entered, a posted quantity is refused whether it is 300 or 0.999, a lumpsum row must
+name its work, and an untouched lumpsum line is still skipped rather than posting its implied 1. One
+integration case in `tests/integration/hr-contractor-flow.test.ts` (44 → 45) discharges *"prove the
+refusal comes from where you claim it does"*: a raw Kysely insert with no service call in it, refused
+`4025` with `chk_ca_quantity` named in the message, against the service's refusal which carries prose and
+no `errno` at all. The permitted shapes it asserts cite `:1645` and 19.2 rather than 018's own header,
+per CLAUDE.md's second clause.

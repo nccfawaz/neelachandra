@@ -71,6 +71,13 @@ credibility for it. So the defect passed a citation check while being justified 
 A cited docstring makes the tests under it look grounded; each assertion still owes its own
 line.
 
+**Third clause: the rule covers comments in `src/` that justify a business rule, not only test
+assertions.** The 20.3 sweep that triaged six comment-justified assertions searched `tests/` only, and so
+missed `queries.ts:1020` — `applicableRate`'s own comment justifying rate precedence by "rule 3", which is
+contractor compliance blocking deployment and has nothing to do with rates. A wrong citation in a module
+is worse than one in a test, because it is what the next person reads before changing the behaviour and
+nothing runs it. **A `src/`-wide sweep for rule-number citations is owed and has not been done.**
+
 Two consequences worth stating:
 
 - Prefer asserting the *refusal*. A test that pins what the database rejects fails when the
