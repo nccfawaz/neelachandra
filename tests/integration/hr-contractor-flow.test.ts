@@ -1000,8 +1000,11 @@ describe('approving a contractor bill', () => {
     // contractor_bills has one approved_by and no second_approved_by, unlike
     // purchase_orders and expenses. Above the threshold the only honest answers
     // are refuse or add the column, and inventing the column mid-slice is worse.
-    // TRIPWIRE: when a second-approval column lands, this test fails and
-    // DECISIONS 18.9 is the note to update.
+    // TRIPWIRE: when a second-approval column lands, this test fails. DECISIONS
+    // 18.9 describes what the code does; 21.2 is the reclassification and lists
+    // what replaces it -- a `pending_approval` member on contractor_bills.status,
+    // the second_approved_by/at pair, and the branch at
+    // inventory/service.ts:1379-1426 copied. Both notes need updating together.
     await db
       .updateTable('approval_limits')
       .set({ requires_second_approval_above: 40000 })

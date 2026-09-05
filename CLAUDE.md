@@ -87,6 +87,34 @@ Two consequences worth stating:
   `tests/integration/schema-constraints.test.ts` carries a provenance header saying which
   of its reasons are inferred and which is grounded, for exactly this reason.
 
+## A record of current behaviour cites the test that holds it there
+
+**A `DECISIONS.md` sentence describing what the tree does *now* must name the assertion that proves
+it** — the test, by file, and by line where that helps. Not the migration, not the module. A
+description with nothing executable behind it is prose that cannot go red, and prose that cannot go
+red drifts silently.
+
+§19.1 is the instance, found on 2026-09-05. Its last paragraph described the integration suite
+inserting *"two with `source_table` set and `source_id` NULL — half a pair is exempt by the same
+rule"*. Migration 015 made those two inserts fail and the test was changed to assert `errno 4025`
+against `chk_exp_source_pair`. The paragraph was not changed, and it went on giving a confident
+account of a suite that no longer existed. Nothing was red, because a paragraph is not executable —
+which is why the rule has to be about what the paragraph *says* rather than about running anything.
+
+Why a citation is enough on its own: a cited test either still asserts what the sentence claims, or
+somebody had to edit it — and editing it is the moment the sentence gets re-read. An uncited
+description never gets that moment. The citation is not evidence, it is a tripwire on the prose.
+
+Two clauses that decide which sentences this applies to:
+
+- **A decision and a description of behaviour are different sentences, and one paragraph should not
+  hold both.** "Rule 1 says the pair is unique where both are non-null" is a decision: it stays true
+  whatever the tree does. "The suite inserts five rows with no `source_id`" is behaviour, and it
+  needs the citation. §19.1's stale paragraph was the two welded together, which is how the false
+  half borrowed credibility from the true half.
+- **Counts are behaviour.** Test counts, row counts, "three tests in", "the eight nullable columns" —
+  each is a fact about the tree at one moment. Cite where it is asserted, or date it.
+
 ## The database is not optional to verification
 
 `npm test` opens no connection: it is evidence about pure functions and form contracts

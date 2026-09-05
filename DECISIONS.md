@@ -2075,12 +2075,12 @@ so the pair is never unindexed. Both columns also gained a `COMMENT` naming the 
 section.
 
 **Three tests, in `tests/integration/hr-contractor-flow.test.ts`.** The old tripwire is inverted: the
-only index over those columns is `uq_exp_source` with `NON_UNIQUE = 0`, which also fails if a future
+only index over those columns is `uq_exp_source` with `NON_UNIQUE = 0` (`:1059`), which also fails if a future
 migration leaves both indexes in place. Three fully manual rows insert without complaint and the count of
-`source_id IS NULL` fixture rows is asserted at 3. The refusal test calls no service at all: the same insert
-runs twice with `source_id = contractor_bills.id`, and the second comes back `ER_DUP_ENTRY`, `errno 1062`,
-message naming `uq_exp_source`. Asserting the errno is the point — it is what distinguishes the database
-refusing from a service check refusing, and rule 1 asks for the former.
+`source_id IS NULL` fixture rows is asserted at 3 (`:1098`). The refusal test calls no service at all: the
+same insert runs twice with `source_id = contractor_bills.id`, and the second comes back `ER_DUP_ENTRY`,
+`errno 1062`, message naming `uq_exp_source` (`:1123-1125`). Asserting the errno is the point — it is what
+distinguishes the database refusing from a service check refusing, and rule 1 asks for the former.
 
 **What that paragraph said until 2026-09-05, because it is the defect this file exists to catch.** It read:
 *"Five rows with no `source_id` insert without complaint, three fully manual and two with `source_table` set
@@ -2091,7 +2091,10 @@ was written about, sitting in the section that produced the rule. And the fact w
 those two inserts fail, so since 015 the test has asserted `errno 4025` naming `chk_exp_source_pair` for them
 (`hr-contractor-flow.test.ts:1082-1090`), while this paragraph went on describing the suite that defended the
 hole. A permission assertion that outlives the permission is the specific way a stale record misleads:
-nothing was red, and the prose stayed confident.
+nothing was red, and the prose stayed confident. **The rule that came out of it is in CLAUDE.md, "A record of
+current behaviour cites the test that holds it there":** a sentence describing what the tree does now names the
+assertion holding it there, so the next person to change the behaviour has to edit the citation and re-reads
+the sentence while they are in there. That is the only mechanism available, because a paragraph cannot go red.
 
 ### 19.2 `contractor_attendance` can price measured work — migration 013
 
@@ -2523,7 +2526,10 @@ What the code does today. `approveContractorBill` resolves an `approval_limits` 
 `expense` — the ENUM has no `contractor_bill` member, which 18.9 records — checks the **gross** against
 `max_value`, and then, above `requires_second_approval_above`, throws instead of approving
 (`service.ts:2359-2368`). The message names the figure, the threshold and the reason: `contractor_bills` has
-one `approved_by` column and no `second_approved_by`.
+one `approved_by` column and no `second_approved_by`. Both halves of that are asserted, which is what makes
+this paragraph a description rather than a claim: the refusal at
+`tests/integration/hr-contractor-flow.test.ts:999`, which also pins the bill still at `draft` afterwards, and
+the empty-limits state at `:914`. When the two-signature path lands, both go red.
 
 **The intended rule is a two-signature path, and it already runs in this codebase.** `approvePo` at
 `src/modules/inventory/service.ts:1379-1426` is the shape: above the threshold the first approval is
@@ -2531,7 +2537,8 @@ one `approved_by` column and no `second_approved_by`.
 a second is needed, an `inventory.po_approve_first` audit row is written, and the second approver, refused at
 `:1362` if they are the same person, is the one who sets `status = 'approved'` and `second_approved_by`. Spec
 `:2141` (§6.8 rule 3) asks for exactly that and says why: *"two names on a voucher is the only real control
-that exists."* So this is not a design question. It is a missing column pair plus that branch.
+that exists."* So this is not a design question. It is a missing ENUM member, a missing column pair, and that
+branch copied — enumerated at the end of this entry.
 
 **Why refusing was the right placeholder rather than either alternative.**
 
@@ -2546,12 +2553,31 @@ Refusing is loud, it names the gap in the message a user actually sees, and it i
 `approval_limits` is seeded empty pending §8.2, so `limit === null` refuses first and this branch is never
 evaluated. Which is also why it cannot be found by using the system, and why it needs an entry here.
 
-**The one thing copying `approvePo` does not answer.** `purchase_orders` parks a first signature by leaving
-`status = 'pending_approval'`, and `contractor_bills.status` has no such member — it is
-`draft | submitted | verified | approved | paid | disputed`, and `verified` with `verified_by` already means a
-different step. So finance chooses: add a status member, or treat `approved_by IS NOT NULL` at
-`status = 'verified'` as the awaiting-second state. Flagged rather than chosen, because the answer belongs
-with whoever builds the approval screen.
+**The blocker is the `status` ENUM, and it is not a design question.** `approvePo` parks a first signature by
+leaving the status where it was and setting `approved_by`; first and second are told apart by
+`approved_by IS NULL` (`inventory/service.ts:1381`), and the entry guard at `:1352` can be a single equality
+because a purchase order has exactly one pre-approval status, `pending_approval`. A contractor bill has three
+— `draft`, `submitted`, `verified` — so the same trick yields "one of three statuses **and**
+`approved_by IS NOT NULL`", a state no column holds. Every list, filter and count that groups by `status`
+would then report a half-approved bill as `verified`, and the condition saying otherwise would have to be
+repeated at each of them, correctly, forever. That is the silent-figure failure this file keeps recording. The
+fix is a status value that names the state, which makes this a migration rather than a decision.
+
+So 21.2 is three things, and the third is a copy:
+
+1. **`contractor_bills.status` gains `pending_approval`**, matching `purchase_orders`, so the parked state has
+   a name. This is the blocker: it changes a value every reader of that column may now see, and
+   `approveContractorBill`'s own entry guard at `hr/service.ts:2336` has to admit it.
+2. **`second_approved_by` and `second_approved_at`**, the pair `purchase_orders` already carries at
+   `src/db/types.ts:1257` and `expenses` at `:617`.
+3. **The refusal at `hr/service.ts:2359` gives way to the branch at
+   `src/modules/inventory/service.ts:1379-1426`**, copied rather than redesigned: record the first approval,
+   notify the permission holders that a second is needed, write the audit row, refuse the same approver twice
+   (`inventory/service.ts:1362`), and let the second signature set `approved` together with
+   `second_approved_by`.
+
+None of it is HR-slice work, and the reason is the first item: an ENUM member on a table §6.8 posts from is
+finance's migration, not a screen's.
 
 **Gross, not net, stays as recorded** (18.9). The figure checked against both limits is `gross_paise`, the
 cost committed to the project — not `net_payable_paise`, which is what leaves the bank after retention, TDS,
