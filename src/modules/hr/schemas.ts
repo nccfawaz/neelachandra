@@ -635,12 +635,17 @@ const percentToBasisPoints = (message: string) =>
  * superseded, and the service closes the previous line rather than asking the
  * user to date both ends of it.
  *
- * `uom` matters more than it looks. `contractor_attendance` records a headcount
- * and no quantity, so only a `per_day` rate can be priced from a day's
- * attendance. The other four members are recorded here because the column has
- * them and a piece-rate agreement is real, but the service refuses to snapshot
- * one onto an attendance row -- see DECISIONS, this is a structural gap in 6.6
- * rather than a validation choice.
+ * `uom` matters more than it looks, and used to matter differently. Until
+ * migration 013 `contractor_attendance` held a headcount and no quantity, so
+ * only a `per_day` rate could be priced from a day's attendance and the other
+ * four members of the ENUM were unreachable -- recorded at the time as a
+ * structural gap in 6.6 rather than a validation choice. 013 adds the quantity,
+ * so all five now price. See DECISIONS 19.2.
+ *
+ * `skillLevel` stays optional for the measured UOMs and required for `per_day`,
+ * which is the asymmetry a piece rate has: 240 sqft of plastering costs the same
+ * whoever laid it, whereas a day is bought from a mason or from a helper at two
+ * different prices.
  */
 export const contractorRateSchema = z
   .object({
@@ -672,7 +677,10 @@ export const contractorRateSchema = z
 
 export interface ContractorAttendanceRowInput {
   skillLevel: (typeof SKILL_LEVELS)[number]
+  uom: (typeof RATE_UOMS)[number]
+  workType: string | null
   headcount: number
+  quantity: number | null
   overtimeHours: number
 }
 
@@ -685,6 +693,14 @@ export interface ContractorAttendanceInput {
 }
 
 /**
+ * The rate unit as the rate-card select shows it: `per_sqft` reads "per sqft".
+ *
+ * The same `replace` the enum selects use, exported so that a refusal names the
+ * unit in the words the person picked rather than in the column's spelling.
+ */
+export const uomLabel = (uom: string) => uom.replace(/_/g, ' ')
+
+/**
  * A day's contractor headcount, one row per skill level.
  *
  * The same `repeated` shape as the employee grid and for the same reason: one
@@ -695,6 +711,19 @@ export interface ContractorAttendanceInput {
  * A headcount of 0 IS refused. Blank means "no masons today" and needs no row;
  * a typed zero beside three overtime hours is a contradiction, and the row it
  * would write is one the UNIQUE key then blocks the real figure from taking.
+ *
+ * A headcount is required on a measured row too, and that is a choice. The
+ * quantity is what prices such a row, so the headcount is not arithmetically
+ * needed -- but `headcount SMALLINT UNSIGNED NOT NULL` has no default, this
+ * table is called attendance, and whoever knows 300 sqft was plastered knows how
+ * many masons did it. What is NOT allowed is a quantity with the headcount cell
+ * left empty: the blank-means-skip rule would drop the row and the measure with
+ * it, so that combination refuses instead of vanishing.
+ *
+ * `uom`, `workType` and `quantity` arrived with migration 013 (DECISIONS 19.2).
+ * A blank `uom` reads as `per_day`, which is what every row posted before 013
+ * meant and what the day grid still posts. The split is strict in both
+ * directions: a day row may not carry a quantity, and a measured row must.
  *
  * `overtimeHours` is the row's total, not per worker: it sits beside a headcount,
  * so a per-worker figure would have to be multiplied by something to mean
@@ -712,7 +741,10 @@ export const contractorAttendanceSchema = z
     projectId: z.coerce.number().int().min(1, 'Choose the project this labour worked on.'),
     attendanceDate: requiredDate,
     skillLevel: repeated,
+    uom: repeated,
+    workType: repeated,
     headcount: repeated,
+    quantity: repeated,
     overtimeHours: repeated,
     overrideCompliance: checkbox,
   })
@@ -725,7 +757,13 @@ export const contractorAttendanceSchema = z
 
     for (let i = 0; i < v.skillLevel.length; i += 1) {
       const headRaw = (v.headcount[i] ?? '').trim()
-      if (headRaw === '') continue
+      const qtyRaw = (v.quantity[i] ?? '').trim()
+      if (headRaw === '') {
+        if (qtyRaw === '') continue
+        return refuse(
+          `A quantity of ${qtyRaw} was entered with no headcount beside it. Fill in how many people did the work, or clear the quantity.`
+        )
+      }
 
       const skill = (v.skillLevel[i] ?? '').trim()
       if (!(SKILL_LEVELS as readonly string[]).includes(skill)) {
@@ -735,6 +773,48 @@ export const contractorAttendanceSchema = z
       const headcount = Number(headRaw)
       if (!Number.isInteger(headcount) || headcount < 1 || headcount > 999) {
         return refuse('A headcount is a whole number of people from 1 to 999. Leave it blank for none.')
+      }
+
+      const uomRaw = (v.uom[i] ?? '').trim()
+      const uom = uomRaw === '' ? 'per_day' : uomRaw
+      if (!(RATE_UOMS as readonly string[]).includes(uom)) {
+        return refuse(`'${uomRaw}' is not one of the rate units.`)
+      }
+
+      const workRaw = (v.workType[i] ?? '').trim()
+      if (workRaw.length > 120) {
+        return refuse('A work type is at most 120 characters.')
+      }
+      const workType = workRaw === '' ? null : workRaw
+
+      let quantity: number | null = null
+      if (uom === 'per_day') {
+        if (qtyRaw !== '') {
+          return refuse(
+            `A per-day row is priced by headcount, so it takes no quantity. Remove the ${qtyRaw} beside ${skill.replace(/_/g, ' ')}, or change the unit.`
+          )
+        }
+      } else {
+        // A measured row names its work type, and this is not decoration. Skill
+        // level picks a day rate; it cannot pick between plastering and tiling
+        // when a contractor holds a per-sqft rate for both. Without the name the
+        // resolution falls back to "latest effective_from wins", which is an
+        // arbitrary choice between two very different amounts.
+        if (workType === null) {
+          return refuse(
+            `A ${uomLabel(uom)} row has to say what work it is for, so that one rate card line prices it.`
+          )
+        }
+        const n = Number(qtyRaw)
+        if (!Number.isFinite(n) || n <= 0) {
+          return refuse(`A ${uomLabel(uom)} rate is priced by the measure, so enter a quantity above zero.`)
+        }
+        if (n > 1_000_000) {
+          return refuse(`${qtyRaw} is too large for one day's ${uomLabel(uom)} work. Check the figure.`)
+        }
+        // DECIMAL(14,3): a fourth decimal place would be rounded by the column
+        // rather than refused here, so round it where the number is still visible.
+        quantity = Math.round(n * 1000) / 1000
       }
 
       const otRaw = (v.overtimeHours[i] ?? '').trim()
@@ -750,7 +830,10 @@ export const contractorAttendanceSchema = z
 
       rows.push({
         skillLevel: skill as ContractorAttendanceRowInput['skillLevel'],
+        uom: uom as ContractorAttendanceRowInput['uom'],
+        workType,
         headcount,
+        quantity,
         overtimeHours: Math.round(overtimeHours * 10) / 10,
       })
     }
@@ -762,7 +845,9 @@ export const contractorAttendanceSchema = z
     const seen = new Set<string>()
     for (const row of rows) {
       if (seen.has(row.skillLevel)) {
-        return refuse(`That form counts ${row.skillLevel.replace(/_/g, ' ')} twice for one day.`)
+        return refuse(
+          `That form counts ${row.skillLevel.replace(/_/g, ' ')} twice for one day. One row per skill level per date, whatever the unit.`
+        )
       }
       seen.add(row.skillLevel)
     }

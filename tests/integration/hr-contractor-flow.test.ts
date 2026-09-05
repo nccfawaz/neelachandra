@@ -13,6 +13,7 @@ import {
   contractorPeriodSchema,
   contractorRateSchema,
   contractorSchema,
+  type ContractorAttendanceInput,
 } from '../../src/modules/hr/schemas.js'
 
 /*
@@ -37,6 +38,10 @@ import {
  *   - The identity finance will key on: `contractor_bills.id`. A bill that
  *     generated but left `expense_id` non-NULL, or whose id moved, would break
  *     6.8 rule 1 before it is written.
+ *   - Measured work (migration 013). A per-sqft amount is a rate times a
+ *     DECIMAL(14,3) that arrives as a string, the rate is chosen by work type
+ *     rather than by skill level, and `chk_ca_quantity` is a CHECK constraint --
+ *     none of the three is visible to tsc or to the pure suite.
  *
  * Fixtures. Two obviously fake contractors, one fake login, one client and two
  * projects, removed afterwards by id above a high-water mark captured before
@@ -45,7 +50,8 @@ import {
  *
  * Dates are fixed and in the past, because recording a future day is refused.
  * 2026-08 is used throughout so nothing here collides with hr-attendance-flow's
- * 2026-09, and both suites run in one fork.
+ * 2026-09, and both suites run in one fork. The measured-work block at the end
+ * has 2026-06 and a third contractor to itself, for the same reason.
  */
 
 const db = getDb()
@@ -75,6 +81,15 @@ const DAY_2 = '2026-08-04'
 const DAY_3 = '2026-08-05'
 /** Outside FROM..TO, so a bill for the period must not touch it. */
 const OUTSIDE = '2026-08-17'
+
+/* The measured-work period, its own contractor and its own dates. 2026-06 is
+   used rather than a gap inside 2026-08, because several assertions above are
+   counts over a period and a stray row would move them -- and 2026-07 is the
+   empty range the "nothing to approve" refusal is asserted against. */
+const M_FROM = '2026-06-08'
+const M_TO = '2026-06-13'
+const M_DAY_1 = '2026-06-08'
+const M_DAY_2 = '2026-06-09'
 
 let actor = { userId: 0, ip: '127.0.0.1' as string | null }
 let otherActor = { userId: 0, ip: '127.0.0.1' as string | null }
@@ -117,11 +132,18 @@ function rateInput(over: Record<string, unknown>) {
   })
 }
 
-/** The entry grid as the browser posts it: repeated fields, blanks for none. */
+/**
+ * The entry grid as the browser posts it: repeated fields, blanks for none.
+ *
+ * All six row names are posted on every call, including the three that arrived
+ * with 013, because the screen emits a value for each of them on every rendered
+ * line -- hidden inputs on the day grid -- and index alignment across the two
+ * grids is exactly what would break if a caller emitted five.
+ */
 function day(
   date: string,
   contractorId: number,
-  rows: Array<{ skill: string; headcount: string; ot?: string }>,
+  rows: Array<{ skill: string; headcount: string; ot?: string; uom?: string; work?: string; qty?: string }>,
   opts: { projectId?: number; override?: boolean } = {}
 ) {
   return contractorAttendanceSchema.parse({
@@ -129,7 +151,10 @@ function day(
     projectId: String(opts.projectId ?? projectId),
     attendanceDate: date,
     skillLevel: rows.map((r) => r.skill),
+    uom: rows.map((r) => r.uom ?? 'per_day'),
+    workType: rows.map((r) => r.work ?? ''),
     headcount: rows.map((r) => r.headcount),
+    quantity: rows.map((r) => r.qty ?? ''),
     overtimeHours: rows.map((r) => r.ot ?? ''),
     ...(opts.override ? { overrideCompliance: 'on' } : {}),
   })
@@ -172,7 +197,10 @@ async function cell(contractorId: number, date: string, skill: string) {
     .select([
       'id',
       'project_id',
+      'uom',
+      'work_type',
       'headcount',
+      'quantity',
       'overtime_hours',
       'rate_paise',
       'amount_paise',
@@ -1047,5 +1075,347 @@ describe('the double-posting constraint 6.8 rule 1 promises', () => {
       .where('source_id', '=', firstBillId)
       .executeTakeFirstOrThrow()
     expect(Number(posted.n)).toBe(1)
+  })
+})
+
+/**
+ * Measured work reaching a bill (migration 013, DECISIONS 19.2).
+ *
+ * Before 013 the rate card offered five UOMs and `contractor_attendance` could
+ * price exactly one of them, because the only multiplier it held was a headcount.
+ * Four fifths of the card was unreachable: an interiors contractor billing
+ * plastering by the sqft had nowhere to put the sqft.
+ *
+ * What needs the server rather than the pure suite:
+ *
+ *   - The rate is chosen by WORK TYPE, not by skill level. Two per-sqft lines for
+ *     one contractor, both skill-less, both open, is the ordinary case, and which
+ *     one `applicableRate` returns is four SQL predicates and a sort.
+ *   - `quantity` is DECIMAL(14,3) and comes back as a string. The amount is a
+ *     BIGINT of paise computed from it in JS, so the multiplication happens on
+ *     something mysql2 typed as text.
+ *   - `chk_ca_quantity` is a CHECK constraint. It is the only one of the three
+ *     gates on this rule that no application code can be bypassed to reach.
+ *
+ * Its own contractor, its own dates and its own project-free rates, so that none
+ * of the period counts asserted above move.
+ */
+describe('a measured rate reaches a bill (migration 013)', () => {
+  let chitId = 0
+
+  const PLASTER = 'Internal plastering'
+  const CEILING = 'False ceiling'
+  const PCC = 'PCC 1:4:8'
+
+  /** 45.50 a sqft, 240.5 sqft: 4550 x 240.5 is a whole number of paise. */
+  const PLASTER_PAISE = 4550
+  const PLASTER_QTY = 240.5
+  const PLASTER_AMOUNT = 1_094_275
+
+  /** 6750.75 a cum, 3.5 cum: 2362762.5 paise, a tie roundPaise takes upward. */
+  const PCC_PAISE = 675075
+  const PCC_QTY = 3.5
+  const PCC_AMOUNT = 2_362_763
+
+  /** One ordinary day row in the same period, so the bill mixes both kinds. */
+  const HELPER_DAY_AMOUNT = 3 * 40000
+
+  beforeAll(async () => {
+    chitId = await svc.createContractor(
+      db,
+      actor,
+      contractorInput({
+        code: 'FIXLC-CHIT',
+        name: 'Fixture Interiors Chit',
+        pan: 'AAAPC5678C',
+        tradeSpecialisation: 'Plastering and false ceiling',
+        licenceNo: 'FIX/LIC/CHIT',
+        licenceValidUntil: '2027-03-31',
+        wcPolicyNo: 'FIX/WC/CHIT',
+        wcPolicyValidUntil: '2027-03-31',
+      })
+    )
+
+    // Two per-sqft lines and a per-cum one, none naming a skill level: measured
+    // work is quoted per unit regardless of who lays it, which is what a nullable
+    // `contractor_rates.skill_level` is for. All three stay open, because
+    // supersession is keyed on (work_type, uom, skill_level, project) and these
+    // differ in work type.
+    await svc.addContractorRate(
+      db,
+      actor,
+      chitId,
+      rateInput({ uom: 'per_sqft', workType: PLASTER, rate: '45.50', effectiveFrom: '2026-04-01' })
+    )
+    await svc.addContractorRate(
+      db,
+      actor,
+      chitId,
+      rateInput({ uom: 'per_sqft', workType: CEILING, rate: '96', effectiveFrom: '2026-04-01' })
+    )
+    await svc.addContractorRate(
+      db,
+      actor,
+      chitId,
+      rateInput({ uom: 'per_cum', workType: PCC, rate: '6750.75', effectiveFrom: '2026-04-01' })
+    )
+    await svc.addContractorRate(
+      db,
+      actor,
+      chitId,
+      rateInput({ skillLevel: 'helper', rate: '400', workType: 'General labour', effectiveFrom: '2026-04-01' })
+    )
+  })
+
+  it('picks the per-sqft line by work type, and says so when the work type is missing', async () => {
+    const plaster = await q.applicableRate(db, {
+      contractorId: chitId,
+      projectId,
+      skillLevel: 'mason',
+      onDate: M_DAY_1,
+      uom: 'per_sqft',
+      workType: PLASTER,
+    })
+    expect(plaster).toMatchObject({ ratePaise: PLASTER_PAISE, workType: PLASTER, uom: 'per_sqft', ambiguous: false })
+
+    const ceiling = await q.applicableRate(db, {
+      contractorId: chitId,
+      projectId,
+      skillLevel: 'mason',
+      onDate: M_DAY_1,
+      uom: 'per_sqft',
+      workType: CEILING,
+    })
+    expect(ceiling).toMatchObject({ ratePaise: 9600, workType: CEILING, ambiguous: false })
+
+    // Both lines tie on scope, skill and start date, so without a work type
+    // there is nothing left to decide it. The caller is told rather than refused,
+    // and this is why the schema requires a work type on a measured row.
+    const blind = await q.applicableRate(db, {
+      contractorId: chitId,
+      projectId,
+      skillLevel: 'mason',
+      onDate: M_DAY_1,
+      uom: 'per_sqft',
+    })
+    expect(blind?.ambiguous).toBe(true)
+
+    // The day rate is a different UOM and must not be reachable from a per-sqft
+    // ask, nor the other way round.
+    expect(
+      await q.applicableRate(db, {
+        contractorId: chitId,
+        projectId,
+        skillLevel: 'helper',
+        onDate: M_DAY_1,
+        uom: 'per_sqft',
+        workType: 'General labour',
+      })
+    ).toBeUndefined()
+    expect(
+      await q.applicableRate(db, { contractorId: chitId, projectId, skillLevel: 'helper', onDate: M_DAY_1 })
+    ).toMatchObject({ ratePaise: 40000, uom: 'per_day' })
+  })
+
+  it('writes a measured row and a day row from one post, pricing each its own way', async () => {
+    const result = await svc.recordContractorAttendance(
+      db,
+      actor,
+      day(
+        M_DAY_1,
+        chitId,
+        [
+          { skill: 'mason', headcount: '2', uom: 'per_sqft', work: PLASTER, qty: String(PLASTER_QTY) },
+          { skill: 'helper', headcount: '3' },
+        ],
+        { projectId }
+      ),
+      { canManageContractors: true }
+    )
+    expect(result).toMatchObject({ inserted: 2, updated: 0, headcount: 5 })
+    expect(result.grossPaise).toBe(PLASTER_AMOUNT + HELPER_DAY_AMOUNT)
+
+    const mason = await cell(chitId, M_DAY_1, 'mason')
+    expect(mason).toMatchObject({ uom: 'per_sqft', work_type: PLASTER, headcount: 2, bill_id: null })
+    expect(Number(mason?.quantity)).toBe(PLASTER_QTY)
+    expect(Number(mason?.rate_paise)).toBe(PLASTER_PAISE)
+    // The point of the migration: the amount is rate x quantity, and the
+    // headcount of 2 multiplies nothing.
+    expect(Number(mason?.amount_paise)).toBe(PLASTER_AMOUNT)
+
+    // The day row beside it is untouched by any of that, and still carries no
+    // quantity at all rather than a 0 that would look like a measure.
+    const helper = await cell(chitId, M_DAY_1, 'helper')
+    expect(helper).toMatchObject({ uom: 'per_day', work_type: null, quantity: null, headcount: 3 })
+    expect(Number(helper?.amount_paise)).toBe(HELPER_DAY_AMOUNT)
+
+    const audit = await lastAudit('hr.contractor_attendance_record')
+    expect(audit?.payload['rows']).toEqual([
+      `mason:2 @${PLASTER_QTY} per_sqft (${PLASTER})`,
+      'helper:3',
+    ])
+  })
+
+  it('rounds a measured amount half up, the same way a deduction is rounded', async () => {
+    const result = await svc.recordContractorAttendance(
+      db,
+      actor,
+      day(M_DAY_2, chitId, [{ skill: 'mason', headcount: '4', uom: 'per_cum', work: PCC, qty: String(PCC_QTY) }], {
+        projectId,
+      }),
+      { canManageContractors: true }
+    )
+    // 675075 x 3.5 is exactly 2362762.5 paise. Half a paise cannot be stored and
+    // is not silently truncated by the BIGINT column: roundPaise takes it up.
+    expect(result.grossPaise).toBe(PCC_AMOUNT)
+    const row = await cell(chitId, M_DAY_2, 'mason')
+    expect(row).toMatchObject({ uom: 'per_cum', work_type: PCC })
+    expect(Number(row?.quantity)).toBe(PCC_QTY)
+    expect(Number(row?.rate_paise)).toBe(PCC_PAISE)
+    expect(Number(row?.amount_paise)).toBe(PCC_AMOUNT)
+  })
+
+  it('refuses a measured row with no quantity, naming the unit', async () => {
+    // Built as a service input rather than through the schema, because the schema
+    // refuses this first and the service gate has to hold on its own -- it is
+    // what stands between a route that grew a new caller and a wrong amount.
+    const input: ContractorAttendanceInput = {
+      contractorId: chitId,
+      projectId,
+      attendanceDate: M_FROM,
+      rows: [{ skillLevel: 'painter', uom: 'per_sqft', workType: PLASTER, headcount: 2, quantity: null, overtimeHours: 0 }],
+      overrideCompliance: false,
+    }
+    await expect(svc.recordContractorAttendance(db, actor, input, { canManageContractors: true })).rejects.toThrow(
+      /quoted per sqft, so it needs a quantity above zero to price/
+    )
+    expect(await cell(chitId, M_FROM, 'painter')).toBeUndefined()
+
+    // And the mirror: a day row carrying a quantity states a multiplier nothing
+    // reads, so it is refused rather than ignored.
+    await expect(
+      svc.recordContractorAttendance(
+        db,
+        actor,
+        { ...input, rows: [{ ...input.rows[0]!, uom: 'per_day', workType: null, quantity: 12 }] },
+        { canManageContractors: true }
+      )
+    ).rejects.toThrow(/quoted per day/)
+
+    // A measured row that does not say what work it is for cannot pick between
+    // the two per-sqft lines, so it is refused before a rate is chosen.
+    await expect(
+      svc.recordContractorAttendance(
+        db,
+        actor,
+        { ...input, rows: [{ ...input.rows[0]!, workType: null, quantity: 30 }] },
+        { canManageContractors: true }
+      )
+    ).rejects.toThrow(/does not say what work it is for/)
+  })
+
+  it('is refused by chk_ca_quantity in both directions, with no application code involved', async () => {
+    const constraint = await sql<{ CONSTRAINT_NAME: string; CHECK_CLAUSE: string }>`
+      select CONSTRAINT_NAME, CHECK_CLAUSE from information_schema.CHECK_CONSTRAINTS
+      where CONSTRAINT_SCHEMA = database() and TABLE_NAME = 'contractor_attendance'
+    `.execute(db)
+    const clause = constraint.rows.find((r) => r.CONSTRAINT_NAME === 'chk_ca_quantity')?.CHECK_CLAUSE
+    // The presence test is not enough, and this test is the reason 014 exists: as
+    // 013 wrote it the clause ended `quantity > 0`, which against a NULL is
+    // UNKNOWN rather than FALSE, and a CHECK admits UNKNOWN. The one row the
+    // constraint existed to refuse was the one row it let through. TRIPWIRE: if
+    // this match fails, read the migration that last touched the constraint
+    // before trusting the three refusals below.
+    expect(clause).toMatch(/quantity` is not null/)
+
+    /** Only the columns that are NOT NULL without a default. */
+    const insert = (over: Record<string, unknown>) =>
+      db
+        .insertInto('contractor_attendance')
+        .values({
+          contractor_id: chitId,
+          project_id: projectId,
+          attendance_date: M_TO,
+          skill_level: 'barbender',
+          headcount: 1,
+          rate_paise: PLASTER_PAISE,
+          amount_paise: PLASTER_PAISE,
+          recorded_by: actor.userId,
+          ...over,
+        })
+        .executeTakeFirst()
+
+    const failure = async (over: Record<string, unknown>) => {
+      let err: (Error & { errno?: number }) | undefined
+      try {
+        await insert(over)
+      } catch (caught) {
+        err = caught as Error & { errno?: number }
+      }
+      // 4025 is ER_CONSTRAINT_FAILED. Asserted with the constraint name because
+      // that pair is the proof of which layer refused: an application check would
+      // arrive as an UnprocessableError carrying prose.
+      expect(err?.message).toMatch(/chk_ca_quantity/)
+      expect(err?.errno).toBe(4025)
+      return err
+    }
+
+    // A measured row with nothing to multiply, which is the row the third gate in
+    // generateContractorBill exists for and which this constraint now makes
+    // unreachable through any path at all.
+    await failure({ uom: 'per_sqft', work_type: PLASTER, quantity: null })
+    // Zero is not a measure either: the clause is `quantity > 0`, not NOT NULL.
+    await failure({ uom: 'per_sqft', work_type: PLASTER, quantity: 0 })
+    // And the mirror, in the database this time.
+    await failure({ uom: 'per_day', quantity: 5 })
+
+    const left = await db
+      .selectFrom('contractor_attendance')
+      .select((eb) => eb.fn.countAll<number>().as('n'))
+      .where('contractor_id', '=', chitId)
+      .where('attendance_date', '=', M_TO)
+      .executeTakeFirstOrThrow()
+    expect(Number(left.n)).toBe(0)
+  })
+
+  it('bills the period, mixing a measured amount with a day-rate one', async () => {
+    expect(
+      await svc.approveContractorAttendance(db, otherActor, period(chitId, { from: M_FROM, to: M_TO }))
+    ).toMatchObject({ approved: 3, alreadyApproved: 0 })
+
+    const gross = PLASTER_AMOUNT + HELPER_DAY_AMOUNT + PCC_AMOUNT
+    expect(
+      await q.unbilledSummary(db, { contractorId: chitId, projectId, from: M_FROM, to: M_TO })
+    ).toMatchObject({ rows: 3, days: 2, grossPaise: gross, unapproved: 0 })
+
+    const bill = await svc.generateContractorBill(db, actor, billInput(chitId, { from: M_FROM, to: M_TO }))
+    expect(bill.billNo).toMatch(/^NCC\/CB\/2026-27\/\d{3,}$/)
+    expect(bill).toMatchObject({ rows: 3, days: 2, retentionBp: 500, tdsBp: 200, noPan: false })
+    expect(bill.grossPaise).toBe(gross)
+    // 5% of 35,77,038 paise is 1,78,851.9 and 2% is 71,540.76; both round.
+    expect(bill.retentionPaise).toBe(178852)
+    expect(bill.tdsPaise).toBe(71541)
+    expect(bill.netPayablePaise).toBe(gross - 178852 - 71541)
+
+    // Read back through the query the bill page uses, so the DECIMAL and BIGINT
+    // round trips are inside the assertion.
+    const stored = await q.findContractorBill(db, bill.billId)
+    expect(stored).toMatchObject({ gross_paise: gross, period_from: M_FROM, period_to: M_TO, status: 'draft' })
+    expect(stored!.gross_paise - stored!.retention_paise - stored!.tds_paise).toBe(stored!.net_payable_paise)
+
+    const lines = await q.contractorAttendance(db, { billId: bill.billId })
+    expect(lines).toHaveLength(3)
+    expect(lines.reduce((sum, l) => sum + l.amount_paise, 0)).toBe(gross)
+    // The bill stores one gross figure and nothing else about the mix, so the
+    // audit entry is the only trace that two of these three were measured.
+    const audit = await lastAudit('hr.contractor_bill_generate')
+    expect(audit?.payload).toMatchObject({ attendance_rows: 3, measured_rows: 2, gross_paise: gross })
+
+    // A measured row is billed exactly once, like any other: bill_id is stamped
+    // under the same WHERE bill_id IS NULL guard.
+    expect(Number((await cell(chitId, M_DAY_1, 'mason'))?.bill_id)).toBe(bill.billId)
+    expect(
+      await q.unbilledSummary(db, { contractorId: chitId, projectId, from: M_FROM, to: M_TO })
+    ).toMatchObject({ rows: 0, grossPaise: 0 })
   })
 })

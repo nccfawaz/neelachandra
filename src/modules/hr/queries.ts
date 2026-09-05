@@ -940,45 +940,67 @@ export async function contractorRates(db: Queryable, contractorId: number): Prom
 }
 
 /**
- * The rate a day is priced at, resolved to exactly one row.
+ * The rate a row is priced at, resolved to exactly one rate card line.
  *
  * `contractor_attendance.rate_paise` is a snapshot rather than a join, so this
  * runs once at entry and the figure never moves afterwards. The ordering is the
  * whole content of the function:
  *
- *   1. `uom = 'per_day'`. A headcount cannot be multiplied by a per-sqft rate,
- *      and the table has no quantity column to multiply anything else by.
- *   2. A rate for THIS project beats a company-wide one, which is what a
+ *   1. The UOM asked for. `per_day` is the default because a headcount is what a
+ *      day rate multiplies; 013 gave the table a `quantity`, so the other four
+ *      members are now reachable and the caller says which one it wants.
+ *   2. `work_type`, when the caller names one. A day rate is picked by skill
+ *      level, but a per-sqft rate is for plastering or for tiling and a
+ *      contractor may hold both, so skill level cannot choose between them.
+ *   3. A rate for THIS project beats a company-wide one, which is what a
  *      nullable `contractor_rates.project_id` is for.
- *   3. Then the latest `effective_from` that has begun, then the highest id.
+ *   4. A rate naming THIS skill level beats one that leaves it NULL. Measured
+ *      work is often quoted per unit regardless of who does it, and
+ *      `contractor_rates.skill_level` is nullable for that case, while
+ *      `contractor_attendance.skill_level` is NOT NULL and always says who.
+ *   5. Then the latest `effective_from` that has begun, then the highest id.
  *
- * Step 3 is deterministic but not unambiguous, and the ambiguity is structural:
- * `contractor_rates.work_type` is NOT NULL while `contractor_attendance` has no
- * work_type at all, so a contractor with a mason rate for shuttering and another
- * for plastering has two rows this can only choose between by date. The service
- * records the chosen `rate_id` in the audit log for that reason. Recorded in
- * DECISIONS rather than resolved by refusing, because a refusal would stop a
- * site gate at 8am over a data condition nobody there can fix.
+ * Rule 3 sits above rule 4 deliberately: scope is the distinction the spec builds
+ * into the schema, and it was the existing behaviour for day rates before
+ * measured work existed. Rule 5 is deterministic but not unambiguous, and the
+ * caller is told so through `ambiguous` rather than being refused, because a
+ * refusal would stop a site gate at 8am over a data condition nobody there can
+ * fix. The service records the chosen `rate_id` in the audit log for that reason.
  */
 export async function applicableRate(
   db: Queryable,
-  opts: { contractorId: number; projectId: number; skillLevel: string; onDate: string }
+  opts: {
+    contractorId: number
+    projectId: number
+    skillLevel: string
+    onDate: string
+    uom?: string
+    workType?: string | null
+  }
 ) {
-  const rows = await db
+  const uom = opts.uom ?? 'per_day'
+  let query = db
     .selectFrom('contractor_rates')
-    .select(['id', 'project_id', 'work_type', 'rate_paise', 'effective_from', 'effective_to'])
+    .select(['id', 'project_id', 'work_type', 'uom', 'skill_level', 'rate_paise', 'effective_from', 'effective_to'])
     .where('contractor_id', '=', opts.contractorId)
-    .where('uom', '=', 'per_day')
-    .where('skill_level', '=', opts.skillLevel as 'skilled')
+    .where('uom', '=', uom as 'per_day')
     .where('effective_from', '<=', opts.onDate)
     .where((eb) => eb.or([eb('effective_to', 'is', null), eb('effective_to', '>=', opts.onDate)]))
     .where((eb) => eb.or([eb('project_id', 'is', null), eb('project_id', '=', opts.projectId)]))
-    .execute()
+    .where((eb) =>
+      eb.or([eb('skill_level', 'is', null), eb('skill_level', '=', opts.skillLevel as 'skilled')])
+    )
+  if (opts.workType !== undefined && opts.workType !== null) {
+    query = query.where('work_type', '=', opts.workType)
+  }
+  const rows = await query.execute()
   if (rows.length === 0) return undefined
 
   const ranked = [...rows].sort((a, b) => {
     const scope = (r: typeof a) => (r.project_id === null ? 0 : 1)
+    const skill = (r: typeof a) => (r.skill_level === null ? 0 : 1)
     if (scope(a) !== scope(b)) return scope(b) - scope(a)
+    if (skill(a) !== skill(b)) return skill(b) - skill(a)
     if (a.effective_from !== b.effective_from) return String(a.effective_from) < String(b.effective_from) ? 1 : -1
     return Number(b.id) - Number(a.id)
   })
@@ -988,13 +1010,16 @@ export async function applicableRate(
     id: Number(best.id),
     projectId: best.project_id === null ? null : Number(best.project_id),
     workType: best.work_type,
+    uom: String(best.uom),
     ratePaise: Number(best.rate_paise),
-    // A project rate sitting above a company-wide one is not ambiguous: rule 2
-    // decides it. A tie on both scope and start date is, and the entry screen
-    // says so rather than presenting one figure as the only one.
+    // A project rate sitting above a company-wide one is not ambiguous: rule 3
+    // decides it, and nor is a skill-specific one above a NULL-skill one. A tie
+    // on scope, skill and start date is, and the entry screen says so rather
+    // than presenting one figure as the only one.
     ambiguous:
       runnerUp !== undefined &&
       (runnerUp.project_id === null) === (best.project_id === null) &&
+      (runnerUp.skill_level === null) === (best.skill_level === null) &&
       String(runnerUp.effective_from) === String(best.effective_from),
   }
 }
@@ -1005,7 +1030,10 @@ export interface ContractorAttendanceRow {
   project_id: number
   attendance_date: string
   skill_level: string
+  uom: string
+  work_type: string | null
   headcount: number
+  quantity: number | null
   overtime_hours: number
   rate_paise: number
   amount_paise: number
@@ -1048,7 +1076,10 @@ export async function contractorAttendance(
       'contractor_attendance.project_id',
       'contractor_attendance.attendance_date',
       'contractor_attendance.skill_level',
+      'contractor_attendance.uom',
+      'contractor_attendance.work_type',
       'contractor_attendance.headcount',
+      'contractor_attendance.quantity',
       'contractor_attendance.overtime_hours',
       'contractor_attendance.rate_paise',
       'contractor_attendance.amount_paise',
@@ -1073,6 +1104,9 @@ export async function contractorAttendance(
   return rows.map((r) => ({
     ...r,
     headcount: Number(r.headcount),
+    // DECIMAL arrives as a string, and NULL has to stay NULL: Number(null) is 0,
+    // which would read as "no work measured" rather than "not measured work".
+    quantity: r.quantity === null ? null : Number(r.quantity),
     overtime_hours: Number(r.overtime_hours),
     rate_paise: Number(r.rate_paise),
     amount_paise: Number(r.amount_paise),

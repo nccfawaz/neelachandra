@@ -4,7 +4,7 @@ import { writeAudit } from '../../lib/audit.js'
 import { nextNumber, sequenceCode } from '../../lib/numbering.js'
 import { ConflictError, ForbiddenError, NotFoundError, UnprocessableError } from '../../lib/errors.js'
 import { resolveApprovalLimit } from '../../lib/permissions.js'
-import { applyPct, formatPaise } from '../../lib/money.js'
+import { applyPct, formatPaise, roundPaise } from '../../lib/money.js'
 import {
   addDays,
   datesBetween,
@@ -25,6 +25,7 @@ import type {
   RateUom,
   SkillLevel,
 } from './schemas.js'
+import { uomLabel } from './schemas.js'
 import { getSetting } from '../../lib/settings.js'
 
 /**
@@ -1640,6 +1641,12 @@ function complianceFailures(
  * headcount that changed after someone approved it has not been approved at the
  * figure it now carries. A row already carried onto a bill cannot be corrected
  * at all: the bill is the record and a credit note is finance's, not HR's.
+ *
+ * Since migration 013 a row is priced one of two ways, and the unit on the row
+ * decides which: `per_day` multiplies the snapshot rate by the headcount, and the
+ * other four UOMs multiply it by the quantity. That is the whole of the
+ * difference -- the compliance gate, the snapshot, the approval clearing and the
+ * billed-row refusal are identical either way. DECISIONS 19.2.
  */
 export async function recordContractorAttendance(
   db: Db,
@@ -1713,6 +1720,8 @@ export async function recordContractorAttendance(
 
     for (const row of input.rows) {
       const readable = row.skillLevel.replace(/_/g, ' ')
+      const unit = uomLabel(row.uom)
+      const measured = row.uom !== 'per_day'
       const prior = priorBySkill.get(row.skillLevel)
 
       if (prior && prior.bill_id !== null) {
@@ -1729,20 +1738,54 @@ export async function recordContractorAttendance(
         )
       }
 
+      // The quantity gate, before the rate is looked up. A measured line with no
+      // measure has nothing to multiply, and saying so with the unit named is more
+      // use than "no rate found" would be -- the rate card is not the problem.
+      // The schema refuses this first; this is the check that holds for any caller.
+      if (measured && (row.quantity === null || !(row.quantity > 0))) {
+        throw new UnprocessableError(
+          `The ${readable} line is quoted ${unit}, so it needs a quantity above zero to price. ${
+            row.quantity === null ? 'None was given' : `${row.quantity} was given`
+          }; a headcount alone cannot be multiplied by a ${unit} rate.`
+        )
+      }
+      // And it names its work type, for the reason the schema gives: skill level
+      // cannot choose between two piece rates the same gang can be paid under.
+      if (measured && row.workType === null) {
+        throw new UnprocessableError(
+          `The ${readable} line is quoted ${unit} and does not say what work it is for, so the rate card line that prices it cannot be identified.`
+        )
+      }
+      if (!measured && row.quantity !== null) {
+        throw new UnprocessableError(
+          `The ${readable} line is quoted per day, which is priced by headcount, so it takes no quantity. Remove the ${row.quantity}, or quote the line in the unit that measure belongs to.`
+        )
+      }
+
       const rate = await applicableRate(trx, {
         contractorId: input.contractorId,
         projectId: input.projectId,
         skillLevel: row.skillLevel,
         onDate: input.attendanceDate,
+        uom: row.uom,
+        workType: row.workType,
       })
       if (!rate) {
         throw new UnprocessableError(
-          `${contractor.name} has no per-day ${readable} rate effective on ${input.attendanceDate}. Add it to the rate card before recording the day.`
+          `${contractor.name} has no ${unit} ${readable} rate${
+            row.workType === null ? '' : ` for ${row.workType}`
+          } effective on ${input.attendanceDate}. Add it to the rate card before recording the day.`
         )
       }
       if (rate.ambiguous) ambiguousRates.push(`${readable}: rate ${rate.id} (${rate.workType})`)
 
-      const amount = rate.ratePaise * row.headcount
+      // roundPaise because a measured amount is a rate times a DECIMAL(14,3):
+      // 240.5 sqft at 4550 paise is 1_094_275 exactly, but 0.333 of anything is
+      // not, and amount_paise is a BIGINT. The day path multiplies two integers
+      // and is unaffected by passing through it.
+      const amount = measured
+        ? roundPaise(rate.ratePaise * (row.quantity as number))
+        : rate.ratePaise * row.headcount
       headcount += row.headcount
       grossPaise += amount
 
@@ -1750,7 +1793,10 @@ export async function recordContractorAttendance(
         await trx
           .updateTable('contractor_attendance')
           .set({
+            uom: row.uom,
+            work_type: row.workType,
             headcount: row.headcount,
+            quantity: row.quantity,
             overtime_hours: row.overtimeHours,
             rate_paise: rate.ratePaise,
             amount_paise: amount,
@@ -1769,7 +1815,10 @@ export async function recordContractorAttendance(
             project_id: input.projectId,
             attendance_date: input.attendanceDate,
             skill_level: row.skillLevel,
+            uom: row.uom,
+            work_type: row.workType,
             headcount: row.headcount,
+            quantity: row.quantity,
             overtime_hours: row.overtimeHours,
             rate_paise: rate.ratePaise,
             amount_paise: amount,
@@ -1794,7 +1843,14 @@ export async function recordContractorAttendance(
         updated,
         headcount,
         gross_paise: grossPaise,
-        rows: input.rows.map((r) => `${r.skillLevel}:${r.headcount}`),
+        // `skill:headcount` for a day row, and the measure appended for the rest:
+        // `mason:4 @300 per_sqft (plastering)`. The unit has to be in here because
+        // the amount cannot be re-derived from a headcount once the row is measured.
+        rows: input.rows.map((r) =>
+          r.uom === 'per_day'
+            ? `${r.skillLevel}:${r.headcount}`
+            : `${r.skillLevel}:${r.headcount} @${r.quantity} ${r.uom}${r.workType === null ? '' : ` (${r.workType})`}`
+        ),
         // The override and the ambiguity are the two facts that cannot be
         // reconstructed from the rows afterwards, so they are recorded here.
         compliance_override: failures.length > 0 ? failures : undefined,
@@ -1941,6 +1997,11 @@ export interface ContractorBillResult {
  * BIGINT and would hold it, but a bill that says the contractor owes us is a
  * debit note, and 6.8 has no reading for a negative expense.
  *
+ * The gross does not care how a row was priced. `amount_paise` is a snapshot
+ * either way -- headcount times a day rate, or quantity times a measured one --
+ * so a period mixing 26 days of masonry with 400 sqft of plastering sums
+ * without a special case. Migration 013 and DECISIONS 19.2.
+ *
  * The percentages: `retention_paise` and `tds_paise` are stored, the rates that
  * produced them are not -- there is no column. They go in the audit entry, which
  * is the only record of how the figure was reached. Section 206AA's 20% for a
@@ -1975,7 +2036,17 @@ export async function generateContractorBill(
     // second bill would double-count them.
     const rows = await trx
       .selectFrom('contractor_attendance')
-      .select(['id', 'attendance_date', 'skill_level', 'headcount', 'amount_paise', 'approved_at', 'bill_id'])
+      .select([
+        'id',
+        'attendance_date',
+        'skill_level',
+        'uom',
+        'headcount',
+        'quantity',
+        'amount_paise',
+        'approved_at',
+        'bill_id',
+      ])
       .where('contractor_id', '=', input.contractorId)
       .where('project_id', '=', input.projectId)
       .where('attendance_date', '>=', input.from)
@@ -2000,6 +2071,27 @@ export async function generateContractorBill(
         `There is no approved unbilled attendance for ${contractor.name} on ${project.code} between ${input.from} and ${input.to}.`
       )
     }
+
+    // A measured row with no measure cannot have been priced, so it must not be
+    // summed into a bill. `recordContractorAttendance` refuses it at entry and
+    // `chk_ca_quantity` makes it unwritable, which makes this the third gate on
+    // one fact -- deliberately, because it is the one standing between the row and
+    // a payable amount, and the two ahead of it were both added after rows already
+    // existed. It has also already earned its place: as 013 first wrote the CHECK,
+    // `quantity > 0` against a NULL was UNKNOWN rather than FALSE and the database
+    // admitted exactly this row. Migration 014 repaired that. A constraint is only
+    // as good as the last migration to touch it.
+    const unpriceable = billable.filter((r) => String(r.uom) !== 'per_day' && r.quantity === null)
+    if (unpriceable.length > 0) {
+      const first = unpriceable[0]
+      throw new UnprocessableError(
+        `The ${String(first.skill_level).replace(/_/g, ' ')} row for ${String(first.attendance_date)} is quoted ${uomLabel(String(first.uom))} and carries no quantity, so its amount cannot be trusted. ${
+          unpriceable.length === 1 ? 'It has' : `${unpriceable.length} rows in this period have`
+        } to be re-entered before the period can be billed.`
+      )
+    }
+
+    const measuredRows = billable.filter((r) => String(r.uom) !== 'per_day').length
 
     const grossPaise = billable.reduce((sum, r) => sum + Number(r.amount_paise), 0)
     const retentionBp = input.retentionPct ?? defaultRetentionBp
@@ -2070,6 +2162,9 @@ export async function generateContractorBill(
         period_from: input.from,
         period_to: input.to,
         attendance_rows: ids.length,
+        // How many of them were priced by measure rather than by day. The bill
+        // stores one gross figure, so this is the only trace of the mix.
+        measured_rows: measuredRows,
         days,
         gross_paise: grossPaise,
         advance_recovered_paise: input.advanceRecovered,

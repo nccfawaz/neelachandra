@@ -60,6 +60,7 @@ import {
   LEAVE_REQUEST_STATUSES,
   RATE_UOMS,
   SKILL_LEVELS,
+  uomLabel,
 } from './schemas.js'
 
 /**
@@ -2328,8 +2329,31 @@ function contractorAttendanceColumns(opts: { showContractor?: boolean } = {}): C
         ]
       : []),
     { header: 'Project', cell: (r) => r.project_code ?? '-' },
-    { header: 'Skill', cell: (r) => titleCase(r.skill_level) },
+    {
+      header: 'Skill',
+      cell: (r) => (
+        <>
+          {titleCase(r.skill_level)}
+          {r.work_type === null ? null : <div class="ncc-muted">{r.work_type}</div>}
+        </>
+      ),
+    },
     { header: 'Head', numeric: true, cell: (r) => String(r.headcount) },
+    {
+      // Without this column a measured row shows a rate, a headcount and an
+      // amount that do not multiply together, and the reader is left to guess
+      // which figure is wrong. `per_day` is the row that has no measure.
+      header: 'Measure',
+      numeric: true,
+      cell: (r) =>
+        r.uom === 'per_day' || r.quantity === null ? (
+          <span class="ncc-muted">-</span>
+        ) : (
+          <>
+            {String(r.quantity)} <span class="ncc-muted">{uomLabel(r.uom)}</span>
+          </>
+        ),
+    },
     { header: 'OT hrs', numeric: true, cell: (r) => (r.overtime_hours === 0 ? '-' : String(r.overtime_hours)) },
     { header: 'Rate', numeric: true, cell: (r) => <Money paise={r.rate_paise} /> },
     { header: 'Amount', numeric: true, cell: (r) => <Money paise={r.amount_paise} /> },
@@ -2522,9 +2546,10 @@ hr.get('/app/hr/contractors/:contractorId', requirePermission(PERMISSIONS.HR_LAB
               </button>
             </p>
             <p class="ncc-hint">
-              Only <code>per_day</code> can price a day's attendance: <code>contractor_attendance</code> holds a
-              headcount and no quantity, so a piece rate has nowhere to multiply. The other units are recorded
-              here and cannot be billed through this screen -- a structural gap in 6.6, flagged in DECISIONS.
+              All five units price a day's attendance since migration 013. A <code>per_day</code> rate is
+              multiplied by the headcount and needs a skill level; the other four are multiplied by the
+              quantity entered against the work type, and a skill level on those only narrows which rate
+              applies. DECISIONS 19.2 records that 6.6 shipped without the quantity column this needs.
             </p>
           </form>
         </Panel>
@@ -2626,7 +2651,7 @@ const projectSelect = (
 ]
 
 /**
- * The entry screen: one contractor, one project, one day, a row per skill level.
+ * The entry screen: one contractor, one project, one day, and two grids.
  *
  * The grid is server-rendered and the date is a query parameter, exactly like the
  * employee attendance screen, and for the same reason: the rows have to be
@@ -2635,9 +2660,25 @@ const projectSelect = (
  * follows this one (DECISIONS 17.2); it is not quietly dropped and it is not
  * introduced mid-slice.
  *
- * Which skill rows appear is not a guess: they are the skills the contractor has
- * a per-day rate for on that date. A skill with no rate cannot be priced, so
- * offering it would be offering a row the service must refuse.
+ * Which rows appear is not a guess: they are the rate card lines in force on that
+ * date, one grid per kind. Days first, because that is most of the work; measured
+ * lines below, one per (work type, unit) the card carries. A skill or a work type
+ * with no rate cannot be priced, so offering it would be offering a row the
+ * service must refuse.
+ *
+ * Both grids post into one form and one array set. Every rendered line emits
+ * exactly one value for each of the six repeated names -- `skillLevel`, `uom`,
+ * `workType`, `headcount`, `quantity`, `overtimeHours` -- because the schema pairs
+ * them by index. That is why a billed row still emits an empty `headcount` and why
+ * a day line emits an empty `quantity`: dropping the input instead would shift
+ * every line below it onto the wrong values. Whoever adds a column here adds it to
+ * every line in both grids or breaks all of them.
+ *
+ * The skill on a measured line is a select, not a hidden field. A piece rate need
+ * not name a skill -- 240 sqft of plastering costs the same whoever laid it -- but
+ * `contractor_attendance.skill_level` is NOT NULL, so someone has to say who did
+ * the work. When the rate does name a skill, that answer is fixed and the field is
+ * hidden instead.
  */
 hr.get('/app/hr/contractor-attendance', requirePermission(PERMISSIONS.HR_ATTENDANCE_RECORD), async (c) => {
   const db = c.get('db')
@@ -2651,15 +2692,36 @@ hr.get('/app/hr/contractor-attendance', requirePermission(PERMISSIONS.HR_ATTENDA
   const contractor = contractorId === null ? undefined : await q.findContractor(db, contractorId)
 
   const rates = contractor ? await q.contractorRates(db, Number(contractor.id)) : []
-  const perDay = rates.filter(
+  const inForce = rates.filter(
     (r) =>
-      r.uom === 'per_day' &&
-      r.skill_level !== null &&
       r.effective_from <= date &&
       (r.effective_to === null || r.effective_to >= date) &&
       (r.project_id === null || projectId === null || r.project_id === projectId)
   )
+  const perDay = inForce.filter((r) => r.uom === 'per_day' && r.skill_level !== null)
   const skills = [...new Set(perDay.map((r) => r.skill_level as string))].sort()
+
+  // One line per (work type, unit), best rate first: the same scope-then-date
+  // ordering `applicableRate` uses, so the figure shown is the figure that will be
+  // snapshotted. Two cards for the same work type and unit are a supersession, not
+  // two offers.
+  const measuredLines = (() => {
+    const best = new Map<string, (typeof inForce)[number]>()
+    for (const r of inForce) {
+      if (r.uom === 'per_day') continue
+      const key = [r.uom, r.work_type].join(' ')
+      const held = best.get(key)
+      const better =
+        held === undefined ||
+        (r.project_id === null ? 0 : 1) - (held.project_id === null ? 0 : 1) > 0 ||
+        ((r.project_id === null) === (held.project_id === null) &&
+          r.effective_from.localeCompare(held.effective_from) > 0)
+      if (better) best.set(key, r)
+    }
+    return [...best.values()].sort(
+      (a, b) => a.work_type.localeCompare(b.work_type) || a.uom.localeCompare(b.uom)
+    )
+  })()
 
   const prior =
     contractor && projectId !== null
@@ -2667,6 +2729,20 @@ hr.get('/app/hr/contractor-attendance', requirePermission(PERMISSIONS.HR_ATTENDA
       : []
   const priorBySkill = new Map(prior.map((r) => [r.skill_level, r]))
   const billed = prior.filter((r) => r.bill_id !== null).length
+  // A measured row belongs to the line that priced it, which is the (work type,
+  // unit) pair -- not the skill, since two work types can share one.
+  const workKey = (uom: string, workType: string | null) => [uom, workType ?? ''].join(' ')
+  const priorByWork = new Map(
+    prior.filter((r) => r.uom !== 'per_day').map((r) => [workKey(r.uom, r.work_type), r])
+  )
+  const renderedWork = new Set(measuredLines.map((r) => workKey(r.uom, r.work_type)))
+  // Rows on the day that no line in either grid renders, because the rate card
+  // moved under them. They are shown read-only rather than silently omitted: the
+  // post only touches skills it carries, so they survive it either way, but a
+  // screen that hides a recorded figure is how a day gets counted twice.
+  const orphans = prior.filter((r) =>
+    r.uom === 'per_day' ? !skills.includes(r.skill_level) : !renderedWork.has(workKey(r.uom, r.work_type))
+  )
 
   const failures: string[] = []
   if (contractor) {
@@ -2711,10 +2787,10 @@ hr.get('/app/hr/contractor-attendance', requirePermission(PERMISSIONS.HR_ATTENDA
           {contractor.name} is blacklisted. No labour can be recorded against them, and this one has no
           override.
         </Alert>
-      ) : skills.length === 0 ? (
+      ) : skills.length === 0 && measuredLines.length === 0 ? (
         <Alert tone="warn">
-          {contractor.name} has no per-day rate in force on {formatDate(date)}, so nothing here can be priced.
-          Add one on the <a href={`/app/hr/contractors/${contractor.id}?tab=rates`}>rate card</a> first.
+          {contractor.name} has no rate in force on {formatDate(date)}, of any unit, so nothing here can be
+          priced. Add one on the <a href={`/app/hr/contractors/${contractor.id}?tab=rates`}>rate card</a> first.
         </Alert>
       ) : (
         <>
@@ -2730,6 +2806,23 @@ hr.get('/app/hr/contractor-attendance', requirePermission(PERMISSIONS.HR_ATTENDA
               changed here.
             </Alert>
           ) : null}
+          {orphans.length > 0 ? (
+            <Alert tone="warn">
+              {orphans.length === 1 ? 'One row' : `${orphans.length} rows`} recorded for this day{' '}
+              {orphans.length === 1 ? 'has' : 'have'} no rate card line in force any more, so{' '}
+              {orphans.length === 1 ? 'it is' : 'they are'} not in the grids below and posting will not touch{' '}
+              {orphans.length === 1 ? 'it' : 'them'}:{' '}
+              {orphans
+                .map(
+                  (r) =>
+                    `${r.skill_level.replace(/_/g, ' ')} ${
+                      r.uom === 'per_day' ? `× ${r.headcount}` : `${r.quantity} ${uomLabel(r.uom)}`
+                    }`
+                )
+                .join(', ')}
+              . Restore the rate to correct {orphans.length === 1 ? 'it' : 'them'} here.
+            </Alert>
+          ) : null}
           <Panel title={`Headcount for ${formatDate(date)}`}>
             <form method="post" action="/api/hr/contractor-attendance">
               <CsrfInput token={session.csrfToken} />
@@ -2743,6 +2836,12 @@ hr.get('/app/hr/contractor-attendance', requirePermission(PERMISSIONS.HR_ATTENDA
                     cell: (skill: string) => (
                       <>
                         <input type="hidden" name="skillLevel" value={skill} />
+                        {/* The three fields a day line does not use, emitted anyway:
+                            the schema pairs the six arrays by index, so a missing
+                            input here would read the line below this one's values. */}
+                        <input type="hidden" name="uom" value="per_day" />
+                        <input type="hidden" name="workType" value="" />
+                        <input type="hidden" name="quantity" value="" />
                         {titleCase(skill)}
                       </>
                     ),
@@ -2827,6 +2926,125 @@ hr.get('/app/hr/contractor-attendance', requirePermission(PERMISSIONS.HR_ATTENDA
                 empty="No priced skill for this day."
                 caption="A blank headcount writes nothing. Changing an approved row clears its approval, because the figure that was approved is not the figure it now carries."
               />
+              {measuredLines.length > 0 ? (
+                <>
+                  <h3 style="margin:1.5rem 0 .5rem">Measured work</h3>
+                  <DataTable
+                    columns={[
+                      {
+                        header: 'Work',
+                        cell: (r: (typeof measuredLines)[number]) => (
+                          <>
+                            <input type="hidden" name="uom" value={r.uom} />
+                            <input type="hidden" name="workType" value={r.work_type} />
+                            <input type="hidden" name="overtimeHours" value="" />
+                            {r.work_type}
+                            <br />
+                            <span class="ncc-muted">{uomLabel(r.uom)}</span>
+                          </>
+                        ),
+                      },
+                      {
+                        header: 'Rate',
+                        numeric: true,
+                        cell: (r: (typeof measuredLines)[number]) => <Money paise={r.rate_paise} />,
+                      },
+                      {
+                        header: 'Skill',
+                        cell: (r: (typeof measuredLines)[number]) => {
+                          const p = priorByWork.get(workKey(r.uom, r.work_type))
+                          const fixed = r.skill_level ?? (p ? p.skill_level : null)
+                          // Fixed by the rate card, or by what was already recorded
+                          // against this line: changing it would leave the old row
+                          // behind under its old skill and write a second one.
+                          return fixed !== null ? (
+                            <>
+                              <input type="hidden" name="skillLevel" value={fixed} />
+                              {titleCase(fixed)}
+                            </>
+                          ) : (
+                            <select name="skillLevel" aria-label={`Skill that did the ${r.work_type}`}>
+                              {SKILL_LEVELS.map((s) => (
+                                <option value={s}>{titleCase(s)}</option>
+                              ))}
+                            </select>
+                          )
+                        },
+                      },
+                      {
+                        header: 'People',
+                        numeric: true,
+                        cell: (r: (typeof measuredLines)[number]) => {
+                          const p = priorByWork.get(workKey(r.uom, r.work_type))
+                          return p && p.bill_id !== null ? (
+                            <>
+                              <input type="hidden" name="headcount" value="" />
+                              <span class="ncc-num">{p.headcount}</span>
+                            </>
+                          ) : (
+                            <input
+                              type="number"
+                              name="headcount"
+                              min="1"
+                              max="999"
+                              step="1"
+                              style="max-width:5rem"
+                              value={p ? String(p.headcount) : ''}
+                              aria-label={`People on the ${r.work_type}`}
+                            />
+                          )
+                        },
+                      },
+                      {
+                        header: 'Quantity',
+                        numeric: true,
+                        cell: (r: (typeof measuredLines)[number]) => {
+                          const p = priorByWork.get(workKey(r.uom, r.work_type))
+                          return p && p.bill_id !== null ? (
+                            <>
+                              <input type="hidden" name="quantity" value="" />
+                              <span class="ncc-num">{p.quantity}</span>
+                            </>
+                          ) : (
+                            <input
+                              type="number"
+                              name="quantity"
+                              min="0.001"
+                              step="0.001"
+                              style="max-width:7rem"
+                              value={p && p.quantity !== null ? String(p.quantity) : ''}
+                              aria-label={`Quantity of ${r.work_type} in ${uomLabel(r.uom)}`}
+                            />
+                          )
+                        },
+                      },
+                      {
+                        header: 'State',
+                        cell: (r: (typeof measuredLines)[number]) => {
+                          const p = priorByWork.get(workKey(r.uom, r.work_type))
+                          if (!p) return <span class="ncc-muted">nothing recorded</span>
+                          if (p.bill_no !== null)
+                            return <a href={`/app/hr/contractor-bills/${p.bill_id}`}>{p.bill_no}</a>
+                          return p.approved_at !== null ? (
+                            <StatusBadge status="approved" />
+                          ) : (
+                            <StatusBadge status="pending" />
+                          )
+                        },
+                      },
+                    ]}
+                    rows={measuredLines}
+                    caption="Priced by the measure, not by the day: the amount is the rate times the quantity, and the people count is recorded rather than charged. Overtime does not apply to a piece rate and is not offered."
+                  />
+                </>
+              ) : null}
+              {measuredLines.length > 0 && skills.length > 0 ? (
+                <p class="ncc-hint">
+                  A day holds one row per skill level, whatever the unit, so filling the same skill in both
+                  grids for one date is refused rather than written twice. Recording both a day rate and a
+                  piece rate for one gang on one site needs the wider key noted in DECISIONS 19.2.
+                </p>
+              ) : null}
               {failures.length > 0 ? (
                 <label class="ncc-field">
                   <span>Override the compliance failure</span>
@@ -2842,8 +3060,9 @@ hr.get('/app/hr/contractor-attendance', requirePermission(PERMISSIONS.HR_ATTENDA
                 </button>
               </p>
               <p class="ncc-hint">
-                Overtime is recorded and not priced: 6.6 gives no multiplier and 8.6 has not answered, so the
-                amount on each row is headcount times the day rate. DECISIONS records that.
+                Overtime is recorded and not priced: 6.6 gives no multiplier and 8.6 has not answered, so a
+                day row's amount is headcount times the day rate and a measured row's is quantity times the
+                piece rate. DECISIONS records that.
               </p>
             </form>
           </Panel>

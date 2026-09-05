@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   attendanceApproveSchema,
   attendanceBulkSchema,
+  contractorAttendanceSchema,
   firstError,
   leaveDecisionSchema,
   leaveRequestSchema,
@@ -249,5 +250,157 @@ describe('leaveDecisionSchema', () => {
 
   it('refuses a decision that is neither', () => {
     expect(leaveDecisionSchema.safeParse({ decision: 'maybe' }).success).toBe(false)
+  })
+})
+
+/**
+ * The contractor grid's day/measured split (migration 013, DECISIONS 19.2).
+ *
+ * Two grids post into one array set, so every property here is really a property
+ * of the pairing: the six repeated names line up by index or the form reads one
+ * line's quantity against another line's unit. The tests that matter are the ones
+ * where a cell is BLANK, because that is where the alignment is load-bearing and
+ * where the old single-grid rule -- blank headcount means skip -- can silently
+ * discard a measure.
+ */
+describe('contractorAttendanceSchema, the day and measured split', () => {
+  const base = { contractorId: '3', projectId: '5', attendanceDate: '2026-09-04' }
+  const reject = (patch: Record<string, unknown>) => {
+    const parsed = contractorAttendanceSchema.safeParse({ ...base, ...patch })
+    expect(parsed.success).toBe(false)
+    return parsed.success ? '' : firstError(parsed.error)
+  }
+
+  it('reads a day row posted with no unit at all, which is every row written before 013', () => {
+    const parsed = contractorAttendanceSchema.safeParse({
+      ...base,
+      skillLevel: 'mason',
+      headcount: '4',
+      overtimeHours: '',
+    })
+    expect(parsed.success).toBe(true)
+    expect(parsed.success && parsed.data.rows).toEqual([
+      { skillLevel: 'mason', uom: 'per_day', workType: null, headcount: 4, quantity: null, overtimeHours: 0 },
+    ])
+  })
+
+  it('reads the two grids as one indexed set', () => {
+    const parsed = contractorAttendanceSchema.safeParse({
+      ...base,
+      skillLevel: ['mason', 'helper', 'painter'],
+      uom: ['per_day', 'per_day', 'per_sqft'],
+      workType: ['', '', 'Wall putty'],
+      headcount: ['4', '', '2'],
+      quantity: ['', '', '240.5'],
+      overtimeHours: ['3', '', ''],
+    })
+    expect(parsed.success).toBe(true)
+    // The helper line is blank in both measurable cells and is dropped; the
+    // painter line keeps ITS OWN quantity rather than the hole above it.
+    expect(parsed.success && parsed.data.rows).toEqual([
+      { skillLevel: 'mason', uom: 'per_day', workType: null, headcount: 4, quantity: null, overtimeHours: 3 },
+      {
+        skillLevel: 'painter',
+        uom: 'per_sqft',
+        workType: 'Wall putty',
+        headcount: 2,
+        quantity: 240.5,
+        overtimeHours: 0,
+      },
+    ])
+  })
+
+  it('rounds a quantity to the three decimals the column holds', () => {
+    const parsed = contractorAttendanceSchema.safeParse({
+      ...base,
+      skillLevel: 'mason',
+      uom: 'per_cum',
+      workType: 'PCC 1:4:8',
+      headcount: '3',
+      quantity: '12.06649',
+      overtimeHours: '',
+    })
+    expect(parsed.success && parsed.data.rows[0]!.quantity).toBe(12.066)
+  })
+
+  it('refuses a quantity with no headcount instead of dropping the line', () => {
+    // The old rule skipped on a blank headcount, which would have thrown the
+    // measure away and reported success.
+    expect(
+      reject({
+        skillLevel: 'mason',
+        uom: 'per_sqft',
+        workType: 'Plastering',
+        headcount: '',
+        quantity: '300',
+        overtimeHours: '',
+      })
+    ).toMatch(/quantity of 300 was entered with no headcount/)
+  })
+
+  it('refuses a measured line with no quantity, naming the unit', () => {
+    expect(
+      reject({
+        skillLevel: 'mason',
+        uom: 'per_sqft',
+        workType: 'Plastering',
+        headcount: '4',
+        quantity: '',
+        overtimeHours: '',
+      })
+    ).toMatch(/per sqft rate is priced by the measure/)
+  })
+
+  it('refuses a measured line with no work type, because skill cannot pick the rate', () => {
+    expect(
+      reject({
+        skillLevel: 'mason',
+        uom: 'per_sqft',
+        workType: '',
+        headcount: '4',
+        quantity: '300',
+        overtimeHours: '',
+      })
+    ).toMatch(/has to say what work it is for/)
+  })
+
+  it('refuses a quantity on a day line, which would state a multiplier nothing reads', () => {
+    expect(
+      reject({
+        skillLevel: 'mason',
+        uom: 'per_day',
+        workType: '',
+        headcount: '4',
+        quantity: '300',
+        overtimeHours: '',
+      })
+    ).toMatch(/per-day row is priced by headcount/)
+  })
+
+  it('refuses a quantity of zero or below on a measured line', () => {
+    for (const quantity of ['0', '-5']) {
+      expect(
+        reject({ skillLevel: 'mason', uom: 'per_kg', workType: 'Binding wire', headcount: '1', quantity })
+      ).toMatch(/priced by the measure, so enter a quantity above zero/)
+    }
+  })
+
+  it('refuses one skill twice across the two grids, which is what uq_ca refuses', () => {
+    expect(
+      reject({
+        skillLevel: ['mason', 'mason'],
+        uom: ['per_day', 'per_sqft'],
+        workType: ['', 'Plastering'],
+        headcount: ['4', '4'],
+        quantity: ['', '300'],
+        overtimeHours: ['', ''],
+      })
+    ).toMatch(/counts mason twice for one day/)
+  })
+
+  it('refuses a unit that is not on the rate card', () => {
+    expect(
+      reject({ skillLevel: 'mason', uom: 'per_hour', workType: 'Plastering', headcount: '4', quantity: '8' })
+    ).toMatch(/not one of the rate units/)
   })
 })

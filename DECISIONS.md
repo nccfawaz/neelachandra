@@ -1695,6 +1695,13 @@ Not resolved here, and not silently designed around: billing piece-rate work nee
 quantity column on `contractor_attendance` or a separate measurement table, and both are spec
 changes. Flagged for the business rather than chosen.
 
+**Closed on 2026-09-05 by migration 013 — see §19.2.** The quantity column was added, with `uom` and
+`work_type` beside it, and all five UOMs now reach a bill. The paragraph above stands as the record of
+what was found; the two sentences it ends on are superseded by 19.2, which also repairs the CHECK
+constraint 013 got wrong (§19.3). The entry screen no longer derives its rows from `per_day` rates
+alone: it renders a day grid from the per-day rates and a second grid from the measured lines in force,
+and the two post as one indexed set.
+
 **Overtime is recorded and unpriced.** `overtime_hours` is stored per row and contributes nothing to
 `amount_paise`, because the spec gives no overtime multiplier. The entry screen says so. A ceiling of
 `headcount × 12` hours is enforced in the schema so a typo cannot store a week in a day.
@@ -1901,8 +1908,10 @@ divergence and the assertion is now `NON_UNIQUE = 0` on `uq_exp_source`.
 
 ## 19. Corrections made before finance depends on them, 2026-09-05
 
-Slice 3 surfaced two schema facts that §6.8 would otherwise be written against, and both are cheaper to
+Slice 3 surfaced schema facts that §6.8 would otherwise be written against, and each is cheaper to
 change now than after five posting paths exist. §18 logged them as findings; this section closes them.
+19.1 and 19.2 are corrections to the spec's schema; 19.3 is a correction to 19.2's own migration, found
+by test within the hour.
 
 ### 19.1 `expenses (source_table, source_id)` is UNIQUE — migration 012
 
@@ -1953,3 +1962,140 @@ rule, and the migration comment claims it, so it is asserted. The refusal test c
 the same insert runs twice with `source_id = contractor_bills.id`, and the second comes back
 `ER_DUP_ENTRY`, `errno 1062`, message naming `uq_exp_source`. Asserting the errno is the point — it is
 what distinguishes the database refusing from a service check refusing, and rule 1 asks for the former.
+
+### 19.2 `contractor_attendance` can price measured work — migration 013
+
+**§6.6 omitted the quantity.** The spec gives `contractor_rates` a five-member UOM enum:
+
+```
+uom ENUM('per_day','per_sqft','per_cum','per_kg','lumpsum')
+```
+
+and then gives `contractor_attendance` — the only table §6.6 rule 2 bills — a `headcount`, an
+`overtime_hours`, a snapshot `rate_paise` and an `amount_paise`. There is no column holding a measure.
+So a per-sqft rate could be entered on the rate card and multiplied by nothing: `applicableRate` carried
+a hardcoded `where uom = 'per_day'` for exactly that reason. **Four of the five members of a declared
+enum could not reach a bill.** §18.2 recorded it as a structural gap; this closes it.
+
+**Not a trim of the rate card.** The alternative was to drop the four unreachable members and bill days
+only. That was rejected: interiors work is quoted per square foot for false ceiling and per running foot
+for wardrobes as a matter of course, `neelachandrainteriors.com` is in scope (§8.10), and the enum is
+therefore describing the business correctly. The attendance table was the side that was short.
+
+**Now reachable, and how each is priced.** `per_day` multiplies `rate_paise` by `headcount`, exactly as
+before — no existing row or code path changed meaning. `per_sqft`, `per_cum` and `per_kg` multiply
+`rate_paise` by `quantity` and round to paise. `lumpsum` is reachable by the same arithmetic with
+`quantity` read as the number of times the sum is due, which is a reading rather than a spec statement
+and is flagged below. So: **five of five reachable, one of them on an assumed interpretation.**
+
+**Three columns, because pricing a measured line needs three facts** — `quantity DECIMAL(14,3)` (the
+type §6.8 already uses for `budget_lines.qty`, so the eventual posting is a copy rather than a
+conversion), `uom` (snapshot beside `rate_paise` for the same reason `rate_paise` is snapshot at all: the
+row must stay readable after the rate card moves under it), and `work_type`. The third is the
+non-obvious one: a day rate is resolved by skill level, but a per-sqft rate is *for plastering* or *for
+tiling* and one contractor may hold both open at once, so skill level cannot choose between them.
+Without it `applicableRate` would fall back to "latest `effective_from` wins" — an arbitrary choice
+between two very different amounts. `contractor_rates` supersession is keyed on
+`(contractor_id, work_type, uom, skill_level, project_id)`, so both lines legitimately stay open.
+
+**Deviation from the instruction, flagged not taken silently.** The instruction said *additive and
+nullable*. `quantity` and `work_type` are nullable; **`uom` is `NOT NULL DEFAULT 'per_day'`**. Nullable
+is what protects rows already written, and a column whose default is the only value those rows could
+have had protects them identically — while leaving every reader free of a `uom ?? 'per_day'` coalesce
+that would otherwise be permanent. Additive it is: no column changed type, no index changed, no row was
+rewritten.
+
+**`uq_ca` is untouched, and that has a consequence.** The key stays
+`(contractor_id, project_id, attendance_date, skill_level)`, so a day holds exactly one row per skill
+level whatever the unit. Therefore **300 sqft of plastering and 40 sqft of tiling, by the same masons on
+the same day at the same site, cannot both be recorded.** Widening the key is a change to an existing
+UNIQUE index and is not additive, so it is not in 013. Recorded here rather than designed around: the
+entry screen carries a hint saying a day holds one row per skill level whatever the unit, and the schema
+refuses the collision with that sentence rather than letting MariaDB throw 1062 at a gate clerk. If the
+owner answer below says one crew routinely does two measured work types in a day, the key has to widen
+to include `work_type` and that is a migration with a real backfill decision in it.
+
+**Unconfirmed, pending an owner answer: the real UOM mix.** Nothing in the spec or in any answered
+question says which units Neelachandra actually bills contractors in, in what proportion, or whether
+`lumpsum` means a fixed sum per occurrence (the reading implemented) or a fixed sum for a whole scope
+that attendance should not touch at all. Every UOM is reachable, and which ones matter is a guess. Two
+things follow if the answer arrives differently: the `lumpsum` arithmetic may be wrong, and the `uq_ca`
+consequence above may be a daily obstruction rather than a rare one. **Do not read the five reachable
+units as evidence that five are used.**
+
+**A headcount is still required on a measured row**, and that is a choice. The quantity is what prices
+such a row, so the headcount is not arithmetically needed — but `headcount SMALLINT UNSIGNED NOT NULL`
+has no default, the table is called attendance, and whoever knows 300 sqft was plastered knows how many
+masons did it. What is *not* permitted is a quantity with the headcount cell left blank: the entry
+grid's blank-means-skip rule would drop the row and the measure with it, so that combination refuses
+instead of vanishing. That is the one refusal in this change that exists because of a UI rule rather than
+a schema one, and it is the one worth keeping if the grid is ever rewritten.
+
+**Three gates on one fact, deliberately.** `recordContractorAttendance` refuses at entry with a message
+naming the unit ("A per sqft rate is priced by the measure, so enter a quantity above zero");
+`chk_ca_quantity` makes the row unwritable; `generateContractorBill` refuses to sum a measured row with
+no quantity into a gross. The last is not redundant — it is the layer that can name which row and which
+period, it is what stands between the row and a payable amount, and 19.3 is the reason it earned its
+place on the first day.
+
+**Tests.** Ten unit cases in `tests/hr-schemas.test.ts` (27 → 37) pin the form contract, including the
+one that matters most: the two grids post into **one** indexed set of six repeated field names, so a
+blank line in the day grid must not shift the measured grid's quantities up a row. Six integration cases
+in `tests/integration/hr-contractor-flow.test.ts` (34 → 40) bill a non-day UOM end to end against
+MariaDB — the rate chosen by work type rather than skill level, two per-sqft lines open at once with
+`ambiguous: true` when the work type is omitted, `4550 × 240.5 = 1,094,275` paise off a `DECIMAL(14,3)`
+that arrives as a string, `675075 × 3.5` rounding half up to `2,362,763`, and a bill whose gross mixes a
+measured amount with a day-rate one and whose audit row records `measured_rows: 2` of 3.
+
+### 19.3 A CHECK constraint admits UNKNOWN — migration 014
+
+013 shipped this constraint and a header claiming it makes a measured row with no measure unwritable:
+
+```sql
+CHECK ((uom = 'per_day' AND quantity IS NULL) OR (uom <> 'per_day' AND quantity > 0))
+```
+
+**It does not.** A CHECK refuses a row only when its expression evaluates to FALSE; UNKNOWN passes. For
+`uom = 'per_sqft'` with `quantity = NULL`:
+
+| disjunct | evaluates to |
+| --- | --- |
+| `'per_sqft' = 'per_day' AND NULL IS NULL` | `FALSE AND TRUE` → **FALSE** |
+| `'per_sqft' <> 'per_day' AND NULL > 0` | `TRUE AND NULL` → **NULL** |
+| the whole clause | `FALSE OR NULL` → **NULL** → **admitted** |
+
+So the one row the constraint existed to refuse was the one row it let through. The three other shapes
+were refused correctly, because each compares a quantity that is present: a day row carrying a quantity
+and a measured row carrying `0` or a negative both give `FALSE OR FALSE`.
+
+**Found by test, not by reading.** The integration case asserting the refusal in both directions saw the
+INSERT succeed, and then a later count in the same file came back 4 instead of 3 because the admitted row
+had been approved. Worth stating plainly: the constraint had been eyeballed, the migration header argued
+for it at length, and it was wrong. The reason the suite caught it is that the test inserts through
+`db` with no service in the way and asserts `errno`, so there was nothing to mask it.
+
+**This is the second time in one slice that a constraint's stated meaning and MariaDB's NULL semantics
+disagreed — and in opposite directions.** 19.1 wants the permissiveness over NULLs and documents it as
+the requirement being met. 19.2 wanted strictness and silently got permissiveness. The generalisation
+worth carrying forward: **three-valued logic is not a footnote in either direction, and a constraint over
+a nullable column is not verified until a row with a NULL in it has been refused by the server.**
+
+**The fix** tests for presence before comparing, so the disjunct is FALSE rather than UNKNOWN when the
+quantity is missing (`FALSE AND NULL` is FALSE, so the ordering carries it):
+
+```sql
+CHECK ((uom = 'per_day' AND quantity IS NULL)
+    OR (uom <> 'per_day' AND quantity IS NOT NULL AND quantity > 0))
+```
+
+Forward migration, `DROP CONSTRAINT` then `ADD CONSTRAINT`, no column and no row touched. **Preconditions
+checked rather than assumed:** `contractor_attendance` held 0 rows, of which 0 were measured-with-NULL,
+0 were day-with-a-quantity and 0 were measured-with-non-positive. Nothing blocked the `ALTER`, which
+validates the table as it stands and would have failed loudly if a row had used the hole.
+
+**Verified by probing the server directly**, not by re-reading the clause: `('per_sqft', NULL)`,
+`('per_sqft', 0)` and `('per_day', 5)` each come back `errno 4025` naming `chk_ca_quantity`, while
+`('per_sqft', 240.5)` and `('per_day', NULL)` get past the CHECK and are stopped only by a foreign key —
+which is the proof they passed it. The integration test now asserts the clause text contains
+`quantity` IS NOT NULL as a tripwire, because "the constraint exists" is exactly the assertion that was
+true while the constraint was broken.

@@ -276,7 +276,10 @@ export interface ContractorAttendanceTable {
   project_id: number
   attendance_date: SqlDate
   skill_level: 'skilled' | 'semi_skilled' | 'unskilled' | 'mason' | 'carpenter' | 'barbender' | 'plumber' | 'electrician' | 'painter' | 'helper'
+  uom: Generated<'per_day' | 'per_sqft' | 'per_cum' | 'per_kg' | 'lumpsum'>
+  work_type: Generated<string | null>
   headcount: number
+  quantity: Generated<number | null>
   overtime_hours: Generated<number>
   rate_paise: number
   amount_paise: number
