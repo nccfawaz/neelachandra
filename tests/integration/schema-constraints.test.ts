@@ -302,22 +302,19 @@ describe('the CHECK constraint inventory', () => {
         // and it is the half that fails on a constraint nobody has run a NULL
         // through yet.
         //
-        // WHAT THIS DOES NOT PROVE, with migration 018 as the live example. The
-        // regex finds one guard anywhere in the clause. `chk_ca_quantity` now
-        // compares `quantity` twice -- `quantity > 0`, and the
-        // `(uom <> 'lumpsum' OR quantity = 1)` that 018 added -- and the single
-        // `quantity IS NOT NULL` covers both only because it is a sibling
-        // conjunct of the same AND: `FALSE AND UNKNOWN` is FALSE. Written order
-        // is not what does it, and MariaDB promises none. So a future clause
-        // that compares a nullable column inside a disjunction the guard is
-        // *not* a sibling of passes this test while enforcing nothing over NULL.
-        // DECISIONS 21.7 has both halves run against the server, and the
-        // assertion that 018's clause still has that shape is in
-        // hr-contractor-flow.test.ts beside the four refusals that exercise it.
+        // WHAT THIS DOES NOT PROVE: the regex finds one guard anywhere in the
+        // clause, so a clause comparing a nullable column inside a disjunction
+        // that the guard is not a sibling conjunct of passes here while
+        // enforcing nothing over NULL. There is no live instance -- migration
+        // 019 restructured chk_ca_quantity, the one clause that had the shape,
+        // so its lumpsum disjunct now carries its own `quantity IS NOT NULL`
+        // and refuses a NULL by itself (DECISIONS 21.7). The gap in this test
+        // is structural rather than a record of a dependency somewhere else.
         //
-        // This comment is where that dependency is recorded, because 018 cannot
-        // carry it: the file is applied, and scripts/migrate.mjs treats an
-        // applied migration whose checksum moved as a hard failure.
+        // For a clause where it matters, copy the second tripwire in
+        // hr-contractor-flow.test.ts: extract the disjunct from
+        // information_schema, evaluate it alone over a synthetic NULL row, and
+        // assert FALSE rather than UNKNOWN. That is the half a regex cannot do.
         const guarded = new RegExp('`' + column + '`\\s+is\\s+not\\s+null', 'i').test(row.check_clause)
         if (!guarded) unguarded.push(`${key} compares nullable ${column} with no IS NOT NULL guard`)
       }

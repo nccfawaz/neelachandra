@@ -2762,9 +2762,9 @@ claimed: that the spec author intended the widening. Nobody has been asked. If t
 four-column key was meant literally, 016 is reversible only by refusing measured work, and that is the
 conversation to have.
 
-### 21.7 A lumpsum quantity is pinned to exactly 1 — migration 018
+### 21.7 A lumpsum quantity is pinned to exactly 1 — migrations 018 and 019
 
-Cited by name from `migrations/018_ca_lumpsum_single.sql`, from the `lumpsum` branch of
+Cited by name from `migrations/018_ca_lumpsum_single.sql` and `migrations/019_ca_lumpsum_self_guarded.sql`, from the `lumpsum` branch of
 `contractorAttendanceSchema` and from the gate in `recordContractorAttendance` before this entry existed.
 
 **The defect.** 19.2 made all five members of the rate card's UOM enum billable, and priced the four
@@ -2826,28 +2826,71 @@ one lumpsum row at quantity 300 where the ALTER came back 4025 rather than succe
 makes the migration safe on a database that is not this one. A trigger has no such validation, which is
 why 017 had to build a temporary key to prove its own precondition and 018 did not.
 
-**The three-valued class again, one guard away.** `(uom <> 'lumpsum' OR quantity = 1)` evaluated on its
-own against a NULL quantity is NULL — `select (null = 1)` is NULL and so is the whole disjunction — and a
-CHECK admits UNKNOWN. It refuses only because 014's `quantity IS NOT NULL` is a **sibling conjunct** of it in
-the same AND, and `FALSE AND UNKNOWN` is FALSE. Both were run on the server. What carries it is the sibling
-relationship and not the written order: MariaDB promises no evaluation order and does not need to, so a
-reader who reorders the conjuncts loses nothing and a reader who moves the disjunction out from under the
-guard loses the refusal. So this clause is safe **because of 014, not on its own**: the fourth appearance of
-the class CLAUDE.md names, and the first that was harmless on arrival. The integration test asserts the guard
-is still in the live clause for exactly this reason.
+**The three-valued class again, one guard away — and 019 closed it.** As 018 wrote it,
+`(uom <> 'lumpsum' OR quantity = 1)` evaluated on its own against a NULL quantity was NULL — `select (null
+= 1)` is NULL and so is the whole disjunction — and a CHECK admits UNKNOWN. It refused only because 014's
+`quantity IS NOT NULL` was a **sibling conjunct** of it in the same AND, and `FALSE AND UNKNOWN` is FALSE.
+Both were run on the server. What carried it was the sibling relationship and not the written order:
+MariaDB promises no evaluation order and does not need to, so a reader who reorders the conjuncts loses
+nothing and a reader who moves the disjunction out from under the guard loses the refusal. So 018's clause
+was safe **because of 014, not on its own**: the fourth appearance of the class CLAUDE.md names, and the
+first that was harmless on arrival. Migration 019 removed the dependency; the paragraph below is what
+happened to it.
 
-**Where that dependency is written down, and why not in 018.** It belongs against the clause, and 018 cannot
-hold it: the file is applied and `scripts/migrate.mjs:117-128` treats an applied migration whose checksum
-moved as a hard failure, which is the right behaviour and not worth suspending for a comment. So the note
-sits in the two places a reader actually meets the clause — the tripwire in `hr-contractor-flow.test.ts`
-beside the four refusals, and the guard rule in `schema-constraints.test.ts`, which is the one that would
-otherwise mislead: its regex finds one `IS NOT NULL` anywhere in the clause, so it cannot distinguish a guard
-that covers a comparison from one that merely shares a constraint with it. The alternative considered and not
-taken was a migration 019 restructuring the disjunction to `(uom <> 'lumpsum' OR (quantity IS NOT NULL AND
-quantity = 1))`, which removes the dependency instead of documenting it. That is the better end state by
-CLAUDE.md's own preference for a constraint that needs no second thing to stay true, but it is a schema
-change to a shared object for a documentation reason, and it was not asked for. Recorded here as the open
-option rather than done quietly.
+**Migration 019 removed the dependency instead of documenting it, applied 2026-09-05.**
+`migrations/019_ca_lumpsum_self_guarded.sql` restructures the disjunct to
+`(uom <> 'lumpsum' OR (quantity IS NOT NULL AND quantity = 1))`, which is FALSE over a NULL quantity on its
+own: `IS NOT NULL` is two-valued, so it converts the UNKNOWN into a FALSE inside the disjunct rather than
+leaving it for a sibling to absorb. Nothing outside the disjunct has to hold for the refusal to happen. The
+whole clause is now, as MariaDB stores it — normalised, and it drops the inner parentheses, which matters
+because the tripwire matches this text:
+
+```
+`uom` = 'per_day' and `quantity` is null or `uom` <> 'per_day' and `quantity` is not null
+and `quantity` > 0 and (`uom` <> 'lumpsum' or `quantity` is not null and `quantity` = 1)
+```
+
+**It changes no behaviour, and that was proven before the file was written.** Two proofs, both on the dev
+server. The sub-expression: `select ('lumpsum' <> 'lumpsum' OR NULL = 1)` returns NULL, `select ('lumpsum'
+<> 'lumpsum' OR (NULL IS NOT NULL AND NULL = 1))` returns 0, and `select (FALSE AND NULL), (NULL AND
+FALSE)` returns 0, 0 — which is 018's disjunct, 019's, and the reason the order 018 was written in was
+incidental. Then 15 row shapes against a `CREATE TABLE … LIKE` copy, run under 018's clause as copied from
+the live table and again under 019's: **0 differences**, 5 rows surviving each run, and the copy's clause
+re-normalised back to 018's text compared string-equal to the live one so the comparison was against what
+was deployed rather than a retyping of it. Lumpsum at 1 admitted; lumpsum at NULL, 300, 2, 0.999 and 0
+refused 4025; per_sqft at 300 and 1 and per_cum at 12.5 admitted; per_sqft at NULL and 0 and per_kg at NULL
+refused 4025; per_day at NULL admitted and per_day at 1 refused; per_day with a work_type refused by
+`chk_ca_work_type`. The full table is in 019's header. `contractor_attendance` held 0 rows.
+
+**The inner `quantity IS NOT NULL` is redundant and stays.** The outer one still implies it, so the clause
+now says it twice, and "this conjunct is already implied" is exactly how the class CLAUDE.md names reads on
+the way in. What stops the simplification is not the comment: the second tripwire in
+`tests/integration/hr-contractor-flow.test.ts` extracts the parenthesised lumpsum disjunct from
+`information_schema.CHECK_CONSTRAINTS`, evaluates **it alone** over a synthetic `('lumpsum', NULL)` row and
+asserts `0` rather than `NULL`, with `('lumpsum', 1)` as the control so a constantly-false fragment cannot
+pass it. A clause that goes back to leaning on a sibling fails there, naming the reason. That is the half a
+regex cannot do, and the pattern to copy for any future clause of this shape.
+
+**Not NOT NULL with a sentinel, which is the shape CLAUDE.md prefers.** A sentinel needs a value outside
+the column's real domain. `work_type` had one — `''` is not the name of any kind of work, which is what let
+016 make it NOT NULL and `chk_ca_work_type` keep it unreachable on a measured row. `quantity` has none:
+every DECIMAL a sentinel could be is either a plausible measure or already refused by `quantity > 0`, and
+choosing one would need a fresh exemption inside this same clause to keep it unreachable — the second
+constraint the preferred shape exists to avoid, reached by a longer road. NULL on a per_day row is also
+meaningful here rather than missing data: there is no measure, because the day is the measure.
+
+**This was recorded as the option not taken, and the instruction of 2026-09-05 asked for it.** The previous
+text of this paragraph said a migration 019 doing exactly this restructure was "the better end state by
+CLAUDE.md's own preference for a constraint that needs no second thing to stay true, but … a schema change
+to a shared object for a documentation reason, and it was not asked for". It has been asked for, so the
+option is closed rather than open. The two comment sites the note lived at are retired: the tripwire in
+`hr-contractor-flow.test.ts` now asserts the self-guarded shape instead of the sibling one, and the guard
+rule in `schema-constraints.test.ts` keeps its statement that a regex cannot tell a guard that covers a
+comparison from one that merely shares a constraint with it — that limit is structural and still true —
+while no longer recording a live dependency, because there is not one. 018's own header could not be
+corrected: it is applied and `scripts/migrate.mjs:117-128` treats an applied migration whose checksum moved
+as a hard failure, which is the right behaviour. Its one wrong sentence — that the guard "sits ahead of it
+in the same AND chain", which implies the ordering did the work — is corrected in 019's header instead.
 
 **Found while testing it: a refusal message that instructed the caller to write the forbidden row.** The
 quantity gate 19.2 shipped covers every non-day unit — *"it needs a quantity above zero to price"* — and a
@@ -2871,4 +2914,6 @@ integration case in `tests/integration/hr-contractor-flow.test.ts` (44 → 45) d
 refusal comes from where you claim it does"*: a raw Kysely insert with no service call in it, refused
 `4025` with `chk_ca_quantity` named in the message, against the service's refusal which carries prose and
 no `errno` at all. The permitted shapes it asserts cite `:1645` and 19.2 rather than 018's own header,
-per CLAUDE.md's second clause.
+per CLAUDE.md's second clause. 019 added no case and changed that one's two tripwires: the clause is still
+read off the live server before any refusal runs, and the second one evaluates the extracted lumpsum
+disjunct alone as described above. Both suites at 019: 264 unit, 204 integration, unchanged by it.

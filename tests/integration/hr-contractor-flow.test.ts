@@ -1479,7 +1479,7 @@ describe('a measured rate reaches a bill (migration 013)', () => {
     expect(Number(left.n)).toBe(0)
   })
 
-  it('pins a lumpsum quantity to 1 in the database, and chk_ca_quantity is what refuses 300 (migration 018)', async () => {
+  it('pins a lumpsum quantity to 1 in the database, and chk_ca_quantity is what refuses 300 (migrations 018, 019)', async () => {
     // TRIPWIRE, the same one the test above needs for a different clause. Every
     // refusal below is asserted to be this constraint's, so the clause is read off
     // the live server before any of them runs: if 018 were never applied the four
@@ -1493,17 +1493,43 @@ describe('a measured rate reaches a bill (migration 013)', () => {
     ).rows.find((r) => r.CONSTRAINT_NAME === 'chk_ca_quantity')?.CHECK_CLAUSE
     expect(clause).toMatch(/lumpsum/)
     expect(clause).toMatch(/`quantity` = 1/)
-    // And 014's guard is still a sibling conjunct of the new one, which is the only
-    // reason the NULL case below is refused: `(uom <> 'lumpsum' OR quantity = 1)`
-    // against a NULL quantity is UNKNOWN on its own, and a CHECK admits UNKNOWN.
-    // `FALSE AND UNKNOWN` is FALSE, so what does the work is that the guard sits in
-    // the same AND as the disjunction rather than inside one of its branches -- not
-    // that it is written first. MariaDB promises no evaluation order and needs to
-    // promise none. 19.3 is that bug; this is the fourth appearance of the class and
-    // the first where the new conjunct was harmless only because an older one was
-    // already there (DECISIONS 21.7). Anything that moves the lumpsum disjunct out
-    // from under this guard stops refusing a NULL and says nothing while it does.
-    expect(clause).toMatch(/`quantity` is not null/)
+
+    // SECOND TRIPWIRE, on the shape of the lumpsum disjunct rather than on its
+    // presence, and it is executable. Migration 019 restructured the conjunct 018
+    // added to `(uom <> 'lumpsum' OR (quantity IS NOT NULL AND quantity = 1))`,
+    // which refuses a NULL quantity by itself. 018's `(uom <> 'lumpsum' OR
+    // quantity = 1)` did not: over a NULL it is UNKNOWN, and a CHECK admits
+    // UNKNOWN, so the NULL refusal below came from 014's guard being a sibling
+    // conjunct of the same AND -- `FALSE AND UNKNOWN` is FALSE, in either order.
+    // That was a dependency between two conjuncts recorded only in a comment, and
+    // a comment cannot go red. So: pull the disjunct out of the live clause and
+    // evaluate it alone.
+    const disjunct = clause?.match(/\(`uom` <> 'lumpsum'(?:[^()]|\([^()]*\))*\)/)?.[0]
+    expect(disjunct, 'no parenthesised lumpsum disjunct in chk_ca_quantity').toBeTruthy()
+    // sql.raw of a CHECK_CLAUSE fragment, which is schema text this repository
+    // wrote and never user input. The derived row supplies the two columns the
+    // fragment names; nothing is inserted.
+    const verdict = async (uom: string, quantity: number | null) => {
+      const v = (
+        await sql<{ v: number | string | null }>`
+          select (${sql.raw(disjunct as string)}) as v
+          from (select ${uom} as \`uom\`, ${quantity} as \`quantity\`) t
+        `.execute(db)
+      ).rows[0]?.v
+      // NULL is kept as NULL rather than coerced: NULL versus 0 is the entire
+      // distinction being asserted, and Number(null) is 0.
+      return v === null || v === undefined ? null : Number(v)
+    }
+    // 0 is FALSE and a CHECK refuses it. NULL here would mean UNKNOWN, which a
+    // CHECK admits, and would say that the disjunct is back to leaning on a
+    // conjunct outside itself -- the fourth appearance of the class 19.3 names
+    // (DECISIONS 21.7). Anything that moves the guard out of this disjunct fails
+    // here, naming the reason, instead of quietly relying on 014.
+    expect(await verdict('lumpsum', null)).toBe(0)
+    // The control, without which a fragment that is constantly false would pass
+    // the line above while enforcing nothing.
+    expect(await verdict('lumpsum', 1)).toBe(1)
+
 
     const raw = (over: Record<string, unknown>) =>
       db
@@ -1549,7 +1575,9 @@ describe('a measured rate reaches a bill (migration 013)', () => {
     await refused({ quantity: 2, amount_paise: SCAFFOLD_PAISE * 2 })
     // Below one, which no reading of the unit makes sense of.
     await refused({ quantity: 0.999 })
-    // And NULL, which is 014's guard rather than the new conjunct.
+    // And NULL. Since 019 the lumpsum disjunct refuses this on its own; 014's
+    // guard still covers it and no longer has to. The tripwire above is what
+    // pins that, because this line passes either way.
     await refused({ quantity: null })
 
     // The shape that must keep working. The basis for asserting a PERMITTED shape
