@@ -434,12 +434,13 @@ describe('contractorAttendanceSchema, the day and measured split', () => {
     ).toMatch(/cannot also name a work type/)
   })
 
-  it('refuses a day row and a measured row for one skill, which the schema no longer can', () => {
+  it('refuses a day row and a measured row for one skill, as the database now does too', () => {
     // Permitted by uq_ca since 016 ('' and 'Plastering' are different key values)
-    // and refused here instead. It may be two gangs or one gang billed twice and
-    // the rows do not say which; DECISIONS 21.5 holds it open as an owner
-    // question. This is the one assertion in this block whose basis is a recorded
-    // open question rather than a constraint.
+    // and refused by trg_ca_basis_bi/_bu since 017, whose header proves that no
+    // UNIQUE index can express it. The basis for this assertion is that trigger.
+    // What stays open at DECISIONS 21.5 is the policy -- two gangs or one gang
+    // billed twice -- not which layer answers it. This block is the form-level
+    // echo: it covers one submission, and the service covers the whole day.
     expect(
       reject({
         skillLevel: ['mason', 'mason'],

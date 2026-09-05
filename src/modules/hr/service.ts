@@ -1704,7 +1704,7 @@ export async function recordContractorAttendance(
 
     const priorRows = await trx
       .selectFrom('contractor_attendance')
-      .select(['id', 'skill_level', 'work_type', 'headcount', 'amount_paise', 'approved_at', 'bill_id'])
+      .select(['id', 'skill_level', 'work_type', 'uom', 'headcount', 'amount_paise', 'approved_at', 'bill_id'])
       .where('contractor_id', '=', input.contractorId)
       .where('project_id', '=', input.projectId)
       .where('attendance_date', '=', input.attendanceDate)
@@ -1720,6 +1720,38 @@ export async function recordContractorAttendance(
     const priorByLine = new Map(
       priorRows.map((r) => [lineKey(String(r.skill_level), String(r.work_type)), r])
     )
+
+    // The day-rate-or-measured-rates rule (DECISIONS 21.5), enforced by
+    // trg_ca_basis_bi/_bu since migration 017. This is not the enforcement; it is
+    // the message. The trigger caps MESSAGE_TEXT at 128 characters and cannot name
+    // the skill level or say what to do instead, so the readable refusal is
+    // produced here, before the first write, against the whole day rather than
+    // against one post.
+    //
+    // The last point is why this is not redundant with the schema. The schema sees
+    // one submission: a day row entered in the morning and a measured row for the
+    // same gang entered in the afternoon are two submissions and it never sees them
+    // together. `priorRows` above is the whole day, taken FOR UPDATE, so this check
+    // covers the case the form cannot and holds against a concurrent poster.
+    const basisBySkill = new Map<string, 'day' | 'measured'>()
+    for (const prior of priorRows) {
+      basisBySkill.set(String(prior.skill_level), String(prior.uom) === 'per_day' ? 'day' : 'measured')
+    }
+    for (const row of input.rows) {
+      const basis = row.uom === 'per_day' ? 'day' : 'measured'
+      const held = basisBySkill.get(row.skillLevel)
+      if (held !== undefined && held !== basis) {
+        const readable = row.skillLevel.replace(/_/g, ' ')
+        throw new UnprocessableError(
+          `${readable} is already on ${held === 'day' ? 'a day rate' : 'a measured rate'} for ${
+            input.attendanceDate
+          }, so the same skill level cannot also be put ${
+            basis === 'day' ? 'on a day rate' : `on ${row.workType}`
+          } that date. If those are the same people, the rate already on the day pays for the work; if they are two gangs, record the second under its own skill level or on its own date.`
+        )
+      }
+      basisBySkill.set(row.skillLevel, basis)
+    }
 
     let inserted = 0
     let updated = 0

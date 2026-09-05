@@ -879,13 +879,25 @@ export const contractorAttendanceSchema = z
       seen.add(key)
     }
 
-    // Refused, and not because the database refuses it -- since 016 it does not.
-    // A day row and a measured row at one skill level on one date may be two
-    // disjoint gangs or one gang billed twice, and the rows do not say which. No
-    // unique key containing work_type can tell them apart, so the judgement stays
-    // here where a person can be told what the problem is. DECISIONS 21.5 holds
-    // it open as an owner question; if the answer is that it is legitimate, this
-    // block is what comes out, and the schema will already permit it.
+    // Refused here first, and refused by the database since migration 017 --
+    // trg_ca_basis_bi/_bu, because no UNIQUE index can express the rule and 017's
+    // header carries the proof. This block is now the form-level echo of a server
+    // guarantee rather than the only thing holding the line, which is what it was
+    // between 016 and 017.
+    //
+    // It is still worth having, and it is also not enough on its own. Worth having
+    // because it names the offending line while the form is still on screen. Not
+    // enough because `rows` is one submission: a day row posted in the morning and a
+    // measured row for the same gang posted in the afternoon never appear here
+    // together. `recordContractorAttendance` checks the whole day behind a FOR UPDATE
+    // and produces the message for that case; the trigger is what makes it true for
+    // a caller that reaches neither.
+    //
+    // DECISIONS 21.5 still holds the POLICY open -- whether the pair is two gangs or
+    // one gang billed twice is an owner question. What is settled is that all three
+    // layers now answer it the same way, and the conservative way: if the owner says
+    // it is legitimate, this block and the service check come out and 017 is reverted
+    // by a migration that drops the two triggers.
     const dayRowSkills = new Set(rows.filter((r) => r.uom === 'per_day').map((r) => r.skillLevel))
     for (const row of rows) {
       if (row.uom !== 'per_day' && dayRowSkills.has(row.skillLevel)) {

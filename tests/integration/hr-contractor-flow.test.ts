@@ -1190,6 +1190,12 @@ describe('a measured rate reaches a bill (migration 013)', () => {
   /** One ordinary day row in the same period, so the bill mixes both kinds. */
   const HELPER_DAY_AMOUNT = 3 * 40000
 
+  /* Three dates for migration 017, deliberately OUTSIDE M_FROM..M_TO so that the
+     rows the basis tests leave behind do not move the bill's row count or gross. */
+  const M_DAY_4 = '2026-06-20'
+  const M_DAY_5 = '2026-06-21'
+  const M_DAY_6 = '2026-06-22'
+
   beforeAll(async () => {
     chitId = await svc.createContractor(
       db,
@@ -1612,6 +1618,170 @@ describe('a measured rate reaches a bill (migration 013)', () => {
     expect(svcErr?.errno).toBe(1062)
     expect(await line(chitId, M_DAY_3, 'mason', PCC)).toBeUndefined()
     expect((await lines(chitId, M_DAY_3, 'mason')).length).toBe(2)
+  })
+
+  it('refuses a day rate beside a measured rate for one skill, in the database (migration 017)', async () => {
+    // TRIPWIRE. Every refusal below is a trigger's, and a trigger is invisible to
+    // `tsc`, to the Kysely types and to anyone reading the module. If it were
+    // dropped or never applied, the four inserts under it would all succeed and the
+    // test would still be asserting something -- so the triggers are asserted to
+    // exist, by name and by timing, before any of them is exercised.
+    const triggers = await sql<{ TRIGGER_NAME: string; ACTION_TIMING: string; EVENT_MANIPULATION: string }>`
+      select TRIGGER_NAME, ACTION_TIMING, EVENT_MANIPULATION from information_schema.TRIGGERS
+      where TRIGGER_SCHEMA = database() and EVENT_OBJECT_TABLE = 'contractor_attendance'
+      order by TRIGGER_NAME
+    `.execute(db)
+    expect(
+      triggers.rows.map((r) => `${r.TRIGGER_NAME} ${r.ACTION_TIMING} ${r.EVENT_MANIPULATION}`)
+    ).toEqual(['trg_ca_basis_bi BEFORE INSERT', 'trg_ca_basis_bu BEFORE UPDATE'])
+
+    const raw = (over: Record<string, unknown>) =>
+      db
+        .insertInto('contractor_attendance')
+        .values({
+          contractor_id: chitId,
+          project_id: projectId,
+          attendance_date: M_DAY_4,
+          skill_level: 'helper',
+          uom: 'per_day',
+          work_type: '',
+          headcount: 3,
+          quantity: null,
+          rate_paise: 40000,
+          amount_paise: 120000,
+          recorded_by: actor.userId,
+          ...over,
+        })
+        .executeTakeFirst()
+    const refusal = async (over: Record<string, unknown>) => {
+      let err: (Error & { code?: string; errno?: number; sqlState?: string }) | undefined
+      try {
+        await raw(over)
+      } catch (caught) {
+        err = caught as Error & { code?: string; errno?: number; sqlState?: string }
+      }
+      expect(err, 'a day rate and a measured rate for one skill were both admitted').toBeDefined()
+      return err
+    }
+
+    // No service call in this test at all. The day row goes in, the measured row
+    // for the same skill on the same date comes back refused, and uq_ca is not what
+    // refused it: ('', 'Internal plastering') are different key values and the test
+    // above proves the key only refuses an identical pair. 1644 / 45000 with the
+    // trigger name in the message is the proof of which layer said no.
+    await raw({})
+    const first = await refusal({ uom: 'per_sqft', work_type: PLASTER, quantity: 50, rate_paise: PLASTER_PAISE })
+    expect(first?.errno).toBe(1644)
+    expect(first?.sqlState).toBe('45000')
+    expect(first?.message).toMatch(/trg_ca_basis/)
+
+    // The other insertion order, which is the same rule and a different row. A
+    // clerk who measures first and adds the gang afterwards must meet it too.
+    await sql`delete from contractor_attendance where contractor_id = ${chitId} and attendance_date = ${M_DAY_4}`.execute(
+      db
+    )
+    await raw({ uom: 'per_sqft', work_type: PLASTER, quantity: 50, rate_paise: PLASTER_PAISE })
+    expect((await refusal({}))?.errno).toBe(1644)
+
+    // And the UPDATE hole, which is why 017 installs two triggers rather than one.
+    // A mason measured row moved onto `helper` lands on no existing key -- (helper,
+    // 'Internal plastering') is free -- so uq_ca admits it, and it arrives beside
+    // the helper day row as exactly the pair the insert trigger just refused.
+    await raw({ skill_level: 'mason', headcount: 2, rate_paise: 40000 })
+    let moved: (Error & { errno?: number; sqlState?: string }) | undefined
+    try {
+      await db
+        .updateTable('contractor_attendance')
+        .set({ skill_level: 'helper' })
+        .where('contractor_id', '=', chitId)
+        .where('attendance_date', '=', M_DAY_4)
+        .where('skill_level', '=', 'mason')
+        .execute()
+    } catch (caught) {
+      moved = caught as Error & { errno?: number; sqlState?: string }
+    }
+    expect(moved?.errno).toBe(1644)
+    expect(moved?.sqlState).toBe('45000')
+
+    // The ordinary update path still works, or the two triggers would have closed
+    // the hole by closing the door: this is the same statement the service's update
+    // branch runs, on a row whose own basis is changing and which must not collide
+    // with itself. `id <> NEW.id` in trg_ca_basis_bu is what makes it pass.
+    await sql`delete from contractor_attendance where contractor_id = ${chitId} and attendance_date = ${M_DAY_4} and skill_level = 'helper'`.execute(
+      db
+    )
+    await db
+      .updateTable('contractor_attendance')
+      .set({ uom: 'per_sqft', work_type: PLASTER, quantity: 25, rate_paise: PLASTER_PAISE })
+      .where('contractor_id', '=', chitId)
+      .where('attendance_date', '=', M_DAY_4)
+      .where('skill_level', '=', 'mason')
+      .execute()
+    expect(await line(chitId, M_DAY_4, 'mason', PLASTER)).toMatchObject({ uom: 'per_sqft' })
+  })
+
+  it('refuses the same pair posted as two separate days of work, which no form sees', async () => {
+    // The case the schema cannot reach and the reason the service checks as well as
+    // the trigger. Two posts: the gang in the morning, the measure in the
+    // afternoon. `contractorAttendanceSchema` validates one submission and each of
+    // these is valid on its own, so between 016 and 017 both landed and both billed.
+    expect(
+      await svc.recordContractorAttendance(
+        db,
+        actor,
+        day(M_DAY_5, chitId, [{ skill: 'helper', headcount: '3' }]),
+        { canManageContractors: true }
+      )
+    ).toMatchObject({ inserted: 1, updated: 0 })
+
+    const second = await svc
+      .recordContractorAttendance(
+        db,
+        actor,
+        day(M_DAY_5, chitId, [{ skill: 'helper', headcount: '3', uom: 'per_sqft', work: PLASTER, qty: '50' }]),
+        { canManageContractors: true }
+      )
+      .then(
+        () => null,
+        (e: Error) => e
+      )
+    // The service's message, not the trigger's: the trigger caps MESSAGE_TEXT at
+    // 128 characters and cannot name the skill or the work. Both refuse the row;
+    // only one of them can explain it, and that is the one a clerk should meet.
+    expect(second?.message).toMatch(/helper is already on a day rate for 2026-06-21/)
+    expect(second?.message).toMatch(/record the second under its own skill level or on its own date/)
+    expect(second?.message).not.toMatch(/trg_ca_basis/)
+    expect((await lines(chitId, M_DAY_5, 'helper')).length).toBe(1)
+
+    // The mirror, on its own date: the measure first, the gang second.
+    await svc.recordContractorAttendance(
+      db,
+      actor,
+      day(M_DAY_6, chitId, [{ skill: 'helper', headcount: '3', uom: 'per_sqft', work: PLASTER, qty: '50' }]),
+      { canManageContractors: true }
+    )
+    const mirror = await svc
+      .recordContractorAttendance(db, actor, day(M_DAY_6, chitId, [{ skill: 'helper', headcount: '3' }]), {
+        canManageContractors: true,
+      })
+      .then(
+        () => null,
+        (e: Error) => e
+      )
+    expect(mirror?.message).toMatch(/helper is already on a measured rate for 2026-06-22/)
+    expect((await lines(chitId, M_DAY_6, 'helper')).length).toBe(1)
+
+    // A second measured work type at the same skill is still an ordinary second
+    // line: the rule is one BASIS per skill per day, not one row.
+    expect(
+      await svc.recordContractorAttendance(
+        db,
+        actor,
+        day(M_DAY_6, chitId, [{ skill: 'helper', headcount: '2', uom: 'per_sqft', work: CEILING, qty: '10' }]),
+        { canManageContractors: true }
+      )
+    ).toMatchObject({ inserted: 1, updated: 0 })
+    expect((await lines(chitId, M_DAY_6, 'helper')).length).toBe(2)
   })
 
   it('bills the period, mixing a measured amount with a day-rate one', async () => {

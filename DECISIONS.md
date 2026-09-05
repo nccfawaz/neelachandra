@@ -2395,13 +2395,14 @@ Nothing in the tree writes `site_page_revisions` yet, so no unusable revision ex
 nullability at all, which is the sketch being a sketch rather than a decision that it may be NULL — see
 21.3 on why the DDL blocks are read that way.
 
-### 21.5 A day rate and a measured rate for one skill level on one date: open
+### 21.5 A day rate and a measured rate for one skill level on one date: refused in the database, policy still open
 
-Cited from `migrations/016_ca_unique_work_type.sql`, `src/modules/hr/schemas.ts` and
-`tests/hr-schemas.test.ts`. **This is an owner question, and the code currently refuses the shape.**
+Cited from `migrations/016_ca_unique_work_type.sql`, `migrations/017_ca_basis_exclusive.sql`,
+`src/modules/hr/schemas.ts`, `src/modules/hr/service.ts` and `tests/hr-schemas.test.ts`. **The owner question
+is still open. Which layer answers it is not.**
 
 Since 016 widened `uq_ca` to `(contractor_id, project_id, attendance_date, skill_level, work_type)`, the
-database permits two rows like these on one day:
+database permitted two rows like these on one day:
 
 | skill_level | uom | work_type | headcount | quantity |
 | --- | --- | --- | --- | --- |
@@ -2414,15 +2415,55 @@ one on piecework — which is ordinary — or one gang of four billed twice**, o
 the plastering it did during that day. The rows are identical in the second case and the second case is a
 double payment.
 
-`contractorAttendanceSchema` refuses the pair, and `recordContractorAttendance` does not — the schema is the
-only gate. That asymmetry is deliberate and is the shape of the open question: the refusal is at the layer
-that can be removed in one block when the answer comes, and the layers underneath it are already correct
-either way. If the answer is that the pair is legitimate, the block named in the comment at
-`src/modules/hr/schemas.ts` comes out and nothing else changes. If the answer is that it is a double
-payment, the same rule has to be added to the service so that no future caller can post it.
+**As first recorded, this entry called the split deliberate. It was wrong, and for a reason worse than the
+split itself.** The state it described was `contractorAttendanceSchema` refusing the pair and
+`recordContractorAttendance` not, with the argument that the refusal sat "at the layer that can be removed in
+one block when the answer comes". Two things are wrong with that. The first is the one the split invites: a
+script, an import or a later route reaching the service directly meets no rule at all. The second is that
+**the schema never covered the ordinary case either.** `rows` in that schema is one form submission. A day
+row posted in the morning and a measured row for the same gang posted in the afternoon are two submissions,
+and the schema never sees them together — so between 016 and 017 the double payment went in through the
+front door of the form the refusal was written for, and the only thing the refusal caught was a clerk who
+typed both lines into one grid. Whatever the policy turns out to be, that was not an enforcement of it.
 
-**What would settle it:** whether a contractor's gang can be on two rate bases on one date at all, and if
-so whether the headcount on the measured row is the same people. Not asked yet.
+**Resolved by migration 017 in the database.** `trg_ca_basis_bi` and `trg_ca_basis_bu` refuse the pair on
+INSERT and on UPDATE. The refusal is the server's: SQLSTATE 45000, errno 1644, the trigger named in the
+message, proven from a raw insert in `tests/integration/hr-contractor-flow.test.ts` with no service call in
+it. The three layers now agree, with the guarantee at the bottom and the explanation at the top:
+
+- **the trigger** is the guarantee, and applies to every caller including one that never loads this codebase;
+- **`recordContractorAttendance`** checks the whole day behind the `FOR UPDATE` it already holds and produces
+  the readable message, because `SIGNAL` caps `MESSAGE_TEXT` at 128 characters and cannot name the skill
+  level, the work or what to do instead. It also covers the two-post case the schema cannot see;
+- **`contractorAttendanceSchema`** still refuses within one submission, so the form names the offending line
+  while it is still on screen.
+
+**A trigger, and why that is not a preference.** No UNIQUE index can express this rule. Let `f(row)` be
+whatever expression a key is built over. Refusing the pair requires `f(mason, per_day, '')` to equal
+`f(mason, per_sqft, 'Plastering')`; the same requirement at the next work type gives
+`f(mason, per_day, '') = f(mason, per_sqft, 'Tiling')`; therefore `f(Plastering) = f(Tiling)`, which
+collapses the two measured work types at one skill level that **016 exists to permit**. Proven on the server
+before 017 was written, on two copies of the table: under the real five-column key the pair inserted clean,
+and under the four-column key it collapses to, the pair was refused 1062 — and so was `('Plastering',
+'Tiling')`. Both candidate shapes fail, in opposite directions. A CHECK cannot see another row at all. That
+leaves a trigger; that it may read its subject table in a BEFORE trigger was also proven on a copy first.
+
+**Two triggers, not one.** `uq_ca` refuses an UPDATE that lands on an existing key, but moving a measured row
+onto a skill level that already has a day row lands on no key: `(helper, 'Internal plastering')` is free
+beside `(helper, '')`. `id <> NEW.id` inside `trg_ca_basis_bu` is load bearing — during a BEFORE UPDATE the
+row still holds its old `uom`, so a legitimate single-row basis change would otherwise collide with itself.
+
+**What is still open, and what reverses it.** Whether a contractor's gang can be on two rate bases on one
+date at all, and if so whether the headcount on the measured row is the same people. Not asked yet. The
+conservative side is implemented because the two failures are not symmetrical: refusing a legitimate row is a
+supervisor's complaint, and admitting an illegitimate one is a payment. If the owner says the pair is
+legitimate, the reversal is a migration dropping the two triggers plus the removal of one block in the
+service and one in the schema — and it is worth knowing that **there is no way to remove a
+`contractor_attendance` row through the application** (no `deleteFrom` on that table anywhere in
+`src/modules/hr/service.ts`), so a clerk who enters a day row and then needs a measured one for that skill on
+that date is stuck until the answer comes. A row-removal or void path is the thing to build if the answer
+takes a while; it is not built here because voiding attendance that may already carry an approval is its own
+decision.
 
 ### 21.6 `uq_ca` now has five columns and the spec's DDL says four — flagged, not silently resolved
 
