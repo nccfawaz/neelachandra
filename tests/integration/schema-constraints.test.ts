@@ -79,6 +79,24 @@ const PERMISSIVE_OVER_NULL: Record<string, string> = {}
  * declared it and, where the column's absence changes what a feature can do, the
  * spec or DECISIONS section that says so. A new JSON column fails the enumeration
  * test until it is recorded here.
+ *
+ * PROVENANCE, read this before trusting a `why`. The `nullable` flags are read
+ * off information_schema and asserted against it, so they are facts. The reasons
+ * are not. **The spec documents none of these twelve nullability choices** -- not
+ * one of them is stated in NCC_BUILD_SPEC.md -- so eleven of the twelve reasons
+ * below are reconstructed from what the column means and from the migration that
+ * declared it. They are the best available reading, not a ratified decision, and
+ * a reader who finds one wrong should correct it rather than assume it was agreed:
+ * being written down here is not evidence that anyone chose it.
+ *
+ * The single exception is `site_page_revisions.schema_types`, whose entry is not a
+ * reconstruction at all -- it cites spec :1387 against the declaration at 007:51
+ * and records the disagreement as open. That is what a grounded entry looks like.
+ *
+ * This warning exists because of the defect in DECISIONS 20.2: a test asserted a
+ * row shape was intended, citing a migration comment written in the same session
+ * as the test, and the circle held for a full slice. A registry of confident
+ * reasons with no citations is the same failure with a longer fuse.
  */
 const AUTO_JSON_CHECKS: Record<string, { nullable: boolean; why: string }> = {
   'audit_log.before_json': {
