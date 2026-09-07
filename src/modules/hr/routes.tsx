@@ -1579,8 +1579,8 @@ hr.get(
         {state.locked ? (
           <Alert tone="warn">
             {formatMonth(month)} is closed: {state.approved} of {state.total} rows are approved. Entry and
-            corrections for this month need <code>finance.period_close</code>, because rule 4 exists to stop a
-            payroll figure changing after the payment is made.
+            corrections for this month need <code>finance.period_close</code>: once a month is closed it feeds
+            a payroll figure, and a payroll figure must not change after the payment is made.
             {canOverride ? ' You hold it, so your posts will go through and be audited as an override.' : ''}
           </Alert>
         ) : null}
@@ -2438,7 +2438,8 @@ hr.get('/app/hr/contractors', requirePermission(PERMISSIONS.HR_LABOUR_CONTRACTOR
         <DataTable columns={columns} rows={rows} empty="No contractor matches that filter." />
         <p class="ncc-hint">
           These are firms, not employees. Nothing on this screen creates a row in the employee master, and a
-          contractor's workers are counted by skill level rather than named (6.6 rules 2 and 3).
+          contractor's workers are counted by skill level rather than named, because their employment sits with
+          the firm, not with you.
         </p>
       </Panel>
     </>
@@ -2758,8 +2759,8 @@ hr.get('/app/hr/contractors/:contractorId', requirePermission(PERMISSIONS.HR_LAB
         ) : failures.length > 0 ? (
           <Alert tone="warn">
             The {failures.join(' and the ')} {failures.length === 1 ? 'has' : 'have'} expired. Recording labour
-            for a day after the expiry needs an override, and the override is written to the audit log (6.6 rule
-            3).
+            for a day after the expiry needs an override, and the override is written to the audit log so the
+            record shows who worked an unlicensed day and why.
           </Alert>
         ) : null}
         <Panel title="The firm">
@@ -2803,8 +2804,9 @@ hr.get('/app/hr/contractors/:contractorId', requirePermission(PERMISSIONS.HR_LAB
             ]}
           />
           <p class="ncc-hint">
-            A date left blank does not block anything: rule 3 refuses a date that has passed, and a column
-            nobody filled in has not passed. Whether a missing licence should block is an 8.1 question.
+            A date left blank does not block anything: a day is only refused once it has actually passed, and a
+            column nobody filled in has no date that could have passed. Whether a missing licence should block
+            is still an open question for the owner.
           </p>
         </Panel>
       </div>
@@ -3118,8 +3120,9 @@ hr.get('/app/hr/contractor-attendance', requirePermission(PERMISSIONS.HR_ATTENDA
         <>
           {failures.length > 0 ? (
             <Alert tone="warn">
-              On {formatDate(date)} {failures.join(' and ')}. Recording this day needs the override below, and it
-              is written to the audit log with the reason list (6.6 rule 3).
+              On {formatDate(date)} {failures.join(' and ')}. Recording this day needs the override below, and
+              the override, with the reason you pick, is written to the audit log so the record shows who
+              recorded a refused day and why.
             </Alert>
           ) : null}
           {billed > 0 ? (
@@ -3419,10 +3422,9 @@ hr.get('/app/hr/contractor-attendance', requirePermission(PERMISSIONS.HR_ATTENDA
                   </button>
                 </div>
                 <p class="ncc-hint">
-                  Rule 2 bills approved attendance only. The 6.6 route table has no route that sets{' '}
-                  <code>approved_at</code> on these rows, so this one is an addition rather than a spec route --
-                  it carries <code>hr.attendance_approve</code>, the permission rule 4 uses for the same act on
-                  employees. Flagged in DECISIONS 18.3.
+                  Only approved attendance reaches a bill. This button approves the contractor's rows first --
+                  the same act, under the same <code>hr.attendance_approve</code> permission the employee
+                  version uses -- so what the bill counts is attendance somebody has signed off.
                 </p>
               </form>
             </Panel>
@@ -3629,8 +3631,8 @@ hr.get('/app/hr/contractor-bills', requirePermission(PERMISSIONS.HR_LABOUR_CONTR
                   </button>
                 </p>
                 <p class="ncc-hint">
-                  The gross is never typed: rule 2 sums it from approved attendance inside the transaction and
-                  stamps <code>bill_id</code> on every row it consumed, so the same day cannot reach two bills.
+                  The gross is never typed: it is summed here from approved attendance inside the transaction,
+                  and every row consumed is stamped with this bill's id, so the same day cannot reach two bills.
                 </p>
               </form>
             </>
@@ -3726,7 +3728,7 @@ hr.get('/app/hr/contractor-bills/:billId', requirePermission(PERMISSIONS.HR_LABO
             [
               'Expense row',
               bill.expense_id === null ? (
-                <span class="ncc-muted">none yet -- 6.8 rule 1 is not built</span>
+                <span class="ncc-muted">none yet -- the finance link is not built</span>
               ) : (
                 <>#{bill.expense_id}</>
               ),
@@ -3782,7 +3784,7 @@ hr.post(
     const back = `/app/hr/contractor-bills/${billId}`
     return guard(c, back, async () => {
       const r = await svc.approveContractorBill(c.get('db'), actorOf(c), billId, c.get('roleKeys'))
-      return `${r.billNo} approved as ${r.limitRoleKey}: gross ${formatPaise(r.grossPaise)}, net payable ${formatPaise(r.netPayablePaise)}. It does not reach finance until 6.8 rule 1 is built.`
+      return `${r.billNo} approved as ${r.limitRoleKey}: gross ${formatPaise(r.grossPaise)}, net payable ${formatPaise(r.netPayablePaise)}. It does not reach finance until the finance link is built.`
     })
   }
 )

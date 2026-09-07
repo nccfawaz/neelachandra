@@ -602,7 +602,7 @@ crm.get('/app/crm/leads', requirePermission(PERMISSIONS.CRM_LEAD_VIEW), async (c
             ]}
             rows={followups}
             empty="Nothing is due."
-            caption="Oldest first. Rule 7: the first response is the one controllable conversion lever."
+            caption="Oldest first. Answer the oldest lead first: the first response is the one thing on this list you still control, and the strongest lever on whether a lead converts."
           />
         </Panel>
       ) : null}
@@ -1585,7 +1585,7 @@ crm.get('/app/crm/visits', requirePermission(PERMISSIONS.CRM_LEAD_VIEW), async (
           ]}
           rows={rows}
           empty="No visit matches that filter."
-          caption="A completed visit with a verdict is what rule 3 requires before a quote can be sent."
+          caption="A quote cannot be sent until somebody has completed a site visit and recorded a verdict."
         />
         <Pager
           page={pageNo}
@@ -2015,7 +2015,7 @@ function QuoteForm(props: QuoteFormProps) {
           required
           value={val(quote, 'exclusions')}
           placeholder={'One per line, for example:\nCompound wall and gate\nBorewell and sump\nBESCOM and BWSSB deposits and sanction charges\nSoil filling and levelling beyond 1 ft\nInterior furniture and loose fittings'}
-          hint="These print on the quote as a numbered list. Rule 4 will not let a quote go out without them."
+          hint="These print on the quote as a numbered list. A quote cannot be sent without them: the client is entitled to see what is excluded before they sign."
         />
       </fieldset>
 
@@ -2129,8 +2129,8 @@ crm.get('/app/crm/quotes/new', requirePermission(PERMISSIONS.CRM_QUOTE_CREATE), 
       {banner(c)}
       {visited ? null : (
         <Alert tone="warn">
-          No completed site visit is on record for this lead. A quote can be drafted, but it cannot be sent: rule 3
-          holds the send until somebody has stood on the plot and recorded a verdict.
+          No completed site visit is on record for this lead. A quote can be drafted, but it cannot be sent: the
+          send waits until somebody has stood on the plot and recorded a verdict.
         </Alert>
       )}
       <Panel title="Quote">
@@ -2194,7 +2194,7 @@ crm.get('/app/crm/quotes/:id/revise', requirePermission(PERMISSIONS.CRM_QUOTE_CR
     <>
       {banner(c)}
       <Alert tone="warn">
-        An approved price is immutable (rule 5). Saving this supersedes revision {quote.revision} and starts the
+        An approved price cannot be edited in place. Saving this supersedes revision {quote.revision} and starts the
         approval again, so the client and the audit trail both see that the price changed rather than finding a
         different number under the same quote.
       </Alert>
@@ -3069,8 +3069,8 @@ crm.get('/app/crm/reports/losses', requirePermission(PERMISSIONS.CRM_LEAD_VIEW),
       <Panel title="Window">
         <RangeForm action="/app/crm/reports/losses" from={from} to={to} />
         <p class="ncc-hint">
-          Rule 8 requires the reason to be one of the enumerated ones, so this table is countable. That is the whole
-          point of refusing a free-text reason on the lose form.
+          The reason is always one of the fixed choices on the lose form, so this table can be counted and
+          compared month to month. That is the whole point of refusing a free-text reason there.
         </p>
       </Panel>
       <Panel title="Why work was lost">
