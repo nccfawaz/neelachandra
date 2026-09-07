@@ -3235,6 +3235,234 @@ something else.
 The one class this sweep cannot see is a comment that cites nothing at all and asserts a business rule as
 though it were obvious. There is no grep for that.
 
+## 24. The Content-Security-Policy the comment describes does not exist, 2026-09-05
+
+`src/app.ts:47-55` carries a nine-line comment explaining a per-area CSP: why the public pages get a lax
+policy and `/app` gets a strict one, and why writing one policy for both would be wrong. The reasoning is
+sound and the header is not sent. Not sent laxly, not sent partially — **no `Content-Security-Policy`
+appears on any response, in either area**, and none is set in `.htaccess` either. What follows records that,
+and what the strict half would do to the two client-side files shipped on 2026-09-05 if somebody wrote it
+from the comment. No policy is implemented here; §9 owns hardening.
+
+### 24.1 What the comment claims
+
+Three claims, in its own terms: that the policy is "set per area rather than globally"; that the public
+pages "carry inline `<style>` and inline `<script>` blocks that the freeze forbids touching, and GA4 loads
+from googletagmanager", so they "get a policy that permits inline, which is weak but honest"; and that
+"`/app` is ours, has no inline script, and gets the strict policy."
+
+The third claim is true as far as it goes and is the one that misleads, because *script* is not the only
+directive a strict policy carries. See 24.5.
+
+### 24.2 What is actually sent, measured 2026-09-05
+
+Immediately below the comment, `src/app.ts:56-67` is the only `secureHeaders()` mount in the tree —
+`app.use('*', ...)`, one call, seven options, and **no `contentSecurityPolicy` key**. There is no second
+mount on `/app/*` and none on the public site, so the "per area" structure the comment describes has no
+mechanism behind it at all.
+
+Proved by response rather than by reading. A scratch `tsx` script imported `src/app.ts`, called
+`app.fetch()` on eight paths and printed every response header:
+
+| path | status | `content-security-policy` |
+| --- | --- | --- |
+| `/` | 200 | ABSENT |
+| `/index.html` | 404 | ABSENT |
+| `/about-us.html` | 404 | ABSENT |
+| `/contact.html` | 404 | ABSENT |
+| `/login` | 200 | ABSENT |
+| `/app/dashboard` | 302 | ABSENT |
+| `/api/crm/quotes/1/print` | 302 | ABSENT |
+| `/assets/js/attendance-grid.js` | 200 | ABSENT |
+
+Twelve headers come back on `/`: `cache-control`, `content-type`, `etag`, `origin-agent-cluster`,
+`referrer-policy`, `strict-transport-security`, `x-content-type-options`, `x-dns-prefetch-control`,
+`x-download-options`, `x-frame-options`, `x-permitted-cross-domain-policies`, `x-xss-protection`. The nine
+security headers among them — everything in that list except `cache-control`, `content-type` and `etag` —
+are identical on all eight paths; the per-path differences are `etag` and `cache-control` on the static hit,
+`set-cookie` on `/login`, `location` on the two redirects. That is the
+same fact from the other side: one global mount, no per-area difference to observe. `.htaccess:201-206`
+sets `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, a `text/html` `Cache-Control` and an
+`X-Robots-Tag`, and no CSP, so Apache is not supplying what the app omits.
+
+Nothing executable holds any of this and nothing should: a test asserting the header is absent would go red
+the day §9 adds it, which is the "pin what it permits" hazard CLAUDE.md warns about. The date above is the
+citation. To re-measure, recreate the probe — `import app from '../src/app.js'`, `app.fetch(new
+Request('http://localhost' + path))`, read `res.headers` — and run it with `npx tsx --env-file=.env`,
+because `src/env.ts:63` throws on missing `DB_*` before `app` is importable.
+
+### 24.3 The vendored Alpine is the standard build, so every `x-` attribute needs `'unsafe-eval'`
+
+`public/assets/js/attendance-grid.js` survives a strict policy on its own. It is same-origin, so
+`script-src 'self'` loads it; it constructs no functions and touches no `innerHTML` — a grep for `new
+Function`, `eval(`, `innerHTML` and `setAttribute('on` returns nothing in its 221 lines. There is no inline
+handler anywhere in `src/`: `grep -rInE '\bon(click|change|submit|keydown|input|load)=' src/ --include=*.tsx`
+returns nothing, and all four `<script>` elements in `src/dashboard/layouts/AppShell.tsx:64-74` carry `src=`.
+The comment's "no inline script" is verified.
+
+`public/assets/vendor/alpine.min.js` is a different matter, and it is the answer to the question this task
+asked. It is the **standard build, not the CSP build**, and its evaluator is a function constructed from a
+string at runtime:
+
+```js
+let r = Object.getPrototypeOf(async function () {}).constructor
+let s = new r(['__self', 'scope'], `with (scope) { __self.result = ${n} }; __self.finished = true; return __self.result;`)
+```
+
+That is copied out of the minified file, not from Alpine's docs. `Object.getPrototypeOf(async function(){})
+.constructor` is the `AsyncFunction` constructor, and calling it is `eval` for CSP purposes: under any policy
+whose `script-src` omits `'unsafe-eval'` it throws `EvalError` and nothing about the expression runs.
+Corroborating markers, counted in the file: `getPrototypeOf(async` ×1, `with (scope)` ×1, `__self.result` ×2,
+`cspEvaluator` ×0, `Alpine is unable to interpret` ×0 — the last two are the CSP build's evaluator name and
+its error string, and their absence is what settles which build this is.
+
+**A nonce does not substitute.** A nonce authorises an inline `<script>` *element*; it has no bearing on
+`Function`/`AsyncFunction` construction. The only two ways out are `'unsafe-eval'` on the `/app` policy or
+swapping the vendored file for the CSP build. That choice is §9's.
+
+Six Alpine attributes exist in the whole tree, all on the attendance matrix form at
+`src/modules/hr/routes.tsx:1425-1466`: `x-data="attendanceGrid"` (:1430), `x-on:change="onChange"` (:1432),
+`x-on:keydown="onKey"` (:1433), `x-on:submit="onSubmit"` (:1434), `x-text="summary()"` (:1466), and a bare
+`x-cloak` (:1454). Five carry an expression and every one of them goes through the constructor above —
+`R()` and `x()` in the minified file both resolve to the single evaluator `xt`, and there is no
+`setEvaluator` call anywhere in the tree to replace it.
+
+Four of the five expressions are already in the shape the CSP build requires — bare identifiers resolved
+against the object returned by `Alpine.data('attendanceGrid', ...)` at
+`public/assets/js/attendance-grid.js:36`. The fifth, `x-text="summary()"`, is a method *call*. Whether the
+CSP build's restricted evaluator accepts the parenthesised form was **not determined here**: that build is
+not vendored and not in `node_modules`, so there was nothing to read. If it does not, the fix is local —
+maintain the string as a property in `recount()` and bind `x-text="summaryText"`.
+
+### 24.4 `x-cloak` survives the block, and that is what makes the failure dishonest
+
+The interesting part is not that the grid stops working. It is *how*.
+
+`x-data`'s handler does not propagate the failure. From the minified file:
+
+```js
+d('data', (e, { expression: t }, { cleanup: r }) => { ...; let o = R(e, t, { scope: i }); (o === void 0 || o === !0) && (o = {}); ... let s = T(o); ...; s.init && R(e, s.init); ... })
+```
+
+A blocked evaluator makes `R()` return `undefined`, so `o` becomes `{}` — an empty component rather than no
+component. `s.init` is then undefined and **`init()` never runs**: `keys` stays `{}`, no `select` gets its
+`dataset.stored`, and the `beforeunload` guard is never installed. Each of the other four expressions fails
+separately. The failure is reported by `console.warn('Alpine Expression Error: ...')` followed by
+`setTimeout(() => { throw e }, 0)`, so it is loud in a console and invisible on the page.
+
+`x-cloak` is the exception, and it is the problem. Its handler evaluates nothing:
+
+```js
+d('cloak', e => queueMicrotask(() => m(() => e.removeAttribute(C('cloak')))))
+```
+
+The attribute is removed unconditionally, and `dashboard.css:610` is `[x-cloak]{display:none!important}` — so
+the stylesheet stops hiding the paragraph at `src/modules/hr/routes.tsx:1459-1462` and the page displays
+*"Arrows move · Enter and Shift+Enter move down and up · Home and End jump to the ends of a row · a letter
+sets the status · Backspace puts a cell back to what was saved"* on a grid where none of it works.
+
+The comment above that paragraph, `src/modules/hr/routes.tsx:1455-1458`, reasons about two states — script
+ran, script never ran — and `x-cloak` is exactly right for both. A CSP-blocked evaluator is a third: Alpine
+loaded, initialised, and fired `alpine:init`, so `Alpine.data()` registered successfully; only the attribute
+expressions failed. §22 recorded the two-state reasoning and did not anticipate this one. The mitigation is
+not to change the markup — it is that whoever writes the `/app` policy has to know that `'unsafe-eval'` is
+load bearing for truthfulness here, not only for function.
+
+What does *not* break is the data path, and that is by design rather than luck. The form is
+`method="post" action="/api/hr/attendance/grid"` with every cell posted whether changed or not, the CSRF
+field is a real input, and the server compares each value against the stored row — so a browser with a
+blocked evaluator writes exactly what a JavaScript-off browser writes. The docstring at
+`public/assets/js/attendance-grid.js:25-30` states that property and forbids optimising the post down to
+changed cells; it is the reason a CSP mistake here would cost affordances and one misleading sentence
+rather than attendance data.
+
+### 24.5 Inline *style* is the half the comment does not mention
+
+"`/app` … has no inline script" is true and it is not the whole test. A strict policy is normally
+`default-src 'self'` plus directives, and `style-src 'self'` blocks inline style — both `<style>` elements
+and `style=` attributes. Counted on 2026-09-05:
+
+- **84 inline `style=` attributes** in the dashboard markup: `src/dashboard/components/index.tsx` 9,
+  `src/modules/crm/routes.tsx` 20, `src/modules/inventory/routes.tsx` 20, `src/modules/hr/routes.tsx` 15,
+  `src/modules/auth/routes.tsx` 2, `src/modules/projects/routes.tsx` 2. The commonest is
+  `style="flex-wrap:wrap;gap:.75rem"` ×20. One of them is inside the attendance form itself
+  (`src/modules/hr/routes.tsx`, `style="margin-top:1rem"`).
+- **Two inline `<style>` elements**, at `src/modules/crm/routes.tsx:2640` and
+  `src/modules/inventory/routes.tsx:1791`.
+
+Attributes are the awkward ones: a nonce cannot authorise a `style=` attribute. Only `'unsafe-inline'` does,
+or `'unsafe-hashes'` with a hash per distinct declaration. So a `/app` policy written from the comment's
+description would need `style-src 'self' 'unsafe-inline'` on day one, which is not the strict policy the
+comment believes it is describing, or 84 edits first. Recording the number is the point: it converts "the
+dashboard is clean" into a known quantity of work.
+
+**And the two-area split is not exhaustive.** Those two `<style>` elements belong to
+`crm.get('/api/crm/quotes/:id/print')` at `src/modules/crm/routes.tsx:2589` and
+`inventory.get('/api/po/:poId/print')` at `src/modules/inventory/routes.tsx:1769` — full `<html>` documents
+that do not go through `page()` or `AppShell`, served under **`/api/`**, which is neither "the public pages"
+nor "`/app`". A policy mounted on `/app/*` would miss them; a policy mounted as "everything that is not the
+public site" would break them. Whichever §9 picks, these two routes have to be named explicitly.
+
+### 24.6 The public side, measured
+
+The comment's description of the frozen pages is right in kind and short on specifics. Across the 24 `.html`
+files at the site root, counted 2026-09-05:
+
+- **84 `<script>` tags: 25 with `src=`, 59 without.** Of the 59, eight are
+  `<script type="application/ld+json">` data blocks and **51 are executable inline blocks**.
+- **54 inline event-handler attributes** — 31 `onload=`, 23 `onclick=` — in 23 of the 24 files. These are the
+  reason the public policy cannot use a nonce as a strengthening step: a nonce does not authorise attribute
+  handlers, so `script-src` needs literal `'unsafe-inline'`, and `'unsafe-inline'` is *ignored* by browsers
+  when a nonce or hash is also present. Nonce and these handlers are mutually exclusive.
+- **23 of 24 files carry an inline `<style>`**, so `style-src 'unsafe-inline'` too.
+- Two script origins, not one: **`https://www.googletagmanager.com`** (in 23 files) and
+  **`https://cdnjs.cloudflare.com`** (2 tags in `index.html`, GSAP and ScrollTrigger). The comment names only
+  googletagmanager, so a policy written from it would kill the scroll animation on the home page.
+- Four more origins for the non-script directives: `https://fonts.googleapis.com` (83 `<link>`s),
+  `https://fonts.gstatic.com` (7), `https://cdnjs.cloudflare.com` (6) and
+  `https://cdn.prod.website-files.com` (1). No `<iframe>` anywhere, so `frame-src` needs nothing.
+
+Whether the eight `ld+json` blocks need covering is left open here; they are data blocks that are never
+executed, and this was not tested in a browser.
+
+### 24.7 What this section does not decide
+
+No policy is written. §9 owns hardening, and the three choices this evidence hands it are: `'unsafe-eval'`
+on `/app` versus vendoring Alpine's CSP build (24.3); `'unsafe-inline'` on `style-src` versus 84 markup
+edits (24.5); and where the two `/api/**/print` documents belong (24.5). The comment at `src/app.ts:47-55`
+is left in place and unedited — it describes an intention accurately, and rewriting it to describe the
+absence would lose the design note. What was missing is the record that it is unbuilt, which is this
+section.
+
+### 24.8 Found in passing: `.html` URLs 404 under the Node app, and the spec does not ask them not to
+
+The probe in 24.2 included `/index.html` and `/about-us.html` only to have a public path to read headers
+from. Both returned **404**. Today they do not: `.htaccess:96-99` 301s any `/X.html` to `/X` when `X.html`
+exists in the document root, excluding the Search Console file and the internal directories.
+
+`legacyRedirects()` does not implement that rule, and it is not supposed to. Spec 3.1
+(`NCC_BUILD_SPEC.md:466-477`) lists four redirect rules — strip `.php`, the explicit map, strip a trailing
+slash, force the canonical host — and `src/middleware/legacyRedirects.ts:50-85` implements exactly those
+four, in that order, for the stated reason. The `.html` strip is **absent from the spec**, so the middleware
+is faithful and the gap is between the spec and the live deployment.
+
+The size of it: 24 `.html` files sit at the site root. Ten are the page files behind the ten `PAGES` entries
+in `src/public/pages.ts:19-34`, twelve are error documents, one is the Search Console file (already in
+`NEVER_TOUCH`), one is `login.html`. So on cut-over, eleven URLs that 301 today — the ten page files plus
+`/index.html` → `/` (its own rule, `.htaccess:77`) — would 404 instead, along with any external link or
+indexed result still pointing at one.
+
+Not fixed here, and deliberately not: adding a fifth rule to `legacyRedirects()` would be resolving a
+spec-versus-deployment disagreement silently. `scripts/verify-routes.mjs` asserts the spec's six items, so it
+would not catch this either. Flagged for a decision — the fix is four lines if the answer is "the spec is
+missing a rule".
+
+
+
+
+
+
+
 
 
 
