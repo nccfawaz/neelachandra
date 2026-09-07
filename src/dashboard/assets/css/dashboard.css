@@ -598,13 +598,18 @@ code {
  * The month attendance matrix (spec 1761), and the only client-component styling
  * in the sheet.
  *
- * [x-cloak] belongs to Alpine, not to this screen. Alpine removes the attribute
- * when it initialises a component, so a rule hiding cloaked elements hides them
- * only while Alpine has not run — including forever, on a page with JavaScript
- * off. That is how a paragraph about keyboard shortcuts stays off a page where
- * there are no keyboard shortcuts. It is declared here rather than in a module
- * stylesheet because the second client component will want it too, and a rule
- * nobody can find gets re-declared.
+ * [x-cloak] belongs to Alpine, not to this screen, and nothing in the tree uses
+ * it any more. It is kept declared — and here rather than in a module sheet —
+ * because a rule nobody can find gets re-declared, and because the next client
+ * component will reach for it.
+ *
+ * Read this before reaching for it. Alpine strips x-cloak from a component it
+ * initialises, so the rule hides an element only while Alpine has not run. That   * is correct for JavaScript off and correct for a working page, and wrong for
+   * the state in between: x-cloak's own handler evaluates no expression, so a
+   * policy that blocks Alpine's evaluator leaves the directive working while every
+   * other expression on the element fails. The attendance hint was uncloaked over
+   * a grid where no key did anything. It now ships `hidden` and is revealed by the
+   * component's init(). DECISIONS 24.4.
  */
 
 [x-cloak] {

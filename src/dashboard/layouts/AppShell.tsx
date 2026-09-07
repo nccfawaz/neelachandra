@@ -62,17 +62,23 @@ export function AppShell(props: AppShellProps) {
         />
         <link rel="stylesheet" href="/assets/css/dashboard.css" />
         <script src="/assets/vendor/htmx.min.js" defer></script>
-        <script src="/assets/vendor/alpine.min.js" defer></script>
-        {props.charts ? <script src="/assets/vendor/chart.umd.min.js" defer></script> : null}
-        {/* AFTER Alpine and also deferred, which is load bearing. Deferred
-            scripts run in document order and all of them before
-            DOMContentLoaded, and Alpine starts on DOMContentLoaded -- so a
-            component file listed here is guaranteed to have registered its
-            `alpine:init` listener before Alpine dispatches it. Move either tag
-            off `defer` and the component silently never registers. */}
+        {/* BEFORE Alpine and also deferred, which is load bearing. This build
+            of Alpine does not wait for DOMContentLoaded: its module tail calls
+            `queueMicrotask(() => Alpine.start())`, and a microtask drains
+            between two deferred script tasks -- so Alpine has walked the DOM
+            before the NEXT deferred tag runs. A component script listed after
+            `alpine.min.js` registers its `alpine:init` listener after the event
+            has fired and the component silently never exists; every
+            x-expression on the page warns `... is not defined`. Component
+            scripts come first, then, so their listener is in place before
+            Alpine's own script task runs and dispatches it. Proven in a real
+            browser by tests/e2e/attendance-hint.test.ts, which fails in state 3
+            under the old order. */}
         {(props.clients ?? []).map((name) => (
           <script src={`/assets/js/${name}.js`} defer></script>
         ))}
+        <script src="/assets/vendor/alpine.min.js" defer></script>
+        {props.charts ? <script src="/assets/vendor/chart.umd.min.js" defer></script> : null}
       </head>
       {/* Every htmx request carries the CSRF token as a header, so an hx-post
           with no form fields is still protected (lib/csrf extractToken). */}

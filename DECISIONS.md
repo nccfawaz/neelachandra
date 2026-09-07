@@ -2969,10 +2969,19 @@ takes `clients?: ClientComponent[]`. The reason it is a union and not a string: 
 arbitrary path into a `<script src>`. Adding a component means adding a member there and a file at
 `public/assets/js/<name>.js`, and nothing else.
 
-**Loaded with `defer`, after the vendored Alpine.** `AppShell.tsx:74`. Every deferred script runs before
-`DOMContentLoaded` and Alpine starts on that event, so a component emitted after `alpine.min.js` always
-registers its `alpine:init` listener in time. The file keeps a `window.Alpine` branch anyway
-(`attendance-grid.js:214-220`) for a future page that loads Alpine earlier.
+**Loaded with `defer`, BEFORE the vendored Alpine.** `AppShell.tsx:65-79`. This is a correction, 2026-09-07.
+This paragraph used to say "after" and justify it with "Alpine starts on DOMContentLoaded" — and the
+justification is false for the vendored build: Alpine 3.14.9's module tail is
+`queueMicrotask(() => Alpine.start())`, which runs when its own deferred script task ends, before the next
+deferred tag. A component script listed after `alpine.min.js` therefore registered its `alpine:init`
+listener after Alpine had already dispatched it and walked the DOM; every `x-` expression on the page
+warned `attendanceGrid is not defined` and the component's `init()` never ran. The production attendance
+keyboard layer was dead from the day it shipped, and nothing caught it because no gate ran a browser.
+The order was found inverted by `tests/e2e/attendance-hint.test.ts` state 3 ("init() reveals it"), which
+failed under the old order and passes under this one; the other three states of that file are unchanged.
+The file keeps a `window.Alpine` branch (`attendance-grid.js:214-220`) for a future page that loads
+Alpine earlier — under the current order that branch is unreachable in production, because `window.Alpine`
+is still unset when a component script runs.
 
 **A component ships only to the page that needs it.** The matrix route passes
 `clients: gridEditable ? ['attendance-grid'] : undefined` (`routes.tsx:1554`), so a read-only month, or one

@@ -1303,7 +1303,12 @@ function cellOptions(
  * whole-month read view is the muster roll, which the toolbar links to and which
  * renders one span per cell.
  */
-function AttendanceGrid(props: {
+// Exported for tests/e2e/attendance-hint.test.ts, which renders this component
+// and loads the result in a real browser under a real CSP. Nothing else imports
+// it. Rendering the actual component rather than a copy of its markup is the
+// point: a hand-written fixture would go on passing after somebody changed the
+// attribute this screen's honesty now depends on.
+export function AttendanceGrid(props: {
   csrf: string
   month: string
   page: number
@@ -1452,11 +1457,16 @@ function AttendanceGrid(props: {
       </div>
       {table}
       <MarkLegend keys={true} />
-      {/* `x-cloak` is how a sentence about keyboard shortcuts stays off a page
-          whose script never ran: Alpine removes the attribute on init and the
-          stylesheet hides anything still carrying it. With JavaScript off it is
-          never removed, so the hint never appears and never lies. */}
-      <p class="ncc-hint" x-cloak>
+      {/* Hidden in the HTML and revealed by `init()`, which is the only thing in
+          this page that knows the shortcuts actually got bound. There are three
+          states, not two: script never ran, script ran but Alpine could not
+          evaluate the expressions, and everything worked. `x-cloak` covered the
+          first and third and got the middle one backwards -- its handler
+          evaluates nothing, so Alpine strips it even when `x-data` failed, and
+          the sentence appeared over a grid where no key did anything. See
+          DECISIONS 24.4. `hidden` needs no stylesheet and cannot be removed by
+          anything but the component that implements what it describes. */}
+      <p class="ncc-hint" data-keyboard-hint hidden>
         Arrows move · Enter and Shift+Enter move down and up · Home and End jump to the ends of a row · a
         letter sets the status · Backspace puts a cell back to what was saved.
       </p>

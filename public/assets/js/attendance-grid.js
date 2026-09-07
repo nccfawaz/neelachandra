@@ -61,6 +61,15 @@
             if (self.dirty > 0 && !self.submitting) event.preventDefault()
           }
           window.addEventListener('beforeunload', this.guard)
+
+          // The keyboard hint ships `hidden` and is revealed here, at the one
+          // point in the page that proves the shortcuts are bound. Do not move
+          // this to `x-cloak` or to any other Alpine attribute: a directive that
+          // evaluates nothing still runs when expression evaluation is blocked,
+          // which is how the sentence used to appear over a dead grid. See
+          // DECISIONS 24.4 and the test in tests/e2e/attendance-hint.test.ts.
+          var hint = this.$el.querySelector('[data-keyboard-hint]')
+          if (hint) hint.removeAttribute('hidden')
         },
 
         destroy: function () {
