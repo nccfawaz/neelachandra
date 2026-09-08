@@ -1,9 +1,15 @@
 import { Hono } from 'hono'
-import type { AppEnv } from '../../types.js'
-import { page, banner } from '../../dashboard/render.js'
+import type { Context } from 'hono'
+import type { AppEnv, CurrentUser } from '../../types.js'
+import { currentUser } from '../../types.js'
+import { page, banner, okRedirect, errRedirect } from '../../dashboard/render.js'
 import { Alert, KpiCard, Panel } from '../../dashboard/components/index.js'
 import { requirePermission } from '../../middleware/requirePermission.js'
 import { PERMISSIONS } from '../../lib/permissions.js'
+import { readBody } from '../../middleware/csrf.js'
+import { NotFoundError, isAppError } from '../../lib/errors.js'
+import * as svc from './service.js'
+import { expenseCreateSchema, firstError } from './schemas.js'
 
 /**
  * Finance module routes.
@@ -14,9 +20,35 @@ import { PERMISSIONS } from '../../lib/permissions.js'
  * item names, and reports the real row count from its primary table. That
  * preserves the invariant the navigation depends on: a link the user can see
  * is a link that neither 404s nor 403s.
+ *
+ * Slice 1 adds the expense lifecycle behind those screens: POST the manual
+ * expense form (rule 1: manual only), then approve from the queue (rules 3
+ * and 4). The approval action sits on /api/finance/... and is POST, the same
+ * settlement CRM and HR reached for HTML forms.
  */
 
 const finance = new Hono<AppEnv>()
+
+type Ctx = Context<AppEnv>
+
+function actorOf(c: Ctx): svc.Actor {
+  return { userId: currentUser(c).id, ip: c.get('clientIp') }
+}
+
+function idParam(c: Ctx, name = 'expenseId'): number {
+  const n = Number(c.req.param(name))
+  if (!Number.isInteger(n) || n < 1) throw new NotFoundError('Not found')
+  return n
+}
+
+async function guard(c: Ctx, back: string, run: () => Promise<string>) {
+  try {
+    return okRedirect(c, back, await run())
+  } catch (err) {
+    if (!isAppError(err)) throw err
+    return errRedirect(c, back, err.message)
+  }
+}
 
 finance.get('/app/finance/budgets', requirePermission(PERMISSIONS.FINANCE_VIEW_PROJECT_BUDGET), async (c) => {
   const db = c.get('db')
@@ -141,6 +173,56 @@ finance.get('/app/finance/periods', requirePermission(PERMISSIONS.FINANCE_PERIOD
       </Panel>
     </>
   )
+})
+
+/* Expense lifecycle, slice 1 (rules 1, 3, 4, 7) --------------------------- */
+
+/**
+ * The manual expense form (rule 1).
+ *
+ * Only manual expenses are creatable here: the schema carries no
+ * source_table/source_id fields, so the form cannot claim an upstream
+ * document. The GRN, contractor-bill, equipment and campaign paths write
+ * their own expenses from their own modules.
+ */
+finance.post('/app/finance/expenses', requirePermission(PERMISSIONS.FINANCE_EXPENSE_CREATE), async (c) => {
+  const parsed = expenseCreateSchema.safeParse(await readBody(c))
+  if (!parsed.success) return errRedirect(c, '/app/finance/expenses', firstError(parsed.error))
+
+  return guard(c, '/app/finance/expenses', async () => {
+    const created = await svc.createExpense(c.get('db'), actorOf(c), parsed.data)
+    return `Expense ${created.expenseNo} saved as a draft. Submit it from the expense screen when the details are final.`
+  })
+})
+
+/**
+ * Submits a draft expense to the approval queue.
+ */
+finance.post('/api/finance/expenses/:expenseId/submit', requirePermission(PERMISSIONS.FINANCE_EXPENSE_CREATE), async (c) => {
+  const expenseId = idParam(c)
+  return guard(c, '/app/finance/expenses', async () => {
+    const expenseNo = await svc.submitExpense(c.get('db'), actorOf(c), expenseId)
+    return `${expenseNo} submitted. It shows in the approval queue until somebody holding finance.expense_approve decides it.`
+  })
+})
+
+/**
+ * Approves an expense from the queue (rules 3 and 4).
+ *
+ * The route takes no body: the refusals are all about the row and the actor,
+ * and the service reads roleKeys from the session's effective roles the same
+ * way approvePo does. The user-facing message is whatever the service
+ * returned (approved, awaiting a second signature) or the refusal reason.
+ */
+finance.post('/api/finance/expenses/:expenseId/approve', requirePermission(PERMISSIONS.FINANCE_EXPENSE_APPROVE), async (c) => {
+  const expenseId = idParam(c)
+  return guard(c, '/app/finance/expenses', async () => {
+    const result = await svc.approveExpense(c.get('db'), actorOf(c), expenseId, c.get('roleKeys'))
+    if (result.status === 'awaiting_second_approval') {
+      return `${result.expenseNo} is above the single-approval threshold: the first signature is recorded and a second is required before it can be paid.`
+    }
+    return `${result.expenseNo} approved for ${result.totalPaise} paise. The period lock now guards its date.`
+  })
 })
 
 export default finance
