@@ -73,6 +73,7 @@ const db = getDb()
 const EXPLICIT_CHECKS = [
   'contractor_attendance.chk_ca_quantity',
   'contractor_attendance.chk_ca_work_type',
+  'client_invoices.chk_inv_pos_shape',
   'expenses.chk_exp_source_pair',
 ] as const
 
@@ -275,7 +276,7 @@ describe('the CHECK constraint inventory', () => {
     // TRIPWIRE. A new CHECK in a migration lands here first. Add it to
     // EXPLICIT_CHECKS, then satisfy the IS NOT NULL rule below or record it in
     // PERMISSIVE_OVER_NULL with the reason.
-    expect(explicit).toEqual([...EXPLICIT_CHECKS])
+    expect(explicit).toEqual([...EXPLICIT_CHECKS].sort())
   })
 
   it('accounts for every constraint as either explicit or an auto json_valid', () => {

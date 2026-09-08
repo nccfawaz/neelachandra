@@ -1747,16 +1747,19 @@ contractor attendance row, and what happens to an approved but unbilled one.** T
 no answer here — 18.5 already refuses to touch a billed row and calls it a finance adjustment. Until
 then the gap is stated rather than papered over with a delete route nobody has scoped.
 
-**Added 2026-09-08 — the place of supply, blocking §6.8 rule 5.** There is no place-of-supply field
-anywhere: `client_invoices` has `cgst_paise` and `sgst_paise` and no `igst_paise` and no
-`place_of_supply`, and no other table carries the client's state. Rule 5's "GST split by place of
-supply (intra-Karnataka is CGST plus SGST, inter-state is IGST)" therefore has no source for the
-split. **Current behaviour, for the owner to correct: every invoice is treated as intra-Karnataka
-(CGST plus SGST), because the schema cannot express anything else.** The proposed fix is a
-`place_of_supply` column on `client_invoices`, a required field defaulting to KA, set explicitly
-when a client is outside Karnataka. It is **not** inferred from `projects` or `clients` — inferring
-it would silently mis-split tax for a Karnataka project whose client is registered elsewhere. Rule 5
-cannot be implemented until this is answered.
+**Added 2026-09-08 — the place of supply, blocking §6.8 rule 5. AMENDED 2026-09-08: the column
+now exists** — migration 022 adds `client_invoices.place_of_supply CHAR(2) NOT NULL` with no
+default and a shape CHECK (`chk_inv_pos_shape`, evaluated BINARY so the case-insensitive
+collation cannot admit 'ka' — see 27.4 for the proof), and the three shapes (omission refused,
+invalid code refused, 'KA' admitted) are proven by direct insert in
+tests/integration/place-of-supply.test.ts. **Every row now states KA explicitly**, supplied by
+the application layer when an invoice is created, never inherited from a default. The original
+entry said the field should "default to KA"; a schema default was rejected during
+implementation for the migration-016 reason recorded in 27.4, so the column is NOT NULL with no
+default instead. It is still **not** inferred from `projects` or `clients` — inferring it would
+silently mis-split tax for a Karnataka project whose client is registered elsewhere. The owner
+correction remains open: whether every current client is in fact intra-Karnataka is a business
+fact only they can confirm.
 
 **Added 2026-09-08 — do open site advances also block employee exit?** §6.8 rule 6 says "6.6 rule 7
 already blocks exit while one is open", but that cross-reference is wrong: 6.6 rule 7's exit
@@ -3775,4 +3778,29 @@ dropping the indexes by hand. The DELIMITER limitation itself is also recorded t
 021's triggers are confirmed present and correct as of this session: `SHOW TRIGGERS` lists
 `trg_{expenses,payments,client_invoices}_period_{bi,bu}` — both events, all three tables, six
 triggers calling `refuse_closed_period()`.
+
+### 27.4 `place_of_supply` is NOT NULL with no default; 'KA' is supplied by the application, and the shape CHECK had to be BINARY
+
+Migration 022 adds `client_invoices.place_of_supply CHAR(2) NOT NULL`, **no DEFAULT**, with
+`chk_inv_pos_shape` requiring exactly two upper-case letters. The instruction said "required
+field defaulting to KA"; the default was rejected for the migration-016 reason (CLAUDE.md: a
+sentinel default keeps the sentinel reachable where it would mean something): a `DEFAULT 'KA'
+would make intra-Karnataka the silent answer for every insert that omits the column —
+including the inter-state one — so the GST split would be decided by omission rather than by
+anyone. With no default, omitting the column is refused and each row's split basis is a
+recorded decision. Proven by insert in tests/integration/place-of-supply.test.ts: omission →
+`Field 'place_of_supply' doesn't have a default value`; 'ka' → `chk_inv_pos_shape`; 'KA' →
+admitted and read back.
+
+The first draft of the CHECK used a plain `REGEXP '^[A-Z]{2}$'` and **admitted 'ka'**: MariaDB
+evaluates REGEXP under the column's case-insensitive collation, so `A–Z` matches `a–z` too.
+Proven by insert against the live server before commit — the exact CLAUDE.md prediction that
+the clause reads correctly and the truth lives in three-valued or collation semantics. The
+final clause casts to BINARY (`CAST(place_of_supply AS BINARY) REGEXP '^[A-Z]{2}$'`), which the
+server stores as `cast(\`place_of_supply\` as char charset binary) regexp ...`. The live
+constraint was corrected by dropping and re-adding it, and the schema_migrations checksum was
+recomputed from the final file so the ledger matches what was applied. 'KAR' is refused by
+CHAR(2)'s length check before the CHECK evaluates; 'KA ' stores as 'KA' because CHAR strips
+trailing spaces — standard semantics, recorded rather than papered over. The full GST state-code
+list is deliberately not enumerated: a new code is reference data, not a schema change.
 

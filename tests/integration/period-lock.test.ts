@@ -321,6 +321,7 @@ describe('client_invoices: the lock fires on invoice_date', () => {
         client_id: clientId,
         invoice_date: OPEN_DATE,
         due_date: '2099-01-31',
+        place_of_supply: 'KA',
         created_by: userId,
       })
       .executeTakeFirst()
@@ -337,6 +338,7 @@ describe('client_invoices: the lock fires on invoice_date', () => {
           client_id: clientId,
           invoice_date: CLOSED_DATE,
           due_date: '2099-02-28',
+          place_of_supply: 'KA',
           created_by: userId,
         })
         .execute(),
