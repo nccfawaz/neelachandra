@@ -3551,3 +3551,41 @@ MariaDB branch was not cold-tested on 2026-09-08 (the database was already up);
 the port check and the spawn are the only moving parts in it. MariaDB is never
 torn down by the script, per CLAUDE.md.
 
+### 25.2 The period lock is a date-based trigger, not the spec sketch's "single indexed check"
+
+§6.8 rule 7 says period close "is enforced by a single indexed check" on
+expenses.period_id (NCC_BUILD_SPEC.md:2146-2148). That mechanism cannot hold
+the rule, for two reasons, and the prose itself says the refusal is about the
+date ("any insert or update ... with a date inside it"):
+
+- period_id is stamped on approval, so a DRAFT dated inside a closed period
+  has period_id NULL and sails past any period_id check. The fourth shape in
+  tests/integration/period-lock.test.ts proves it: a draft with NULL period_id
+  dated inside a closed period is refused by the trigger.
+- period_id is NULLable by design, so a CHECK over it admits UNKNOWN.
+
+Per the standing rule that spec prose overrides DDL sketches, the lock is a
+pair of BEFORE INSERT / BEFORE UPDATE triggers on expenses.expense_date,
+payments.payment_date and client_invoices.invoice_date, calling
+refuse_closed_period() against accounting_periods rows whose status is
+'soft_closed' or 'closed'. The lookup is a range scan over
+(status, period_start, period_end), so migration 021 adds
+KEY idx_period_lock (status, period_start, period_end) — the "indexed" part
+of the spec's sketch, on the columns the trigger actually reads. The three
+period_id columns also gain their missing indexes (idx_exp_period,
+idx_pay_period, idx_inv_period); the sketch presupposes an index that no
+migration had created.
+
+All four shapes (open admitted, closed refused with period_id set, update
+into closed refused, NULL-period_id draft refused) plus the soft_closed
+variant are proven by direct insert in tests/integration/period-lock.test.ts
+(9 tests), and 'soft_closed' locking exactly like 'closed' is pinned there.
+
+One operational note: migration 021's first application failed at a
+client-side DELIMITER line (migrate.mjs sends each file as one
+multi-statement query and has no DELIMITER support), leaving the four indexes
+in place and no tracking row. The retry is what forced the ADD INDEX IF NOT
+EXISTS form — on this database idx_exp_period had become the index backing
+fk_exp_period, so the partial state could not be dropped without dropping the
+FK. Fresh databases create all four indexes; the retry skips what exists.
+
