@@ -94,3 +94,52 @@ export function firstError(err: z.ZodError): string {
   const issue = err.issues[0]
   return issue ? issue.message : 'That submission was not valid.'
 }
+
+/* Payments (spec 6.8, slice 2) --------------------------------------------- */
+
+const PAYMENT_MODES = ['bank_transfer', 'neft', 'rtgs', 'imps', 'upi', 'cheque', 'cash', 'card', 'adjustment'] as const
+
+export const paymentCreateSchema = z.object({
+  paymentDate: requiredDate,
+  direction: z.enum(['outgoing', 'incoming']),
+  mode: z.enum(PAYMENT_MODES),
+  amountPaise: rupeesToPaise,
+  payeeOrPayer: z.string().trim().min(1, 'Name the payee or payer.').max(180),
+  bankAccountId: optionalId,
+  referenceNo: optionalText(60),
+  narration: optionalText(300),
+  // Allocations are optional at creation: an unallocated payment is a real
+  // thing (an advance against future bills) and the allocator screen exists
+  // to settle them later.
+  allocations: z
+    .array(
+      z.object({
+        documentType: z.enum(['expense', 'contractor_bill', 'client_invoice', 'advance']),
+        documentId: z.string().transform((v) => {
+          const n = Number.parseInt(v, 10)
+          return Number.isInteger(n) && n > 0 ? n : Number.NaN
+        }),
+        allocatedPaise: rupeesToPaise,
+      })
+    )
+    .max(50, 'One payment can carry at most 50 allocations.'),
+})
+
+export type PaymentCreateInput = z.infer<typeof paymentCreateSchema>
+
+export const paymentAllocateSchema = z.object({
+  allocations: z
+    .array(
+      z.object({
+        documentType: z.enum(['expense', 'contractor_bill', 'client_invoice', 'advance']),
+        documentId: z.string().transform((v) => {
+          const n = Number.parseInt(v, 10)
+          return Number.isInteger(n) && n > 0 ? n : Number.NaN
+        }),
+        allocatedPaise: rupeesToPaise,
+      })
+    )
+    .min(1, 'Name at least one document to allocate against.'),
+})
+
+export type PaymentAllocateInput = z.infer<typeof paymentAllocateSchema>

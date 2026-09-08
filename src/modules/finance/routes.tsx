@@ -9,7 +9,7 @@ import { PERMISSIONS } from '../../lib/permissions.js'
 import { readBody } from '../../middleware/csrf.js'
 import { NotFoundError, isAppError } from '../../lib/errors.js'
 import * as svc from './service.js'
-import { expenseCreateSchema, firstError } from './schemas.js'
+import { expenseCreateSchema, firstError, paymentCreateSchema, paymentAllocateSchema } from './schemas.js'
 
 /**
  * Finance module routes.
@@ -222,6 +222,35 @@ finance.post('/api/finance/expenses/:expenseId/approve', requirePermission(PERMI
       return `${result.expenseNo} is above the single-approval threshold: the first signature is recorded and a second is required before it can be paid.`
     }
     return `${result.expenseNo} approved for ${result.totalPaise} paise. The period lock now guards its date.`
+  })
+})
+
+/* Payments, slice 2 ------------------------------------------------------- */
+
+/**
+ * Records a payment, optionally with its first allocations.
+ */
+finance.post('/app/finance/payments', requirePermission(PERMISSIONS.FINANCE_PAYMENT_RECORD), async (c) => {
+  const parsed = paymentCreateSchema.safeParse(await readBody(c))
+  if (!parsed.success) return errRedirect(c, '/app/finance/payments', firstError(parsed.error))
+
+  return guard(c, '/app/finance/payments', async () => {
+    const created = await svc.createPayment(c.get('db'), actorOf(c), parsed.data)
+    return `Payment ${created.paymentNo} recorded for ${created.amountPaise} paise. The period lock now guards its date.`
+  })
+})
+
+/**
+ * Allocates an existing recorded payment against documents.
+ */
+finance.post('/api/finance/payments/:paymentId/allocate', requirePermission(PERMISSIONS.FINANCE_PAYMENT_RECORD), async (c) => {
+  const paymentId = idParam(c, 'paymentId')
+  const parsed = paymentAllocateSchema.safeParse(await readBody(c))
+  if (!parsed.success) return errRedirect(c, '/app/finance/payments', firstError(parsed.error))
+
+  return guard(c, '/app/finance/payments', async () => {
+    const result = await svc.allocatePayment(c.get('db'), actorOf(c), paymentId, parsed.data)
+    return `${result.paymentNo}: ${result.allocatedCount} allocation${result.allocatedCount === 1 ? '' : 's'} recorded. paid_paise on each expense moved by exactly the allocated figure.`
   })
 })
 
