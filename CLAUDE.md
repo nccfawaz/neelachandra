@@ -175,6 +175,22 @@ something (016: `''` on a day row, `chk_ca_work_type`). Or add a CHECK beside th
 for the shape an index cannot express (015). Prefer the first: it needs no second
 constraint to stay true.
 
+**SUM over zero rows is NULL, not 0 — and an aggregate feeding arithmetic is the
+shape where it bites.** `SUM(x)` with no rows under it returns NULL; only
+`COUNT` returns 0. The instance: §6.8 rule 2's two views (migration 020)
+aggregate committed and actual cost per project per cost head, and the prose
+specifies the variance as `budget - (committed + actual)`. Without a COALESCE,
+a project with no POs and no expenses makes every derived figure NULL — not
+zero, and not an error, just a blank where a number was expected, silently,
+on every report the views feed. The rule: **an aggregate whose result feeds
+arithmetic or a NOT NULL expectation is wrapped in COALESCE at the point of
+aggregation, and the zero-rows case is proven by evaluating the aggregate
+expression against an empty set — not by reading the definition.**
+`tests/integration/finance-views.test.ts` ("SUM over zero rows is 0, not
+NULL") runs `select coalesce(sum(amount_paise), 0)` against a non-matching
+`expense_id` and asserts `not.toBeNull()` and `0`, which is the evaluation
+shape the CHECK-tripwire section asks for, applied to aggregates.
+
 ## A tripwire on a constraint's shape has to evaluate the clause, not match its text
 
 **MariaDB stores a CHECK re-rendered from its parse tree, so the clause you wrote is not

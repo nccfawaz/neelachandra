@@ -1750,6 +1750,22 @@ export interface UsersTable {
   updated_at: SqlDateGen
 }
 
+// The two §6.8 rule 2 views (migration 020). The aggregates are COALESCEd to
+// 0 in the view, so the sums are never NULL; the Generated<> wrappers remain
+// because views report no insertability and Kysely's generator cannot know
+// the column is nullable in name only.
+export interface VProjectActualTable {
+  project_id: Generated<number | null>
+  cost_head_id: number
+  actual_paise: Generated<number>
+}
+
+export interface VProjectCommittedTable {
+  project_id: Generated<number | null>
+  cost_head_id: Generated<number | null>
+  committed_paise: Generated<number>
+}
+
 export interface VendorItemRatesTable {
   id: Generated<number>
   vendor_id: number
@@ -1899,6 +1915,8 @@ export interface Database {
   user_roles: UserRolesTable
   user_sessions: UserSessionsTable
   users: UsersTable
+  v_project_actual: VProjectActualTable
+  v_project_committed: VProjectCommittedTable
   vendor_item_rates: VendorItemRatesTable
   vendors: VendorsTable
 }
