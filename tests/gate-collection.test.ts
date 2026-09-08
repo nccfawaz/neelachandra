@@ -117,6 +117,23 @@ describe('the gate collects every test file it claims', () => {
       for (const cfg of CONFIGS) {
         const claimed = onDisk.filter((f) => claimedBy(cfg, f))
         const collected = await collectedFiles(cfg.config)
+        // The non-zero floors (DECISIONS 28.1): an empty claimed set or an
+        // empty collected set makes the missing-comparison below vacuously
+        // true, and the first draft of this test passed green for exactly
+        // that reason while a file was excluded. The floor on `collected`
+        // also catches the npx-vitest-list-exits-0-on-env-failure shape —
+        // error output parses to zero files and the tripwire would otherwise
+        // report a missing set the size of everything.
+        expect(
+          claimed,
+          `${cfg.config}'s include/exclude globs claim zero test files — the glob ` +
+            `mapping is broken and the comparison below would be vacuous. See DECISIONS 28.1.`
+        ).not.toHaveLength(0)
+        expect(
+          collected,
+          `${cfg.config}'s vitest list returned zero test files — the lister failed ` +
+            `without a non-zero exit, and the comparison below would be vacuous. See DECISIONS 28.1.`
+        ).not.toHaveLength(0)
         const missing = claimed.filter((f) => !collected.has(f))
         expect(
           missing,

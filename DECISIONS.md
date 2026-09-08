@@ -3819,3 +3819,46 @@ CHAR(2)'s length check before the CHECK evaluates; 'KA ' stores as 'KA' because 
 trailing spaces — standard semantics, recorded rather than papered over. The full GST state-code
 list is deliberately not enumerated: a new code is reference data, not a schema change.
 
+
+## 28. The empty-green sweep, migration immutability, and the rename, 2026-09-08
+
+### 28.1 Every tripwire that enumerates now refuses to pass on an empty enumeration
+
+The sweep named in CLAUDE.md's new section, run per instruction by forcing each enumeration
+empty and watching the result rather than reasoning from the code. The five subjects:
+
+- **`tests/gate-collection.test.ts`** — enumerates the `*.test.ts` files on disk and the files
+  `npx vitest list` collects, per config. **Was vacuous once** (27.1: the glob bug made
+  `claimed` empty and it stayed green). Now carries a floor on **both** sets: `claimed` (the
+  glob mapping is broken) and `collected` (the lister failed without a non-zero exit — the
+  env-validation shape). Proven by the watched failure in 27.1 and re-proven green with the
+  floors in place.
+- **`tests/integration/schema-constraints.test.ts`** (CHECK inventory and AUTO_JSON_CHECKS) —
+  enumerates `information_schema.check_constraints`. **Already had floors** in `beforeAll`
+  (`no CHECK constraints found -- did the migrations run?`); re-proven by forcing `checks = []`
+  and watching the suite fail loudly at the floor, 16 skipped.
+- **`tests/integration/json-columns.test.ts`** — enumerates `json_valid` CHECK constraints and
+  compares against `JSON_COLUMNS`. **Fails loudly on empty** (the mismatch fires), but the
+  message names the wrong thing — it says the registry is wrong when the query found nothing.
+  Proven by appending `and 1 = 0` to the query: `expected [] to deeply equal [...12 entries]`.
+  The floor added names the real failure: a zero-row enumeration is a query or schema problem,
+  not a registry mismatch.
+- **The `purchase_orders.status` ENUM tripwire in `tests/integration/finance-views.test.ts`** —
+  enumerates ENUM members from `information_schema.columns`. **Fails loudly on empty** two ways
+  (zero rows → `res.rows[0]!` throws; zero parsed members → mismatch with the expected list).
+  Floors added anyway so the failure names the cause instead of implying the ENUM changed.
+- **The `.htaccess` parity suite (`scripts/test-htaccess.mjs`) and the parity self-test
+  (`scripts/selftest-parity.mjs`)** — both assert pass/fail counts and **both could exit 0
+  having run nothing**: test-htaccess against an unreachable server died in a fetch stack trace
+  (exit 1, but by accident of the throw, and a future try/catch around a section would have
+  made it 0/0/exit-0), selftest-parity against a missing `legacy/golden/` would enumerate no
+  mutations. test-htaccess now probes reachability first and exits 1 with a message (proven
+  against `http://127.0.0.1:9`); both now refuse 0-passed-0-failed (selftest proven by moving
+  `legacy/golden` away: exit 1, restored: exit 0, 20 passed).
+
+**Score: none of the five was vacuous at its enumeration source as it stood today** — one had
+been vacuous before 27.1 fixed it, one already carried floors, and the other three fail on
+empty input. The floors added are for the secondary shapes: an enumeration that fails without
+erroring (json-columns, test-htaccess reachability) or an empty collected set (gate-collection),
+where the failure message now names the actual cause. CLAUDE.md's new section states the
+pattern: assert a non-zero floor on the enumeration before comparing sets.

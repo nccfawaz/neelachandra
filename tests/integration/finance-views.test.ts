@@ -373,7 +373,21 @@ describe('tripwire: purchase_orders.status members', () => {
         and table_name = 'purchase_orders'
         and column_name = 'status'
     `.execute(db)
+    // The non-zero floor (DECISIONS 28.1): a query that returns zero rows —
+    // wrong table name, wrong database — would make `members` empty, and
+    // empty.sort() does not equal the expected list, so this one fails loudly
+    // anyway. The floor names the actual failure instead of implying the ENUM
+    // gained or lost a member.
+    expect(
+      res.rows,
+      'no purchase_orders.status row in information_schema — wrong table or wrong database. See DECISIONS 28.1.'
+    ).not.toHaveLength(0)
     const members = (res.rows[0]!.column_type.match(/'([^']+)'/g) ?? []).map((m) => m.slice(1, -1))
+    expect(
+      members,
+      "the ENUM's column_type parsed to zero members — the regex no longer matches " +
+        "what information_schema returns. See DECISIONS 28.1."
+    ).not.toHaveLength(0)
     // The view's filter names two of these. A new member is a new kind of
     // committed-or-not state and this failure is the instruction to decide
     // which side of the filter it belongs on before anything reads the view.

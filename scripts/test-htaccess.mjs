@@ -51,6 +51,19 @@ function loc (l) {
 async function main () {
   console.log(`Base: ${BASE}\n`)
 
+  // Reachability gate (DECISIONS 28.1): an unreachable server makes every
+  // fetch throw before a single check() runs, which the catch below turns
+  // into exit 1 — but only because the throw happens here. If the sections
+  // ever become skippable (a try/catch around a section), 0 passed 0 failed
+  // would exit 0 without this floor.
+  try {
+    const probe = await fetch(BASE + '/', { method: 'GET', redirect: 'manual', headers: HEADERS })
+    console.log(`Server answered with ${probe.status} for the reachability probe.`)
+  } catch (e) {
+    console.error(`Server at ${BASE} is unreachable: ${e.message}`)
+    process.exit(1)
+  }
+
   console.log('1. Pages resolve at their clean extensionless URL')
   for (const p of ['/', '/about-us', '/contact-us', '/terms', '/privacy-policy',
     '/construction-services-in-bengaluru', '/construction-packages-in-bengaluru',
@@ -188,6 +201,13 @@ async function main () {
   }
 
   console.log(`\n  ${pass} passed, ${fail} failed`)
+  // The non-zero floor (DECISIONS 28.1): a suite whose server is unreachable
+  // or whose sections all skip would report 0 passed, 0 failed and exit 0 —
+  // the empty-green shape. A parity suite that ran nothing is not a pass.
+  if (pass === 0) {
+    console.error('\nNo assertions ran. The server at ' + BASE + ' is unreachable or the suite failed to enumerate its cases.')
+    process.exit(1)
+  }
   if (fail) {
     console.log('\nFailures:')
     for (const f of failures) console.log('  - ' + f)

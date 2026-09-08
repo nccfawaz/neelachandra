@@ -93,6 +93,16 @@ describe('the JSON column registry, against information_schema', () => {
       })
       .sort()
 
+    // The non-zero floor (DECISIONS 28.1): the probe `and 1 = 0` appended to
+    // this query made `declared` empty and this comparison fail — which is
+    // loud, but names the wrong thing ("the registry is wrong") rather than
+    // "the enumeration found nothing". The floor names the actual failure: an
+    // empty enumeration is a query or schema problem, not a registry mismatch.
+    expect(
+      declared,
+      'no json_valid CHECK constraints found — the query returned zero rows, ' +
+        'which is a wrong-database or wrong-filter problem, not a registry mismatch. See DECISIONS 28.1.'
+    ).not.toHaveLength(0)
     expect(declared).toEqual([...JSON_COLUMNS])
   })
 

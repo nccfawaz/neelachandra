@@ -237,7 +237,9 @@ beforeAll(async () => {
   )
 
   // Loud rather than a silent zero: every assertion below is over these two
-  // sets, and an empty set makes all of them pass.
+  // sets, and an empty set makes all of them pass. The floors are the
+  // DECISIONS 28.1 pattern applied at the enumeration point, before any
+  // comparison can see empty input.
   expect(checks.length, 'no CHECK constraints found -- did the migrations run?').toBeGreaterThan(0)
   expect(nullable.size, 'no columns found -- wrong database?').toBeGreaterThan(100)
 

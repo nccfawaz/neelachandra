@@ -140,6 +140,13 @@ for (const mut of MUTATIONS) {
 }
 
 console.log(`\n  ${pass} passed, ${fail} failed\n`)
+// The non-zero floor (DECISIONS 28.1): a golden directory that is missing or
+// empty would make the mutation loop enumerate nothing — 0 passed, 0 failed —
+// and exit 0. A self-test that ran no mutation is not a pass.
+if (pass === 0 && fail === 0) {
+  console.error('No mutations ran — the golden masters under legacy/golden/ are missing or empty. See DECISIONS 28.1.')
+  process.exit(1)
+}
 if (fail) {
   console.log('  The gate does not behave as specified. Fix it before trusting it.\n')
   process.exit(1)
