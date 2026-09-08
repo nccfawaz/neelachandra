@@ -3477,3 +3477,27 @@ missing a rule".
 
 
 
+## 25. Local tooling, 2026-09-08
+
+### 25.1 `npm run dev` did not load `.env`, and the stack now has one command
+
+`package.json` shipped `"dev": "tsx watch src/server.ts"`. On this machine's tsx
+version that command boots the server with **no environment loaded at all**: the
+process died with eight variables reported "Required" — `DB_HOST`, `DB_USER`,
+`DB_PASSWORD`, `DB_NAME`, `SESSION_SECRET`, `CRON_SECRET`, `INDEXNOW_KEY`,
+`APP_BASE_URL` — while a complete `.env` sat at the project root. The scripts
+(`migrate.mjs`, etc.) call `process.loadEnvFile()` themselves; the server relied
+on tsx picking the file up, and this tsx version does not.
+
+Fixed by carrying the flag on the script itself: `"dev": "tsx watch
+--env-file=.env src/server.ts"`. Proven by a real boot: `PORT=3000 npm run dev`
+now prints `[ncc] listening on http://0.0.0.0:3000 (development)` where it
+previously died in `src/env.ts:63`.
+
+The stack also has one command now: `npm run dev:stack` →
+`node scripts/dev-stack.mjs`, which starts MariaDB on 3307 when nothing is
+listening there, then the dev server in the foreground with `.env` loaded. The
+MariaDB branch was not cold-tested on 2026-09-08 (the database was already up);
+the port check and the spawn are the only moving parts in it. MariaDB is never
+torn down by the script, per CLAUDE.md.
+
