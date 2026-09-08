@@ -236,3 +236,48 @@ one test, watch it go red *for the stated reason*, swap it forward. 019's failed
 `expected null to be +0`, which is the disjunct returning UNKNOWN. A tripwire nobody has
 watched fail is a green of the kind the first section of this file is about.
 
+## A tripwire that enumerates its subject must refuse to pass on an empty enumeration
+
+**An enumeration over zero rows makes every set comparison vacuously true, and the tripwire
+go green while asserting nothing.** Three instances, all found on 2026-09-08 in one sweep
+(DECISIONS 28.1):
+
+- `tests/gate-collection.test.ts`'s first glob-to-regex turned a double-star glob into a regex
+  that required a slash, so the *claimed* set was **empty for every config** and the
+  not-collected comparison passed against nothing — it stayed green with a file excluded.
+- `npx vitest list`, run outside the suite's own environment, **fails environment validation
+  and exits 0** (the empty-green of the first section of this file, wearing a subcommand).
+  Any tripwire that parses its output gets empty input and the same vacuous pass.
+- The general shape: `expect(missing).toEqual([])` where `missing = claimed.filter(...)` is
+  the assertion; make `claimed` empty and it is true of every subject in the world.
+
+The first instance passed *with the defect in place* and was caught only by watching it fail —
+reading it found nothing, because each line is individually correct.
+
+The rule: **before comparing an enumerated set against anything, assert a non-zero floor on
+the enumeration itself** — `expect(claimed.length).toBeGreaterThan(0)` (or the expected
+minimum for that subject) before the comparison runs. The floor turns an empty enumeration
+into a red test naming the empty source, instead of a green test that compared nothing. The
+floor is not decoration either: assert the smallest number that would make the comparison
+meaningful, and make a future reader able to tell an empty source from a legitimately small
+one by the failure message.
+
+## A CHECK clause's text is not even its own truth: collation joins the list
+
+Beside the CHECK_CLAUSE normalisation note above: **the clause you can read is not the clause
+the server evaluates, for reasons that have nothing to do with NULL or parenthesis
+normalisation.** Migration 022's `chk_inv_pos_shape` was written `place_of_supply REGEXP
+'^[A-Z]{2}$'` — read correctly, stored verbatim (modulo the usual backquoting) — and **admitted
+'ka'**, because MariaDB evaluates REGEXP under the column's case-insensitive collation, where
+`A–Z` matches `a–z` too. Proven by insert against the live server on 2026-09-08 before commit
+(the first draft shipped the hole); the fix is `CAST(place_of_supply AS BINARY) REGEXP ...`,
+which the server stores as `cast(\`place_of_supply\` as char charset binary) regexp ...`.
+
+This is the first case where the clause's **appearance** and its **evaluation** diverge for a
+reason other than normalisation: 019's stored clause is a re-rendering of the same parse tree,
+but this one evaluates differently from what any rendering says. The rule extends accordingly:
+**a character-class or string-comparison constraint is proven against the live server with a
+case-flipped probe, not just a shape probe** — `'ka'` and `'KA'`, not only `'KAR'` and `'KA '`.
+The three-valued-logic section covers UNKNOWN; the parenthesisation section covers re-rendering;
+this covers the collation the comparison inherits from a column it never mentions.
+
