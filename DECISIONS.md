@@ -3751,3 +3751,28 @@ the limit check and then trip the budget, the order becomes user-visible, and th
 be asked which refusal a supervisor who trips both ought to see first. No behaviour change is
 recorded here.
 
+### 27.3 The migration runner cannot mark a partial apply as done — proven, and the failure mode it does have is the documented one
+
+`scripts/migrate.mjs` wraps each file in a `START TRANSACTION` … `COMMIT` that also writes the
+`schema_migrations` row, and on any error it rolls back and **exits 1 without writing the ledger
+row**. A file that fails partway is therefore never recorded as applied — a half-applied
+migration cannot be silently marked done, which is the integrity property that matters.
+
+Proven on 2026-09-08 with a throwaway `022_probe_partial_apply.sql` whose first statement
+created a table and whose second failed (`Unknown column 'nonexistent_column' in 'INSERT
+INTO'`): the runner printed `Failed applying 022_probe_partial_apply.sql`, exited 1, the table
+**existed** afterwards, and `schema_migrations` held **no row** for the file. The probe was then
+dropped and the ledger verified clean (`Up to date. 21 migration files, none pending.`).
+
+The failure mode the runner does have is the one its own header documents: MariaDB commits DDL
+implicitly, so the statements before the failing one survive the rollback, and the next run
+fails on them by name — the loudest possible outcome, naming the exact object to drop before
+retrying. That is the deliberate trade, not a defect to fix: silent partial application with a
+tracking row would be worse. It already fired once for real — 021's first application left four
+indexes and no tracking row when it died at a DELIMITER line (25.2), and the recovery was
+dropping the indexes by hand. The DELIMITER limitation itself is also recorded there.
+
+021's triggers are confirmed present and correct as of this session: `SHOW TRIGGERS` lists
+`trg_{expenses,payments,client_invoices}_period_{bi,bu}` — both events, all three tables, six
+triggers calling `refuse_closed_period()`.
+
