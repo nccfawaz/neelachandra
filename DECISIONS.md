@@ -2508,6 +2508,21 @@ Fixed by pointing the header at `tests/middleware/legacy-redirects.test.ts`, whi
 assert every rule; the phantom script is not written, because a verifier that duplicates the suite would
 be a second implementation of the same assertions with nothing to add.
 
+**An eighth, added 2026-09-08: a naming instance.** `formatPaise` in `src/lib/money.ts:44` takes paise
+and returns **rupees** rendered as `"12,34,567.00"` — the name says what it takes, the docstring says
+what it does, and the output is a rupee figure with no currency marker (the templates supply "Rs").
+The name is not wrong enough to break anything, but it collides with the sibling `formatRupees`
+(`money.ts:49`), which also takes paise and returns `"Rs 12,34,567.00"` — two paise-taking functions,
+one named for paise and one for rupees, distinguished only by whether the string carries the symbol.
+A caller who guesses from the names will feed rupees to one of them.
+
+**Recorded, not renamed: the count is a slice.** 38 occurrences across 8 `src/` files plus 10 in
+`tests/money.test.ts` (counted 2026-09-08), every one a mechanical rename except the judgement call
+about whether `formatPaiseCompact` joins it (`formatInrCompact`? `formatRupeesCompact`?). No formatting
+changes — the outputs are pinned by tests/money.test.ts:78-84 and none of them move. Renaming is
+its own slice so that a rename diff touches only names and a formatting diff touches only formats,
+never both in one commit.
+
 ## 21. Preconditions and conflicts carried out of slice 6, 2026-09-05
 
 Not a list of choices. Most entries here are a **precondition on work that has not started**, and the rest
