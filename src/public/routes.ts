@@ -6,6 +6,7 @@ import { submitEnquiry } from './enquiry.js'
 import { readBody } from '../middleware/csrf.js'
 import { getSetting } from '../lib/settings.js'
 import { PAGES, pageFileFor, INFRA_PATHS } from './pages.js'
+import { BUILT } from '../middleware/errorHandler.js'
 
 /**
  * The public marketing site (spec 3.2, phase 1).
@@ -88,6 +89,34 @@ for (const file of [
 ]) {
   publicSite.get(file, async (c) => {
     const found = await serve(c, file, ASSET_CACHE)
+    return found ?? c.notFound()
+  })
+}
+
+/* The twelve error documents ---------------------------------------------- */
+
+// Served at their extensionless URL, as the ErrorDocument lines in .htaccess
+// name them, from the same built files the error handler reads. They are
+// real URLs — scripts/test-htaccess.mjs section 10 asserts GET /400..504 ->
+// 200 — and the extension stripper redirects /400.html onto /400, so the
+// target must exist.
+for (const code of BUILT) {
+  publicSite.get(`/${code}`, async (c) => {
+    const found = await serve(c, `/${code}.html`, ASSET_CACHE)
+    return found ?? c.notFound()
+  })
+}
+
+/* The twelve error documents ---------------------------------------------- */
+
+// Served at their extensionless URL, as the ErrorDocument lines in .htaccess
+// name them, from the same built files the error handler reads. They are
+// real URLs — scripts/test-htaccess.mjs section 10 asserts GET /400..504 ->
+// 200 — and the extension stripper redirects /400.html onto /400, so the
+// target must exist.
+for (const code of BUILT) {
+  publicSite.get(`/${code}`, async (c) => {
+    const found = await serve(c, `/${code}.html`, ASSET_CACHE)
     return found ?? c.notFound()
   })
 }

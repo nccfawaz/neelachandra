@@ -2472,6 +2472,19 @@ the blocking list rather than in this triage is that **if it is wrong the error 
 approved, the attendance row says the person was present, and payroll sees both. Same conversation as the
 quotas, and the same answer decides both.
 
+**A seventh, found 2026-09-08: the sweep could not have caught it, because it searched for rule numbers,
+not filenames.** `src/middleware/legacyRedirects.ts` carried a header citing `scripts/verify-routes.mjs` as
+the verifier that asserts every redirect rule. That script has **never existed** in the tree — spec 3.1
+names it in the same sentence that lists the rules, and the middleware quoted the spec's own citation, which
+is exactly the failure mode of the fabricated spec quotation at `crm/service.ts:2337` (a citation to a
+source that is not there, read as authoritative because it is plausible).
+
+The citation had no number in it, so the 20.3 grep — which searched for rule numbers — walked past it. The
+same is true of any sweep keyed on the shape of the citation rather than on the existence of its referent.
+Fixed by pointing the header at `tests/middleware/legacy-redirects.test.ts`, which does exist and does
+assert every rule; the phantom script is not written, because a verifier that duplicates the suite would
+be a second implementation of the same assertions with nothing to add.
+
 ## 21. Preconditions and conflicts carried out of slice 6, 2026-09-05
 
 Not a list of choices. Most entries here are a **precondition on work that has not started**, and the rest
@@ -3461,10 +3474,47 @@ in `src/public/pages.ts:19-34`, twelve are error documents, one is the Search Co
 `/index.html` → `/` (its own rule, `.htaccess:77`) — would 404 instead, along with any external link or
 indexed result still pointing at one.
 
-Not fixed here, and deliberately not: adding a fifth rule to `legacyRedirects()` would be resolving a
-spec-versus-deployment disagreement silently. `scripts/verify-routes.mjs` asserts the spec's six items, so it
-would not catch this either. Flagged for a decision — the fix is four lines if the answer is "the spec is
-missing a rule".
+**Closed 2026-09-08: ported.** The owner decided to port it — the spec is short a rule, the live site's
+behaviour wins, and TOLERANCE 0 plus §3's parity premise both point the same way. The grep asked for
+settled it further: `scripts/test-htaccess.mjs` section 2 **already asserts the strip** (`/about-us.html` →
+`/about-us`, `/login.html` → `/login`, `/index.html` → `/`, `/index.php` → `/`, each 301 in one hop), so
+`legacyRedirects()` was the divergence, not the suite, and §24.8's "the spec is silent" framing was the
+wrong emphasis — the live behaviour was asserted all along.
+
+What landed:
+
+1. **The fifth rule** in `legacyRedirects()`, ported from `.htaccess` section 4 with its `-f` guard intact:
+   strip `.html`/`.htm` only where the clean URL has a page behind it, with targets derived from `PAGES`
+   plus `/login` plus the twelve `BUILT` error codes from `errorHandler.ts` — not a filesystem probe. Same
+   exclusions as `.htaccess`: Search Console file, `.well-known/`, protected directories.
+2. **`/index.*` → `/`**, covering every extension, which also fixed the dead `/index.php` → `/index`
+   redirect (the `.php` strip previously sent index to a route that does not exist — `.htaccess:77` sends
+   it to `/`).
+3. **The twelve error documents became real URLs.** The strip guard's targets must exist, and they did
+   not: `/400` … `/504` 404'd under the Node app while `test-htaccess.mjs` section 10 asserts they 200.
+   `public/routes.ts` now serves each from the built file, so `/400.html` → `/400` → 200, matching Apache.
+4. **`tests/middleware/legacy-redirects.test.ts`** — 29 assertions pinning every rule against a real Hono
+   app, mirroring the `test-htaccess.mjs` sections. There were no tests for this middleware before.
+
+Verified: typecheck 0 errors (71 `src/` files), unit 314 passed across 11 files (+29 new), integration 224
+passed, and a live probe against the running server matches `.htaccess` on every case — pages and error
+docs 301 to their clean URL, `/index.*` lands on `/`, `header.php` still strips (404 from routing),
+`/header.html` and `/legacy/golden/home.html` stay 404.
+
+**Still open, recorded not fixed:** `.htaccess` section 6 also maps `/home` → `/`, `/privacy` →
+`/privacy-policy` and `/index` → `/`; all three 404 under the Node app. `/index` is now moot (the index
+rule sends `/index.*` to `/`), but `/home` and `/privacy` are the same shape of gap this entry closed, and
+this entry's decision does not automatically cover them. Flagged for the same call.
+
+**Closed 2026-09-08: section 6 ported too, on the same decision.** `/home` → `/`, `/privacy` →
+`/privacy-policy` and the bare `/index` → `/` joined `LEGACY_MAP`, with the map's header comment naming
+which entries are spec 3.1 rule 2 and which are the port. The section-6 rules carry `/?$`, so the slash
+forms (`/home/`, `/privacy/`) 301 as well — Apache reaches the destination in two hops there (its own
+trailing-slash rule strips, then the map fires), and the Node app now does the same two hops.
+Held in place by `tests/middleware/legacy-redirects.test.ts`: the "sections 4 and 6" describe block asserts
+all seven map entries (34 assertions in the file, up from 29), including the two-hop slash forms. Live
+probe on 2026-09-08: `/home` → `/`, `/privacy` → `/privacy-policy`, `/index` → `/`, all 301; `/home/` →
+`/home` then `/`.
 
 
 

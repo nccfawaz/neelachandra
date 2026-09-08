@@ -43,8 +43,10 @@ export const ERROR_COPY: Record<number, { title: string; body: string }> = {
 }
 
 // Codes that have a pre-built static page at the web root. The others fall
-// back to the nearest built page so the chrome is still correct.
-const BUILT = new Set([400, 401, 403, 404, 405, 408, 410, 429, 500, 502, 503, 504])
+// back to the nearest built page so the chrome is still correct. Exported
+// because legacyRedirects derives its strip targets from the same set — the
+// twelve codes are real URLs, not just handler codes.
+export const BUILT = new Set([400, 401, 403, 404, 405, 408, 410, 429, 500, 502, 503, 504])
 const SUBSTITUTE: Record<number, number> = { 409: 400, 422: 400 }
 
 const SITE_ROOT = process.env.NCC_SITE_ROOT ?? process.cwd()
