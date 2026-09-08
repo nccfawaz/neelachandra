@@ -1747,6 +1747,26 @@ contractor attendance row, and what happens to an approved but unbilled one.** T
 no answer here — 18.5 already refuses to touch a billed row and calls it a finance adjustment. Until
 then the gap is stated rather than papered over with a delete route nobody has scoped.
 
+**Added 2026-09-08 — the place of supply, blocking §6.8 rule 5.** There is no place-of-supply field
+anywhere: `client_invoices` has `cgst_paise` and `sgst_paise` and no `igst_paise` and no
+`place_of_supply`, and no other table carries the client's state. Rule 5's "GST split by place of
+supply (intra-Karnataka is CGST plus SGST, inter-state is IGST)" therefore has no source for the
+split. **Current behaviour, for the owner to correct: every invoice is treated as intra-Karnataka
+(CGST plus SGST), because the schema cannot express anything else.** The proposed fix is a
+`place_of_supply` column on `client_invoices`, a required field defaulting to KA, set explicitly
+when a client is outside Karnataka. It is **not** inferred from `projects` or `clients` — inferring
+it would silently mis-split tax for a Karnataka project whose client is registered elsewhere. Rule 5
+cannot be implemented until this is answered.
+
+**Added 2026-09-08 — do open site advances also block employee exit?** §6.8 rule 6 says "6.6 rule 7
+already blocks exit while one is open", but that cross-reference is wrong: 6.6 rule 7's exit
+blockers read `payee_type = 'employee'` expenses and attendance, not imprest advances — see 26.5.
+An employee holding an open site advance can exit today with no blocker raised for it. The question
+is whether an open advance should block exit the way an unsettled store issue does, or whether an
+exit with an open advance is a finance matter (the advance is recovered from the final payment)
+rather than an HR one. It joins rate precedence and the stuck clerk as a §6.8 question only the
+owner can answer.
+
 ## 18. HR, third slice: contractor labour and bills, 2026-09-05
 
 Four files in the projects pattern — `queries.ts`, `schemas.ts`, `service.ts`, `routes.tsx` — plus
@@ -3588,4 +3608,81 @@ in place and no tracking row. The retry is what forced the ADD INDEX IF NOT
 EXISTS form — on this database idx_exp_period had become the index backing
 fk_exp_period, so the partial state could not be dropped without dropping the
 FK. Fresh databases create all four indexes; the retry skips what exists.
+
+## 26. Finance decisions recorded without implementation, 2026-09-08
+
+### 26.1 `site_advances` and `budget_alerts` are deferred to finance slice 3
+
+§6.8 names both tables — `site_advances` for rule 6, `budget_alerts` for the budget cron — and
+neither exists in any migration (verified against all of `migrations/` on 2026-09-08). They are
+deferred to slice 3, when rules 6 and the budget-overrun cron land together.
+
+Two consequences are stated now so the placeholder screens cannot drift into implying them:
+
+- The finance routes mount **no advances screen and no alerts screen** — the mounted screens are
+  budgets, expenses, invoices, payments and periods, and their placeholder copy says only that the
+  data model is migrated. Nothing in `src/modules/finance/routes.tsx` implies rule 6 or the budget
+  cron.
+- The cron has a single finance-adjacent job, `/stock-alerts`, and **no budget-threshold job**.
+  Nothing references `budget_alerts` or any threshold setting, so there is no silent failure to
+  repair — the deferred work is absent, not broken.
+
+### 26.2 MSME rule 8 refuses a NULL `bill_date`, it does not age from a fallback
+
+Rule 8's payables ageing flags an MSME-vendor expense approaching 45 days from `bill_date`. When
+`bill_date` is NULL, the refusal is to treat the expense as not yet ageable — the report simply
+cannot say when the 45 days started — rather than to age from `expense_date`. **Rejected
+alternative, logged: `COALESCE(bill_date, expense_date)`.** A vendor's bill date and the expense's
+recorded date are different facts (a bill dated 1 June entered on 20 June), and ageing from the
+later date understates statutory interest exposure for exactly the vendors the rule exists to
+protect. The refusal is the honest behaviour: an MSME expense without a bill date is a data gap,
+not a date.
+
+### 26.3 `paid_paise` has a single writer, stated now and enforced when payments land
+
+`expenses.paid_paise` is written by exactly one code path — the payment allocator — and never
+recomputed from `payments` rows on read. The rule is stated now so slice 2's payment code is
+written to it, and enforced then by a reconciliation test asserting
+`SUM(payment_allocations.amount_paise)` equals `expenses.paid_paise` per expense. A second writer
+would make the column disagree with its own allocation rows, and a read-time recomputation would
+move the truth out of the row the voucher screens show.
+
+### 26.4 `retention_pct` is read from `project_milestones`
+
+Rule 5's "deducts `retention_pct`" reads the percentage from the milestone row being invoiced
+(`project_milestones.retention_pct`), not from a project or client default. A milestone is a
+contractual promise about a specific payment, and the invoice is built from that milestone; a
+default elsewhere would let a client-level change silently rewrite the deduction on an invoice
+already sent.
+
+### 26.5 §6.8's cross-reference to 6.6 rule 7 is wrong
+
+Rule 6 claims "6.6 rule 7 already blocks exit while one is open". It does not: 6.6 rule 7's exit
+blockers read `payee_type = 'employee'` expenses and attendance rows — see `exitBlockers` in
+`src/modules/hr/queries.ts` — and nothing in it reads imprest advances. The claim is the same
+failure class as the fabricated spec quotation in `crm/service.ts:2337`: a citation to a rule that
+says something else. The consequence is an owner question, added to §17.3: whether an open site
+advance should block employee exit at all.
+
+### 26.6 Rule 10's margin visibility: existing permissions, no new one invented
+
+Rule 10 says margin is "visible only to `owner` and `accounts_manager`". The existing permission
+list already carries two candidates, and no new permission is added:
+
+- `finance.view_company_pnl` — narrow, finance-module, already the natural home for margin.
+- `projects.view_cost` — broader: contract values, budgets and margin together.
+
+`finance.view_company_pnl` is the candidate `getProjectMargin` should be gated by, and
+`projects.view_cost` is the one to check before rendering margin on any project page. Whichever
+wins, the check is against the existing list — inventing a `finance.view_margin` would duplicate
+the grant and leave the two permissions to drift apart.
+
+### 26.7 `idx_inv_due` and the other 009 supersets are sketch-drift, not conflicts
+
+§6.8's tables block names `KEY idx_inv_due (due_date)` and the other index shapes in the 009
+sketch; the migration on disk carries `idx_inv_due (due_date)` plus additional keys the sketch
+omits (`idx_exp_period`, `idx_pay_period`, `idx_inv_period` — added properly by 021 — and the
+composite `idx_exp_project (project_id, status)` where the sketch shows a single column). The
+sketch is a diagram, 009 is the schema, and per the standing rule prose overrides DDL sketches;
+the supersets are recorded here as drift, not as disagreements to reconcile.
 
