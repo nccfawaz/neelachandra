@@ -9,7 +9,7 @@ import { parseJsonColumnArray } from '../../lib/json.js'
 import { PERMISSIONS, resolveApprovalLimit } from '../../lib/permissions.js'
 import { notify, notifyPermission, usersWithPermission } from '../../lib/notify.js'
 import { quoteEmail, send } from '../../lib/mailer.js'
-import { formatPaise, splitGst } from '../../lib/money.js'
+import { formatPaiseAsRupees, splitGst } from '../../lib/money.js'
 import { addDays, daysBetween, formatDate, nowSqlDateTime, today } from '../../lib/dates.js'
 import { getSetting } from '../../lib/settings.js'
 import {
@@ -1168,7 +1168,7 @@ export async function completeVisit(
         occurred_at: input.visitedAt,
         outcome: input.feasibility === 'not_feasible' ? 'negative' : 'positive',
         summary: `Site visit: ${input.feasibility.replace(/_/g, ' ')}${
-          input.estimatedExtraCostPaise ? `, extras ${formatPaise(input.estimatedExtraCostPaise)}` : ''
+          input.estimatedExtraCostPaise ? `, extras ${formatPaiseAsRupees(input.estimatedExtraCostPaise)}` : ''
         }${input.conditionsNotes ? ` — ${input.conditionsNotes}` : ''}`.slice(0, 500),
         created_by: actor.userId,
       })
@@ -1730,8 +1730,8 @@ export async function submitQuote(
       title: `Quote ${quote.quote_no} rev ${quote.revision} needs a discount approval`,
       body:
         limit === null
-          ? `${discountPct}% discount on ${formatPaise(totalPaise)}. No discount ceiling is set for the submitter's role.`
-          : `${discountPct}% discount on ${formatPaise(totalPaise)} is above the ${Number(limit.maxValue) / 100}% ceiling for ${limit.roleKey}.`,
+          ? `${discountPct}% discount on ${formatPaiseAsRupees(totalPaise)}. No discount ceiling is set for the submitter's role.`
+          : `${discountPct}% discount on ${formatPaiseAsRupees(totalPaise)} is above the ${Number(limit.maxValue) / 100}% ceiling for ${limit.roleKey}.`,
       linkPath: `/app/crm/quotes/${quoteId}`,
       severity: 'warn',
     })
@@ -1830,7 +1830,7 @@ export async function approveQuote(
       exceptUserId: actor.userId,
       kind: 'quote_approved',
       title: `Quote ${quote.quote_no} rev ${quote.revision} approved`,
-      body: `${Number(quote.discount_pct)}% discount cleared. ${formatPaise(Number(quote.total_paise))} can be sent.`,
+      body: `${Number(quote.discount_pct)}% discount cleared. ${formatPaiseAsRupees(Number(quote.total_paise))} can be sent.`,
       linkPath: `/app/crm/quotes/${quoteId}`,
     })
 
@@ -2002,7 +2002,7 @@ export async function sendQuote(
       .values({
         lead_id: lead.id,
         activity_type: 'quote_sent',
-        summary: `Quote ${quote.quote_no} rev ${quote.revision} sent: ${formatPaise(Number(quote.total_paise))} including GST, valid until ${quote.valid_until}.`.slice(0, 500),
+        summary: `Quote ${quote.quote_no} rev ${quote.revision} sent: ${formatPaiseAsRupees(Number(quote.total_paise))} including GST, valid until ${quote.valid_until}.`.slice(0, 500),
         outcome: 'positive',
         occurred_at: now,
         created_by: actor.userId,
@@ -2060,7 +2060,7 @@ export async function sendQuote(
     contactName: prepared.contactName,
     quoteNo: prepared.quoteNo,
     revision: prepared.revision,
-    totalLabel: formatPaise(prepared.totalPaise),
+    totalLabel: formatPaiseAsRupees(prepared.totalPaise),
     validUntil: formatDate(prepared.validUntil),
     link: `${env.APP_BASE_URL}/api/crm/quotes/${quoteId}/print`,
     senderName: sender?.full_name ?? 'Neelachandra Construction and Interiors',
@@ -2191,7 +2191,7 @@ export async function acceptQuote(
       actorId: actor.userId,
       kind: 'quote_accepted',
       title: `Quote ${quote.quote_no} accepted — ready to convert`,
-      body: `${formatPaise(Number(quote.total_paise))} including GST. Converting opens the project, its stages and its site store.`,
+      body: `${formatPaiseAsRupees(Number(quote.total_paise))} including GST. Converting opens the project, its stages and its site store.`,
       linkPath: `/app/crm/leads/${leadId}`,
     })
 
@@ -2785,7 +2785,7 @@ export async function convertLeadToProject(
       actorId: actor.userId,
       kind: 'project_from_lead',
       title: `Project ${projectCode} opened from lead ${lead.lead_no}`,
-      body: `${lead.contact_name}, ${lead.site_locality ?? lead.site_city}. ${formatPaise(contractValuePaise)} contract value, ${stageCount} stages, ${schedule.length} payment milestones.`,
+      body: `${lead.contact_name}, ${lead.site_locality ?? lead.site_city}. ${formatPaiseAsRupees(contractValuePaise)} contract value, ${stageCount} stages, ${schedule.length} payment milestones.`,
       linkPath: `/app/projects/${projectId}`,
     })
 
@@ -3166,7 +3166,7 @@ async function notifyPerAssignee(
     // they are the one who set the validity date and know what it was for.
     const owner = quote.assigned_to === null ? Number(quote.created_by) : Number(quote.assigned_to)
     bucket(owner).quotes.push(
-      `${quote.quote_no} rev ${quote.revision} for ${quote.contact_name}, ${formatPaise(Number(quote.total_paise))}, expires ${quote.valid_until}`
+      `${quote.quote_no} rev ${quote.revision} for ${quote.contact_name}, ${formatPaiseAsRupees(Number(quote.total_paise))}, expires ${quote.valid_until}`
     )
   }
 

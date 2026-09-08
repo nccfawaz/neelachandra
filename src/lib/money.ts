@@ -40,15 +40,15 @@ const inrFormatter = new Intl.NumberFormat('en-IN', {
 })
 
 /** "12,34,567.00". No currency symbol, the template supplies "Rs". */
-export function formatPaise(paise: number | null | undefined): string {
+export function formatPaiseAsRupees(paise: number | null | undefined): string {
   if (paise === null || paise === undefined) return ''
   return inrFormatter.format(paiseToRupees(Number(paise)))
 }
 
 /** "Rs 12,34,567.00", the form used in tables and on printed documents. */
-export function formatRupees(paise: number | null | undefined): string {
+export function formatPaiseAsRupeesWithRs(paise: number | null | undefined): string {
   if (paise === null || paise === undefined) return ''
-  return `Rs ${formatPaise(paise)}`
+  return `Rs ${formatPaiseAsRupees(paise)}`
 }
 
 /**
@@ -56,7 +56,7 @@ export function formatRupees(paise: number | null | undefined): string {
  * Crore and lakh are the units this business actually speaks in; a contract
  * value printed as 12,400,000 is harder to read at a glance than 1.24 Cr.
  */
-export function formatPaiseCompact(paise: number | null | undefined): string {
+export function formatPaiseAsRupeesCompact(paise: number | null | undefined): string {
   if (paise === null || paise === undefined) return ''
   const rupees = paiseToRupees(Number(paise))
   const abs = Math.abs(rupees)

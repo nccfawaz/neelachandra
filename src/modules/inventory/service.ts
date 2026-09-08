@@ -8,7 +8,7 @@ import { ConflictError, NotFoundError, UnprocessableError } from '../../lib/erro
 import { PERMISSIONS, resolveApprovalLimit } from '../../lib/permissions.js'
 import { notify, notifyPermission } from '../../lib/notify.js'
 import type { ScopeContext } from '../../lib/scope.js'
-import { formatPaise, splitGst, variancePct } from '../../lib/money.js'
+import { formatPaiseAsRupees, splitGst, variancePct } from '../../lib/money.js'
 import { addDays, formatDate, nowSqlDateTime, today } from '../../lib/dates.js'
 import { batchBalances, equipmentDue, expiringBatches, lowStock } from './queries.js'
 import type {
@@ -1294,7 +1294,7 @@ export async function submitPo(db: Db, actor: Actor, poId: number): Promise<void
       actorId: actor.userId,
       kind: 'po_pending_approval',
       title: `Purchase order ${po.po_no} needs approval`,
-      body: `${formatPaise(Number(po.total_paise))} to approve.`,
+      body: `${formatPaiseAsRupees(Number(po.total_paise))} to approve.`,
       linkPath: `/app/inventory/po/${poId}`,
       severity: 'info',
     })
@@ -1373,7 +1373,7 @@ export async function approvePo(db: Db, actor: Actor, poId: number, roleKeys: re
     }
     if (total > limit.maxValue) {
       throw new UnprocessableError(
-        `${formatPaise(total)} is above your approval limit of ${formatPaise(limit.maxValue)}. This needs someone with a higher limit.`
+        `${formatPaiseAsRupees(total)} is above your approval limit of ${formatPaiseAsRupees(limit.maxValue)}. This needs someone with a higher limit.`
       )
     }
 
@@ -1392,7 +1392,7 @@ export async function approvePo(db: Db, actor: Actor, poId: number, roleKeys: re
         actorId: actor.userId,
         kind: 'po_second_approval',
         title: `Purchase order ${po.po_no} needs a second approval`,
-        body: `${formatPaise(total)} is above the ${formatPaise(limit.requiresSecondApprovalAbove!)} single-approval threshold.`,
+        body: `${formatPaiseAsRupees(total)} is above the ${formatPaiseAsRupees(limit.requiresSecondApprovalAbove!)} single-approval threshold.`,
         linkPath: `/app/inventory/po/${poId}`,
         severity: 'warn',
       })
@@ -1431,7 +1431,7 @@ export async function approvePo(db: Db, actor: Actor, poId: number, roleKeys: re
       exceptUserId: actor.userId,
       kind: 'po_approved',
       title: `Purchase order ${po.po_no} approved`,
-      body: `${formatPaise(total)} approved. You can send it to the vendor.`,
+      body: `${formatPaiseAsRupees(total)} approved. You can send it to the vendor.`,
       linkPath: `/app/inventory/po/${poId}`,
       severity: 'info',
     })
@@ -2662,7 +2662,7 @@ export async function postAdjustment(db: Db, actor: Actor, input: AdjustmentInpu
             : `Physical count short at ${location.name}`,
         body: `${shrink
           .map((l) => `${l.itemCode} ${l.itemName} short ${qty(-l.qtyDiff)} ${l.unit}`)
-          .join('; ')}. ${formatPaise(Math.abs(netValuePaise))} at the store's average rate. ${input.narration}`,
+          .join('; ')}. ${formatPaiseAsRupees(Math.abs(netValuePaise))} at the store's average rate. ${input.narration}`,
         linkPath: `/app/inventory/adjustments/${adjustmentId}`,
         severity: 'critical',
       })

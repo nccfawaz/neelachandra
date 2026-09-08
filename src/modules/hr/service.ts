@@ -4,7 +4,7 @@ import { writeAudit } from '../../lib/audit.js'
 import { nextNumber, sequenceCode } from '../../lib/numbering.js'
 import { ConflictError, ForbiddenError, NotFoundError, UnprocessableError } from '../../lib/errors.js'
 import { resolveApprovalLimit } from '../../lib/permissions.js'
-import { applyPct, formatPaise, roundPaise } from '../../lib/money.js'
+import { applyPct, formatPaiseAsRupees, roundPaise } from '../../lib/money.js'
 import {
   addDays,
   datesBetween,
@@ -2393,7 +2393,7 @@ export async function generateContractorBill(
 
     if (netPayablePaise < 0) {
       throw new UnprocessableError(
-        `The deductions come to more than the bill: ${formatPaise(grossPaise)} gross against ${formatPaise(input.advanceRecovered + retentionPaise + tdsPaise + input.penalty)} of advance, retention, TDS and penalty. A bill cannot be negative -- recover the balance on the next one.`
+        `The deductions come to more than the bill: ${formatPaiseAsRupees(grossPaise)} gross against ${formatPaiseAsRupees(input.advanceRecovered + retentionPaise + tdsPaise + input.penalty)} of advance, retention, TDS and penalty. A bill cannot be negative -- recover the balance on the next one.`
       )
     }
 
@@ -2566,7 +2566,7 @@ export async function approveContractorBill(
     }
     if (gross > limit.maxValue) {
       throw new UnprocessableError(
-        `${formatPaise(gross)} is above your approval limit of ${formatPaise(limit.maxValue)}. This needs someone with a higher limit.`
+        `${formatPaiseAsRupees(gross)} is above your approval limit of ${formatPaiseAsRupees(limit.maxValue)}. This needs someone with a higher limit.`
       )
     }
     if (limit.requiresSecondApprovalAbove !== null && gross > limit.requiresSecondApprovalAbove) {
@@ -2579,7 +2579,7 @@ export async function approveContractorBill(
       // the two-signature path `approvePo` already runs in
       // inventory/service.ts. Unreachable until 8.2 fills `approval_limits`.
       throw new UnprocessableError(
-        `${formatPaise(gross)} is above the ${formatPaise(limit.requiresSecondApprovalAbove)} single-approval threshold for your role, and contractor_bills has no column for a second approval. This bill cannot be approved until that is added.`
+        `${formatPaiseAsRupees(gross)} is above the ${formatPaiseAsRupees(limit.requiresSecondApprovalAbove)} single-approval threshold for your role, and contractor_bills has no column for a second approval. This bill cannot be approved until that is added.`
       )
     }
 

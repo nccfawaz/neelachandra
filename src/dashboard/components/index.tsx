@@ -1,5 +1,5 @@
 import type { Child } from 'hono/jsx'
-import { formatRupees, formatPaiseCompact } from '../../lib/money.js'
+import { formatPaiseAsRupeesWithRs, formatPaiseAsRupeesCompact } from '../../lib/money.js'
 import { formatDate, formatDateTime } from '../../lib/dates.js'
 
 /**
@@ -21,7 +21,7 @@ export function Money(props: { paise: number | null | undefined; compact?: boole
   if (props.hidden) return <span class="ncc-muted">restricted</span>
   if (props.paise === null || props.paise === undefined) return <span class="ncc-muted">-</span>
   return (
-    <span class="ncc-num">{props.compact ? formatPaiseCompact(props.paise) : formatRupees(props.paise)}</span>
+    <span class="ncc-num">{props.compact ? formatPaiseAsRupeesCompact(props.paise) : formatPaiseAsRupeesWithRs(props.paise)}</span>
   )
 }
 

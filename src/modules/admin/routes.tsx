@@ -20,7 +20,7 @@ import { readBody } from '../../middleware/csrf.js'
 import { NotFoundError } from '../../lib/errors.js'
 import { parseJsonColumn } from '../../lib/json.js'
 import { formatDate, formatDateTime } from '../../lib/dates.js'
-import { formatPaise } from '../../lib/money.js'
+import { formatPaiseAsRupees } from '../../lib/money.js'
 import { allSettings } from '../../lib/settings.js'
 import * as q from './queries.js'
 import * as svc from './service.js'
@@ -570,7 +570,7 @@ admin.get('/app/admin/approval-limits', requirePermission(PERMISSIONS.ROLES_MANA
               cell: (row) =>
                 row.document_type === 'quote_discount_pct'
                   ? `${Number(row.max_value) / 100}%`
-                  : formatPaise(Number(row.max_value)),
+                  : formatPaiseAsRupees(Number(row.max_value)),
             },
             {
               header: 'Second approver above',
@@ -579,7 +579,7 @@ admin.get('/app/admin/approval-limits', requirePermission(PERMISSIONS.ROLES_MANA
                 row.requires_second_approval_above === null ? (
                   <span class="ncc-muted">Never</span>
                 ) : (
-                  formatPaise(Number(row.requires_second_approval_above))
+                  formatPaiseAsRupees(Number(row.requires_second_approval_above))
                 ),
             },
             { header: 'Effective from', cell: (row) => formatDate(row.effective_from) },

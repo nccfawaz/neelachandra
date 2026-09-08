@@ -241,7 +241,7 @@ describe('rule 4: budget overrun blocks approval at the cost-head level', () => 
       if (err instanceof Error && err.message === 'expected the overrun approval to be refused') throw err
       expect(err).toBeInstanceOf(UnprocessableError)
       expect(String((err as Error).message)).toContain('over by')
-      // formatPaise renders rupees: 6,00,000 paise is 60,000.00.
+      // formatPaiseAsRupees renders rupees: 6,00,000 paise is 60,000.00.
       expect(String((err as Error).message)).toContain('60,000.00')
       expect(String((err as Error).message)).toContain('over by 11,000.00')
       // Refusal ordering (DECISIONS 27.2): this request trips BOTH shapes —

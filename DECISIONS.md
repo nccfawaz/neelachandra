@@ -2516,12 +2516,15 @@ The name is not wrong enough to break anything, but it collides with the sibling
 one named for paise and one for rupees, distinguished only by whether the string carries the symbol.
 A caller who guesses from the names will feed rupees to one of them.
 
-**Recorded, not renamed: the count is a slice.** 38 occurrences across 8 `src/` files plus 10 in
-`tests/money.test.ts` (counted 2026-09-08), every one a mechanical rename except the judgement call
-about whether `formatPaiseCompact` joins it (`formatInrCompact`? `formatRupeesCompact`?). No formatting
-changes — the outputs are pinned by tests/money.test.ts:78-84 and none of them move. Renaming is
-its own slice so that a rename diff touches only names and a formatting diff touches only formats,
-never both in one commit.
+**Renamed 2026-09-08, closing the instance.** Every paise-taking formatter now states input and
+output: `formatPaise` → `formatPaiseAsRupees`, `formatRupees` → `formatPaiseAsRupeesWithRs` (it takes
+paise too, so its name carried the same defect), `formatPaiseCompact` → `formatPaiseAsRupeesCompact`.
+48 occurrences across 8 `src/` files, `tests/money.test.ts` and the finance-approval comment updated in
+one mechanical diff; `formatPaiseAsRupeesWithRs` keeps the distinct role of the symbol-bearing form.
+Rendered output asserted unchanged: unit 320/12 and integration 259/12 identical before and after, with
+tests/money.test.ts (22 tests) pinning every format string. No live defect found: every call site
+passes a `*_paise` column or paise-named variable; the only `paiseToRupees` uses outside money.ts
+(crm/routes.tsx:671, :1905) genuinely convert to rupees for number inputs.
 
 ## 21. Preconditions and conflicts carried out of slice 6, 2026-09-05
 

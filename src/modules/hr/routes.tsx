@@ -23,7 +23,7 @@ import { requirePermission, requireAllPermissions } from '../../middleware/requi
 import { PERMISSIONS } from '../../lib/permissions.js'
 import { readBody } from '../../middleware/csrf.js'
 import { NotFoundError, isAppError } from '../../lib/errors.js'
-import { formatPaise } from '../../lib/money.js'
+import { formatPaiseAsRupees } from '../../lib/money.js'
 import {
   datesBetween,
   financialYear,
@@ -3772,7 +3772,7 @@ hr.post('/api/hr/contractor-bills/generate', requirePermission(PERMISSIONS.HR_LA
   return guard(c, back, async () => {
     const r = await svc.generateContractorBill(c.get('db'), actorOf(c), parsed.data)
     const warn = r.noPan ? ' The contractor has no PAN on file; 206AA is not applied.' : ''
-    return `${r.billNo} raised from ${r.rows} approved row${r.rows === 1 ? '' : 's'} over ${r.days} day${r.days === 1 ? '' : 's'}: gross ${formatPaise(r.grossPaise)}, net payable ${formatPaise(r.netPayablePaise)} after ${r.retentionBp / 100}% retention and ${r.tdsBp / 100}% TDS.${warn}`
+    return `${r.billNo} raised from ${r.rows} approved row${r.rows === 1 ? '' : 's'} over ${r.days} day${r.days === 1 ? '' : 's'}: gross ${formatPaiseAsRupees(r.grossPaise)}, net payable ${formatPaiseAsRupees(r.netPayablePaise)} after ${r.retentionBp / 100}% retention and ${r.tdsBp / 100}% TDS.${warn}`
   })
 })
 
@@ -3784,7 +3784,7 @@ hr.post(
     const back = `/app/hr/contractor-bills/${billId}`
     return guard(c, back, async () => {
       const r = await svc.approveContractorBill(c.get('db'), actorOf(c), billId, c.get('roleKeys'))
-      return `${r.billNo} approved as ${r.limitRoleKey}: gross ${formatPaise(r.grossPaise)}, net payable ${formatPaise(r.netPayablePaise)}. It does not reach finance until the finance link is built.`
+      return `${r.billNo} approved as ${r.limitRoleKey}: gross ${formatPaiseAsRupees(r.grossPaise)}, net payable ${formatPaiseAsRupees(r.netPayablePaise)}. It does not reach finance until the finance link is built.`
     })
   }
 )

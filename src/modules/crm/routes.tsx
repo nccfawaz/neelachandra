@@ -29,7 +29,7 @@ import { PERMISSIONS } from '../../lib/permissions.js'
 import { readBody } from '../../middleware/csrf.js'
 import { NotFoundError, isAppError } from '../../lib/errors.js'
 import { parseJsonColumnArray } from '../../lib/json.js'
-import { formatRupees, paiseToRupees } from '../../lib/money.js'
+import { formatPaiseAsRupeesWithRs, paiseToRupees } from '../../lib/money.js'
 import { addDays, financialYear, financialYearBounds, formatDate, nowSqlDateTime, today } from '../../lib/dates.js'
 import { getSetting } from '../../lib/settings.js'
 import * as q from './queries.js'
@@ -2165,7 +2165,7 @@ crm.post('/app/crm/quotes', requirePermission(PERMISSIONS.CRM_QUOTE_CREATE), asy
     const created = await svc.createQuote(c.get('db'), actorOf(c), parsed.data)
     return {
       to: `/app/crm/quotes/${created.quoteId}`,
-      message: `${created.quoteNo} drafted at ${formatRupees(created.totals.totalPaise)}.`,
+      message: `${created.quoteNo} drafted at ${formatPaiseAsRupeesWithRs(created.totals.totalPaise)}.`,
     }
   })
 })
@@ -2440,7 +2440,7 @@ crm.post('/api/crm/quotes/:id/submit', requirePermission(PERMISSIONS.CRM_QUOTE_C
   const back = `/app/crm/quotes/${quoteId}`
   return guard(c, back, async () => {
     const out = await svc.submitQuote(c.get('db'), actorOf(c), quoteId, c.get('roleKeys'))
-    if (out.status === 'approved') return `${out.quoteNo} approved at ${formatRupees(out.totalPaise)}.`
+    if (out.status === 'approved') return `${out.quoteNo} approved at ${formatPaiseAsRupeesWithRs(out.totalPaise)}.`
     return out.limitBps === null
       ? `${out.quoteNo} escalated: no discount limit is configured for your roles, so every discount needs a decision.`
       : `${out.quoteNo} escalated: ${out.discountPct}% is above your ${out.limitBps / 100}% limit.`
@@ -2478,7 +2478,7 @@ crm.post('/api/crm/quotes/:id/approve', requirePermission(...QUOTE_APPROVE), asy
 
   return guard(c, back, async () => {
     const out = await svc.approveQuote(c.get('db'), actorOf(c), quoteId)
-    return `${out.quoteNo} r${out.revision} approved at ${formatRupees(out.totalPaise)}.`
+    return `${out.quoteNo} r${out.revision} approved at ${formatPaiseAsRupeesWithRs(out.totalPaise)}.`
   })
 })
 
@@ -2540,7 +2540,7 @@ crm.post('/api/crm/quotes/:id/revise', requirePermission(PERMISSIONS.CRM_QUOTE_C
     const out = await svc.reviseQuote(c.get('db'), actorOf(c), quoteId, parsed.data)
     return {
       to: `/app/crm/quotes/${out.quoteId}`,
-      message: `${out.quoteNo} revision ${out.revision} drafted at ${formatRupees(out.totals.totalPaise)}.`,
+      message: `${out.quoteNo} revision ${out.revision} drafted at ${formatPaiseAsRupeesWithRs(out.totals.totalPaise)}.`,
     }
   })
 })
@@ -2625,7 +2625,7 @@ crm.get('/api/crm/quotes/:id/print', requirePermission(...QUOTE_READ), async (c)
     .split('\n')
     .map((s) => s.trim())
     .filter((s) => s !== '')
-  const money = (paise: unknown) => (value ? formatRupees(Number(paise)) : 'restricted')
+  const money = (paise: unknown) => (value ? formatPaiseAsRupeesWithRs(Number(paise)) : 'restricted')
   const site = [quote.site_locality, quote.site_city].filter(Boolean).join(', ')
   const issued = quote.status === 'sent' || quote.status === 'viewed' || quote.status === 'accepted'
 

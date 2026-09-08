@@ -24,7 +24,7 @@ import { requirePermission } from '../../middleware/requirePermission.js'
 import { PERMISSIONS } from '../../lib/permissions.js'
 import { readBody } from '../../middleware/csrf.js'
 import { NotFoundError } from '../../lib/errors.js'
-import { formatRupees } from '../../lib/money.js'
+import { formatPaiseAsRupeesWithRs } from '../../lib/money.js'
 import { addDays, daysBetween, formatDate, today } from '../../lib/dates.js'
 import { getSetting } from '../../lib/settings.js'
 import * as q from './queries.js'
@@ -1703,8 +1703,8 @@ inventory.post('/api/po/:poId/approve', requirePermission(PERMISSIONS.INVENTORY_
   const result = await svc.approvePo(c.get('db'), actorOf(c), poId, c.get('roleKeys'))
   const message =
     result.status === 'approved'
-      ? `${result.poNo} approved at ${formatRupees(result.totalPaise)}.`
-      : `${result.poNo} needs a second approval at ${formatRupees(result.totalPaise)}. Your signature is recorded.`
+      ? `${result.poNo} approved at ${formatPaiseAsRupeesWithRs(result.totalPaise)}.`
+      : `${result.poNo} needs a second approval at ${formatPaiseAsRupeesWithRs(result.totalPaise)}. Your signature is recorded.`
   return okRedirect(c, `/app/inventory/po/${poId}`, message)
 })
 
@@ -1861,9 +1861,9 @@ inventory.get('/api/po/:poId/print', requirePermission(PERMISSIONS.INVENTORY_VIE
                 <td>{l.hsn_code ?? ''}</td>
                 <td class="num">{Number(l.qty_ordered)}</td>
                 <td>{l.unit_code}</td>
-                {rates ? <td class="num">{formatRupees(paiseOf(l, 'rate_paise') ?? 0)}</td> : null}
+                {rates ? <td class="num">{formatPaiseAsRupeesWithRs(paiseOf(l, 'rate_paise') ?? 0)}</td> : null}
                 <td class="num">{Number(l.gst_pct)}</td>
-                {rates ? <td class="num">{formatRupees(paiseOf(l, 'line_total_paise') ?? 0)}</td> : null}
+                {rates ? <td class="num">{formatPaiseAsRupeesWithRs(paiseOf(l, 'line_total_paise') ?? 0)}</td> : null}
               </tr>
             ))}
           </tbody>
@@ -1874,19 +1874,19 @@ inventory.get('/api/po/:poId/print', requirePermission(PERMISSIONS.INVENTORY_VIE
             <tbody>
               <tr>
                 <th>Subtotal</th>
-                <td class="num">{formatRupees(paiseOf(po, 'subtotal_paise') ?? 0)}</td>
+                <td class="num">{formatPaiseAsRupeesWithRs(paiseOf(po, 'subtotal_paise') ?? 0)}</td>
               </tr>
               <tr>
                 <th>GST</th>
-                <td class="num">{formatRupees(paiseOf(po, 'gst_paise') ?? 0)}</td>
+                <td class="num">{formatPaiseAsRupeesWithRs(paiseOf(po, 'gst_paise') ?? 0)}</td>
               </tr>
               <tr>
                 <th>Freight</th>
-                <td class="num">{formatRupees(paiseOf(po, 'freight_paise') ?? 0)}</td>
+                <td class="num">{formatPaiseAsRupeesWithRs(paiseOf(po, 'freight_paise') ?? 0)}</td>
               </tr>
               <tr class="grand">
                 <th>Total</th>
-                <td class="num">{formatRupees(paiseOf(po, 'total_paise') ?? 0)}</td>
+                <td class="num">{formatPaiseAsRupeesWithRs(paiseOf(po, 'total_paise') ?? 0)}</td>
               </tr>
             </tbody>
           </table>
@@ -3171,7 +3171,7 @@ inventory.post('/app/inventory/adjustments', requirePermission(PERMISSIONS.INVEN
       ? `${result.lines.length} line${result.lines.length === 1 ? '' : 's'} counted. Everything agrees with the system, so no stock entry was written.`
       : `${changed.length} of ${result.lines.length} lines differed: ` +
         changed.map((l) => `${l.itemCode} ${l.qtyDiff > 0 ? '+' : ''}${l.qtyDiff} ${l.unit}`).join(', ') +
-        `. Net effect ${formatRupees(result.netValuePaise)} at the store's average rate.`
+        `. Net effect ${formatPaiseAsRupeesWithRs(result.netValuePaise)} at the store's average rate.`
 
   return okRedirect(c, `/app/inventory/adjustments/${result.adjustmentId}`, message)
 })
@@ -4155,7 +4155,7 @@ inventory.post('/api/equipment/:equipmentId/return', requirePermission(PERMISSIO
     // Reported, not posted: equipment_deployments.expense_id stays null until
     // finance links it, so the figure here is a number to check an invoice
     // against rather than a booked cost.
-    parts.push(`Hire works out at ${formatRupees(result.hireCostPaise)}, which is not yet booked as an expense.`)
+    parts.push(`Hire works out at ${formatPaiseAsRupeesWithRs(result.hireCostPaise)}, which is not yet booked as an expense.`)
   }
   return okRedirect(c, back, parts.join(' '))
 })

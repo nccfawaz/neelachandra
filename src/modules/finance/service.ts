@@ -5,7 +5,7 @@ import { writeAudit } from '../../lib/audit.js'
 import { nextNumber } from '../../lib/numbering.js'
 import { ConflictError, ForbiddenError, NotFoundError, UnprocessableError } from '../../lib/errors.js'
 import { resolveApprovalLimit } from '../../lib/permissions.js'
-import { formatPaise } from '../../lib/money.js'
+import { formatPaiseAsRupees } from '../../lib/money.js'
 import { nowSqlDateTime, today } from '../../lib/dates.js'
 import { costHeadStates, periodForDate } from './queries.js'
 import type { ExpenseCreateInput, PaymentAllocateInput, PaymentCreateInput } from './schemas.js'
@@ -257,7 +257,7 @@ export async function approveExpense(
     }
     if (total > limit.maxValue) {
       throw new UnprocessableError(
-        `${formatPaise(total)} is above your approval limit of ${formatPaise(limit.maxValue)}. This needs someone with a higher limit.`
+        `${formatPaiseAsRupees(total)} is above your approval limit of ${formatPaiseAsRupees(limit.maxValue)}. This needs someone with a higher limit.`
       )
     }
 
@@ -280,9 +280,9 @@ export async function approveExpense(
           const overrun = projected - state.budgetPaise
           throw new UnprocessableError(
             `Approving this expense would push cost head ${line.cost_head_id} past its budget: ` +
-              `${formatPaise(state.committedPaise)} committed plus ${formatPaise(state.actualPaise)} actual plus ` +
-              `${formatPaise(Number(line.amount_paise))} here is ${formatPaise(projected)} against a budget of ` +
-              `${formatPaise(state.budgetPaise)} — over by ${formatPaise(overrun)}. Revise the budget with a new ` +
+              `${formatPaiseAsRupees(state.committedPaise)} committed plus ${formatPaiseAsRupees(state.actualPaise)} actual plus ` +
+              `${formatPaiseAsRupees(Number(line.amount_paise))} here is ${formatPaiseAsRupees(projected)} against a budget of ` +
+              `${formatPaiseAsRupees(state.budgetPaise)} — over by ${formatPaiseAsRupees(overrun)}. Revise the budget with a new ` +
               `project_budgets version, reallocate between heads, or override with finance.budget_set and a note.`
           )
         }
@@ -485,9 +485,9 @@ async function allocatePaymentRows(
       const projected = existing + alloc.allocatedPaise
       if (projected > Number(doc.total_paise)) {
         throw new UnprocessableError(
-          `Allocating ${formatPaise(alloc.allocatedPaise)} would take expense ${alloc.documentId} to ` +
-          `${formatPaise(projected)} against a total of ${formatPaise(Number(doc.total_paise))} — ` +
-          `over by ${formatPaise(projected - Number(doc.total_paise))}.`
+          `Allocating ${formatPaiseAsRupees(alloc.allocatedPaise)} would take expense ${alloc.documentId} to ` +
+          `${formatPaiseAsRupees(projected)} against a total of ${formatPaiseAsRupees(Number(doc.total_paise))} — ` +
+          `over by ${formatPaiseAsRupees(projected - Number(doc.total_paise))}.`
         )
       }
 
@@ -559,8 +559,8 @@ export async function allocatePayment(
     const projected = alreadyAllocated + input.allocations.reduce((s, a) => s + a.allocatedPaise, 0)
     if (projected > Number(payment.amount_paise)) {
       throw new UnprocessableError(
-        `These allocations would take payment ${payment.payment_no} to ${formatPaise(projected)} ` +
-        `against ${formatPaise(Number(payment.amount_paise))} paid — over by ${formatPaise(projected - Number(payment.amount_paise))}.`
+        `These allocations would take payment ${payment.payment_no} to ${formatPaiseAsRupees(projected)} ` +
+        `against ${formatPaiseAsRupees(Number(payment.amount_paise))} paid — over by ${formatPaiseAsRupees(projected - Number(payment.amount_paise))}.`
       )
     }
 

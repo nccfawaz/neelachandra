@@ -4,9 +4,9 @@ import {
   computeRetention,
   computeTds,
   computeVoucher,
-  formatPaise,
-  formatPaiseCompact,
-  formatRupees,
+  formatPaiseAsRupees,
+  formatPaiseAsRupeesCompact,
+  formatPaiseAsRupeesWithRs,
   paiseToRupees,
   parseRupeeInput,
   roundPaise,
@@ -75,26 +75,26 @@ describe('rupeesToPaise', () => {
 
 describe('formatting', () => {
   it('groups the Indian way', () => {
-    expect(formatPaise(123456700)).toBe('12,34,567.00')
-    expect(formatRupees(123456700)).toBe('Rs 12,34,567.00')
+    expect(formatPaiseAsRupees(123456700)).toBe('12,34,567.00')
+    expect(formatPaiseAsRupeesWithRs(123456700)).toBe('Rs 12,34,567.00')
   })
 
   it('renders null and undefined as empty, not as zero', () => {
-    expect(formatPaise(null)).toBe('')
-    expect(formatPaise(undefined)).toBe('')
-    expect(formatRupees(null)).toBe('')
+    expect(formatPaiseAsRupees(null)).toBe('')
+    expect(formatPaiseAsRupees(undefined)).toBe('')
+    expect(formatPaiseAsRupeesWithRs(null)).toBe('')
   })
 
   it('keeps the sign on a negative', () => {
-    expect(formatRupees(-123456700)).toBe('Rs -12,34,567.00')
-    expect(formatPaiseCompact(-1_240_000_000)).toBe('-Rs 1.24 Cr')
+    expect(formatPaiseAsRupeesWithRs(-123456700)).toBe('Rs -12,34,567.00')
+    expect(formatPaiseAsRupeesCompact(-1_240_000_000)).toBe('-Rs 1.24 Cr')
   })
 
   it('speaks crore and lakh on KPI cards', () => {
-    expect(formatPaiseCompact(1_240_000_000)).toBe('Rs 1.24 Cr')
-    expect(formatPaiseCompact(123_450_000)).toBe('Rs 12.35 L')
-    expect(formatPaiseCompact(4_560_000)).toBe('Rs 45,600')
-    expect(formatPaiseCompact(0)).toBe('Rs 0')
+    expect(formatPaiseAsRupeesCompact(1_240_000_000)).toBe('Rs 1.24 Cr')
+    expect(formatPaiseAsRupeesCompact(123_450_000)).toBe('Rs 12.35 L')
+    expect(formatPaiseAsRupeesCompact(4_560_000)).toBe('Rs 45,600')
+    expect(formatPaiseAsRupeesCompact(0)).toBe('Rs 0')
   })
 })
 

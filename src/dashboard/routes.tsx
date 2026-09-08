@@ -6,7 +6,7 @@ import { Alert, DataTable, KpiCard, Panel, type Column } from './components/inde
 import { requirePermission } from '../middleware/requirePermission.js'
 import { PERMISSIONS } from '../lib/permissions.js'
 import { loadWidget, widgetByKey, widgetsFor, type WidgetData, type WidgetDef } from './widgets.js'
-import { formatPaise } from '../lib/money.js'
+import { formatPaiseAsRupees } from '../lib/money.js'
 import { formatDateTime } from '../lib/dates.js'
 import { NotFoundError } from '../lib/errors.js'
 import { readBody } from '../middleware/csrf.js'
@@ -38,7 +38,7 @@ function WidgetBody(props: { data: WidgetData }) {
   if (data.kind === 'money') {
     return (
       <>
-        <div class="ncc-kpi__value">{formatPaise(data.paise)}</div>
+        <div class="ncc-kpi__value">{formatPaiseAsRupees(data.paise)}</div>
         {data.hint ? <div class="ncc-kpi__hint">{data.hint}</div> : null}
       </>
     )
