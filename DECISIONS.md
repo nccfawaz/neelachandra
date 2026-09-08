@@ -3686,3 +3686,68 @@ composite `idx_exp_project (project_id, status)` where the sketch shows a single
 sketch is a diagram, 009 is the schema, and per the standing rule prose overrides DDL sketches;
 the supersets are recorded here as drift, not as disagreements to reconcile.
 
+## 27. Gate integrity and refusal ordering, 2026-09-08
+
+### 27.1 A config that stops collecting a test file now fails the gate instead of the suite disappearing
+
+A test suite that a vitest config stops collecting does not fail anything: the gate goes green
+having run one file fewer, and the only observable is a count nobody is comparing. That is the
+same shape as the empty typecheck of 2026-09-04 (a command that exits 0 having done nothing) and
+the pool hang of 2026-09-03 — a gate that passes by not executing.
+
+Found on 2026-09-08 while reconciling a baseline disagreement: one session reported the
+integration gate at **224 passed in 7 files**, another at **239 in 9**, and the difference was
+`tests/integration/finance-views.test.ts` (6 tests, added in `6c5117b`, migration 020) and
+`tests/integration/period-lock.test.ts` (9 tests, added in `c03bbe9`, migration 021). Re-running
+`npx vitest list --config vitest.integration.config.ts` with the env loaded showed **both files
+collected** — `include: ['tests/integration/**/*.test.ts']` claims every `*.test.ts` under the
+directory and the full current run is 247 in 10 files. The 224/7 figure was a stale snapshot from
+before `6c5117b`, not an uncollected suite. But nothing in the tree would have noticed if the
+collection had actually broken, so the tripwire was written anyway.
+
+`tests/gate-collection.test.ts` reads `npx vitest list --config <config>` for each of the three
+suite configs, extracts the file paths, and asserts the set equals the `*.test.ts` files on disk
+that the config's include/exclude globs claim. The globs are re-derived from a CONFIGS table in
+the test, so a fourth suite config is one line there. Proven able to fail: with
+`exclude: ['tests/integration/period-lock.test.ts']` temporarily added to
+`vitest.integration.config.ts`, the tripwire went red with *"claims 10 files but collects only 9;
+not collected: tests/integration/period-lock.test.ts"*; restored, it went green. Watched, per the
+CLAUDE.md rule that a tripwire nobody has watched fail is a green of the kind that file warns
+about.
+
+Two defects in the tripwire's own first draft are recorded because both are this file's
+subject matter wearing a helper's clothes:
+
+- The first glob-to-regex turned `**/` into `.*` requiring a slash, which made `claimed`
+  **empty for every config** and the assertion pass vacuously — it stayed green with the
+  exclusion in place. The fixed helper treats a double-star slash as matching zero directories.
+  The failure was found by watching, not by reading, exactly as the CHECK-tripwire section of
+  CLAUDE.md predicts.
+- `npx vitest list` on the integration config **fails environment validation and exits 0** when
+  run outside the suite's own env (the same empty-green shape). Inside the vitest run, the
+  setup files provide the env, so the tripwire's subprocess inherits a valid environment —
+  which is why the tripwire runs the lister from inside a test rather than from a script.
+
+### 27.2 The finance approval checks run limit-before-overrun; the §8.2 answer is the trigger to revisit
+
+`approveExpense` (src/modules/finance/service.ts) runs its refusals in a fixed order: status,
+self-approval, **approval limit, then budget overrun**. That order is behaviour, not a derived
+necessity — the two checks are independent, and a different order changes which refusal a
+supervisor sees first on a request that trips both.
+
+It is the **third instance of the refusal-ordering class**, after 018's
+unchanged-cell-before-refusal ordering in the attendance matrix and 21.5's day-before-measured
+compliance refusals. Like those, it is pinned by a test so a reorder shows as a failure rather
+than as a changed message:
+tests/integration/finance-approval.test.ts, "refuses an approval that would push committed +
+actual past the head budget", asserts the refusal message contains the **overrun figure** and
+not the limit text — an expense of 6,00,000 paise on a head budgeted 5,00,000 with an approval
+ceiling of 10,00,000 trips both shapes, and the message that comes back names the budget.
+
+Revisit trigger: **open question §8.2** (the approval_limits values). Today `approval_limits` is
+seeded empty, so the limit check refuses everything and the overrun check is unreachable in
+practice — the order is moot until the client supplies limits. The moment an expense can pass
+the limit check and then trip the budget, the order becomes user-visible, and the owner should
+be asked which refusal a supervisor who trips both ought to see first. No behaviour change is
+recorded here.
+

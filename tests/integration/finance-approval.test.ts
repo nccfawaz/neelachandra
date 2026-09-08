@@ -244,6 +244,12 @@ describe('rule 4: budget overrun blocks approval at the cost-head level', () => 
       // formatPaise renders rupees: 6,00,000 paise is 60,000.00.
       expect(String((err as Error).message)).toContain('60,000.00')
       expect(String((err as Error).message)).toContain('over by 11,000.00')
+      // Refusal ordering (DECISIONS 27.2): this request trips BOTH shapes —
+      // 60,000.00 is under the 10,00,000 ceiling and over the 5,00,000 head
+      // budget — and the message must be the OVERRUN one. If the service
+      // reorders its checks to limit-before-overrun, this assertion goes red
+      // naming the reorder, instead of the message silently changing.
+      expect(String((err as Error).message)).not.toContain('approval limit')
     }
   })
 

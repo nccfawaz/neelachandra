@@ -44,3 +44,10 @@ npm-debug.log*
 core
 core.*
 *.core
+
+# Freebuff local run artifacts: the MariaDB and dev-server log redirects
+# created by detached starts on this machine. They are process-held handles
+# while the services run, so they cannot be deleted mid-session — ignore
+# them rather than fight the lock.
+.freebuff-*.log
+.freebuff-*.log.err

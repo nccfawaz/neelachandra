@@ -1,0 +1,130 @@
+import { execFile } from 'node:child_process'
+import { readdir } from 'node:fs/promises'
+import path from 'node:path'
+import { promisify } from 'node:util'
+import { describe, expect, it } from 'vitest'
+
+/**
+ * The gate-collection tripwire.
+ *
+ * A test suite that a config stops collecting does not fail anything: the
+ * gate goes green having run one file fewer, and the only observable is a
+ * count nobody is comparing. That is the same failure shape as the empty
+ * typecheck of 2026-09-04 (CLAUDE.md: a green is only a green if you can say
+ * what it executed) and the pool hang of 2026-09-03 — a gate that passes by
+ * not executing. Found on 2026-09-08 while reconciling a 224/7 vs 239/9
+ * baseline disagreement: the files were collected, but nothing in the tree
+ * would have noticed if they had not been.
+ *
+ * The assertion is structural, not a frozen count: it reads
+ * `npx vitest list --config <config>` for each suite config, extracts the
+ * file paths, and compares the SET against the *.test.ts files on disk that
+ * the config's include/exclude globs claim. A new file that is not collected
+ * fails here, and a file that stops being collected fails here — instead of
+ * silently leaving the gate.
+ *
+ * Each config's expectation is computed from its own include/exclude globs,
+ * so adding a fifth config means adding one line to CONFIGS, not editing
+ * logic.
+ */
+
+const run = promisify(execFile)
+
+interface SuiteConfig {
+  /** Path relative to the project root, as passed to --config. */
+  config: string
+  include: string[]
+  exclude: string[]
+}
+
+const CONFIGS: SuiteConfig[] = [
+  { config: 'vitest.config.ts', include: ['tests/**/*.test.ts'], exclude: ['tests/integration/**'] },
+  { config: 'vitest.integration.config.ts', include: ['tests/integration/**/*.test.ts'], exclude: [] },
+  { config: 'vitest.e2e.config.ts', include: ['tests/e2e/**/*.test.ts'], exclude: [] },
+]
+
+/**
+ * Minimal glob-to-regex for the shapes this repo uses: *, *-glob, and literal / .
+ *
+ * A double-star slash must match ZERO directories — the unit config's glob
+ * claims `tests/money.test.ts` as much as `tests/x/y.test.ts`. Getting this
+ * wrong makes `claimed` empty and the assertion pass vacuously, which is the
+ * exact failure this file exists to prevent, one level up. (The first version
+ * of this helper did exactly that and passed while a file was excluded; it
+ * was watched failing before it was trusted.)
+ */
+function globToRegExp(glob: string): RegExp {
+  let pattern = ''
+  for (let i = 0; i < glob.length; i++) {
+    const ch = glob[i]!
+    if (ch === '*') {
+      if (glob[i + 1] === '*') {
+        i++
+        if (glob[i + 1] === '/') {
+          i++
+          pattern += '(?:[^/]+/)*'
+        } else {
+          pattern += '.*'
+        }
+      } else {
+        pattern += '[^/]*'
+      }
+    } else {
+      pattern += ch.replace(/[.+^${}()|[\]\\]/, '\\$&')
+    }
+  }
+  return new RegExp(`^${pattern}$`)
+}
+
+function claimedBy(config: SuiteConfig, file: string): boolean {
+  const included = config.include.some((g) => globToRegExp(g).test(file))
+  const excluded = config.exclude.some((g) => globToRegExp(g).test(file))
+  return included && !excluded
+}
+
+async function collectedFiles(config: string): Promise<Set<string>> {
+  const { stdout } = await run('npx', ['vitest', 'list', '--config', config], {
+    cwd: process.cwd(),
+    maxBuffer: 16 * 1024 * 1024,
+    shell: process.platform === 'win32',
+  })
+  const files = new Set<string>()
+  for (const line of stdout.split('\n')) {
+    const match = line.match(/^(tests\/[^\s>]+\.test\.ts)/)
+    if (match) files.add(match[1]!)
+  }
+  return files
+}
+
+describe('the gate collects every test file it claims', () => {
+  it(
+    'every *.test.ts on disk appears in the vitest list of the config that owns it',
+    { timeout: 120_000 },
+    async () => {
+      const allDisk = (await readdir('.', { withFileTypes: true })).length >= 0 // sanity: cwd is project root
+      expect(allDisk).toBe(true)
+
+      const diskByDir = new Map<string, string[]>()
+      for (const dir of ['tests', 'tests/integration', 'tests/e2e', 'tests/middleware']) {
+        const entries = await readdir(dir, { withFileTypes: true })
+        diskByDir.set(
+          dir,
+          entries.filter((e) => e.isFile() && e.name.endsWith('.test.ts')).map((e) => `${dir}/${e.name}`)
+        )
+      }
+      const onDisk = [...diskByDir.values()].flat()
+
+      for (const cfg of CONFIGS) {
+        const claimed = onDisk.filter((f) => claimedBy(cfg, f))
+        const collected = await collectedFiles(cfg.config)
+        const missing = claimed.filter((f) => !collected.has(f))
+        expect(
+          missing,
+          `${cfg.config} claims ${claimed.length} files but collects only ${collected.size}; ` +
+            `not collected: ${missing.join(', ')}. A suite that stops running fails the gate ` +
+            `instead of disappearing — see DECISIONS 27.1.`
+        ).toEqual([])
+      }
+    }
+  )
+})
