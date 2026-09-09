@@ -213,3 +213,24 @@ the milestone being invoiced. No per-milestone override exists.
 a per-milestone percentage is added and the invoice calculation uses it.
 
 *Details: DECISIONS.md §26.4 and §29.5.*
+
+## 12. Who should be able to see the company’s overall profit, and each project’s contract value? (§6.8 rule 10)
+
+**Question:** Today only the Owner and the Accounts Manager can see the
+company’s cash position, yearly revenue and receivables. Four roles (Owner,
+Accounts Manager, Operations Manager, Project Manager) can see a project’s
+contract value and budget. Should it stay that way?
+
+**Why it blocks:** These two lists are enforced by permission checks and
+pinned by a test that fails the suite if anyone changes them — so the
+current split is treated as a decision, not an accident, and it needs your
+confirmation.
+
+**Today without an answer:** The split above is exactly what the system
+enforces. A Project Manager can see project money but not company-wide
+figures; a Site Supervisor sees neither.
+
+**Once answered:** If a role should gain or lose visibility, that is one
+tripwire update plus the grant change, recorded against this item.
+
+*Details: DECISIONS.md §29.12 and §17.3.*

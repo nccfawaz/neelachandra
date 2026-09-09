@@ -48,7 +48,7 @@ export const WIDGETS: readonly WidgetDef[] = [
   { key: 'pending_approvals', title: 'Waiting on you', perms: [PERMISSIONS.DASHBOARD_VIEW_OWN_KPI], wide: true },
   { key: 'cash_position', title: 'Cash position', perms: [PERMISSIONS.FINANCE_VIEW_COMPANY_PNL] },
   { key: 'month_revenue', title: 'Revenue this financial year', perms: [PERMISSIONS.FINANCE_VIEW_COMPANY_PNL] },
-  { key: 'receivables_ageing', title: 'Receivables ageing', perms: [PERMISSIONS.FINANCE_INVOICE_MANAGE, PERMISSIONS.FINANCE_VIEW_COMPANY_PNL], wide: true },
+  { key: 'receivables_ageing', title: 'Receivables ageing', perms: [PERMISSIONS.FINANCE_VIEW_COMPANY_PNL], wide: true },
   { key: 'projects_over_budget', title: 'Projects over budget', perms: [PERMISSIONS.FINANCE_VIEW_PROJECT_BUDGET], wide: true },
   { key: 'my_projects', title: 'Projects', perms: [PERMISSIONS.PROJECTS_VIEW], wide: true },
   { key: 'dpr_status', title: 'Daily reports', perms: [PERMISSIONS.PROJECTS_VIEW], wide: true },

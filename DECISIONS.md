@@ -1659,6 +1659,14 @@ and ESI (which decides whether `uan`, `pf_number` and `esi_number` are required 
 whether leave accrual runs on the 1 April financial year — assumed yes, matching
 `document_numbering` — or on the calendar year.
 
+**Rule 10 role sets (added 2026-09-09, owner question 12).** Whether
+ops_manager should keep `projects.view_cost`, and whether any role beyond
+owner should hold `finance.view_company_pnl`, is the owner’s call, not a
+code decision. Today: pnl -> owner, accounts_manager; view_cost -> owner,
+accounts_manager, ops_manager, project_manager. The grants tripwire
+(rule10-grants.test.ts) fails on any grant change until an answer is filed
+against OWNER_QUESTIONS item 12. See 29.12.
+
 **Does attendance override approved leave? Same §8.6 conversation, and it belongs to the same
 answer.** `hr-attendance-flow.test.ts:911` asserts that marking attendance on a day already covered
 by an approved leave request is permitted, and nothing outside that test says so — no spec line, no
@@ -4446,4 +4454,42 @@ file): the two-step close with closed_by/closed_at read back; reopen
 refused naming the reversing entry; close refused naming "1 unposted
 expense document" with the period left open; a sales_exec roleKeys list
 refused; the audit rows verified for every transition. New /src/ count:
-77 (periodService.ts added).
+77 (periodService.ts added).
+### 29.12 Rule 10 visibility: company money is a permission, never a default zero, 2026-09-09
+
+**The grant rows, read live.** The two permission candidates rule 10 names
+were already in the seed; this task reports who holds them from the live
+grants, not the seed text:
+
+- `finance.view_company_pnl` -> exactly **owner, accounts_manager**.
+- `projects.view_cost` -> exactly **owner, accounts_manager, ops_manager,
+  project_manager**.
+- site_supervisor holds neither — the 002 role descriptions name this
+  deliberately ("Never sees contract value or margin").
+
+**What was already gated.** The projects module gates contract value at
+three layers (queries.ts omits the column from the SELECT when canViewCost
+is false, the cost tab is hidden and its route 404s, and the money cells
+render hidden) — no change needed there.
+
+**What was leaking.** The dashboard widget `receivables_ageing` was
+admitted by `finance.invoice_manage` OR `finance.view_company_pnl`, and
+project_manager holds invoice_manage without pnl — so a project_manager
+dashboard rendered company-wide receivables. Fixed: the widget now
+requires `finance.view_company_pnl` alone (src/dashboard/widgets.ts).
+`cash_position` and `month_revenue` were already pnl-only.
+
+**The proof.** tests/unit/rule10-visibility.test.ts (6 tests) pins, per
+role permission set mirroring the 002 seed: owner and accounts_manager see
+all three money widgets; project_manager sees none despite holding
+invoice_manage; site_supervisor and sales_exec see none; the empty
+permission set yields zero widgets (nothing is unguarded); owner sees the
+full table. A role lacking the permission gets an absent widget — never a
+zero. tests/integration/rule10-grants.test.ts (3 tests) pins the live
+grants with non-zero floors: a new grant of either permission fails the
+suite until the visibility decision is recorded here.
+
+**Owner question, not a code decision.** Whether ops_manager should see
+contract value, and whether any role beyond owner should see company pnl,
+is filed in §17.3 and OWNER_QUESTIONS item 12; the tripwire makes any
+grant change stop here first.
