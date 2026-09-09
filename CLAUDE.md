@@ -297,7 +297,16 @@ a missing browser. What it may never do is appear inside a gate whose contract
 says the dependency does not exist.
 The same rule governs environment: **a gate must not depend on environment it
 does not set.** A suite whose values survive by `??=` inherits whatever the
-shell has exported, and the shell is not part of the tree. The instance:
+shell has exported, and the shell is not part of the tree.
+
+The rule extends to a gate with a real external dependency: **a gate
+depending on a real source must name that dependency when it is unmet** —
+the required keys, where the gate looked for them, and the fix. An
+integration suite that dies in a connection timeout when .env is absent
+reports a wrong subject; the failure has to name DB_HOST…DB_NAME and the
+searched paths before any connection is attempted (the integration
+setup does, proven by moving .env aside and reading the error).
+ The instance:
 the machine exported `PORT=0`, which beat the schema default and failed five
 suites at import with "Number must be greater than or equal to 1" (DECISIONS
 29.2). Test setup files now FORCE every value a run requires — the suite

@@ -59,6 +59,8 @@ if (missing.length > 0) {
   throw new Error(
     `The database integration suite needs a real MariaDB and ${missing.join(', ')} ` +
       `${missing.length === 1 ? 'is' : 'are'} not set.\n` +
+      `Searched, in order: the file .env in ${process.cwd()} ${hadDotenv ? '(found)' : '(not found)'}, ` +
+      'then the exported environment.\n' +
       'Locally: copy .env.example to .env, point it at a migrated database, and ' +
       'run `npm run db:migrate`.\n' +
       'In CI: the db-smoke job in .github/workflows/gates.yml sets these from its ' +
