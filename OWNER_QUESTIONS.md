@@ -194,3 +194,22 @@ invoices for out-of-state clients carry that client's state code and the tax
 splits accordingly.
 
 *Details: DECISIONS.md §17.3 (last added item) and §27.4.*
+
+## 11. Does the money held back (retention) ever differ between milestones? (§6.8 rule 5)
+
+**Question:** When we deduct retention from an invoice, is the percentage
+always the one on the project (say 5%), or can a specific milestone carry its
+own percentage — a higher hold on the first milestone, nothing on the final
+one, for example?
+
+**Why it blocks:** The system reads the retention percentage from the project
+and applies it to every milestone invoice. If a milestone is meant to carry a
+different percentage, invoices will hold back the wrong amount.
+
+**Today:** Every invoice deducts the project's percentage, reached through
+the milestone being invoiced. No per-milestone override exists.
+
+**Once answered:** Either the current behaviour is confirmed and recorded, or
+a per-milestone percentage is added and the invoice calculation uses it.
+
+*Details: DECISIONS.md §26.4 and §29.5.*

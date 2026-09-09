@@ -51,3 +51,4 @@ core.*
 # them rather than fight the lock.
 .freebuff-*.log
 .freebuff-*.log.err
+test-results/
