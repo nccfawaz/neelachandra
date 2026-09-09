@@ -38,7 +38,7 @@ interface SuiteConfig {
 }
 
 const CONFIGS: SuiteConfig[] = [
-  { config: 'vitest.config.ts', include: ['tests/**/*.test.ts'], exclude: ['tests/integration/**'] },
+  { config: 'vitest.config.ts', include: ['tests/**/*.test.ts'], exclude: ['tests/integration/**', 'tests/e2e/**'] },
   { config: 'vitest.integration.config.ts', include: ['tests/integration/**/*.test.ts'], exclude: [] },
   { config: 'vitest.e2e.config.ts', include: ['tests/e2e/**/*.test.ts'], exclude: [] },
 ]

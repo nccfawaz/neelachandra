@@ -10,6 +10,9 @@ legacy/golden/infra/*  -text
 # checkout, breaking every recorded SHA-256.
 legacy/golden/assets/** -text
 
+# Force SQL migration files to LF so checksums stay stable across checkouts
+migrations/*.sql text eol=lf
+
 *.png                  binary
 *.webp                 binary
 *.ico                  binary

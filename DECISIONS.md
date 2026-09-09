@@ -2521,10 +2521,25 @@ output: `formatPaise` → `formatPaiseAsRupees`, `formatRupees` → `formatPaise
 paise too, so its name carried the same defect), `formatPaiseCompact` → `formatPaiseAsRupeesCompact`.
 48 occurrences across 8 `src/` files, `tests/money.test.ts` and the finance-approval comment updated in
 one mechanical diff; `formatPaiseAsRupeesWithRs` keeps the distinct role of the symbol-bearing form.
-Rendered output asserted unchanged: unit 320/12 and integration 259/12 identical before and after, with
+Rendered output asserted unchanged: unit 316/11 and integration 259/12 identical before and after, with
 tests/money.test.ts (22 tests) pinning every format string. No live defect found: every call site
 passes a `*_paise` column or paise-named variable; the only `paiseToRupees` uses outside money.ts
 (crm/routes.tsx:671, :1905) genuinely convert to rupees for number inputs.
+
+**Figure corrected 2026-09-09: it was recorded as unit 320/12 and the unit gate has never had 320
+tests in it.** `vitest.config.ts` excluded `tests/integration/**` and nothing else, so its
+`tests/**/*.test.ts` include also collected `tests/e2e/attendance-hint.test.ts` — the browser suite
+that `vitest.e2e.config.ts` exists to own and that its own header says is "kept out of `npm test`".
+The unit run was therefore reporting the e2e file's **4 tests and 1 file on top of its own**, and
+320/12 is 316/11 plus that double count. **No test was lost.** The four are the same four, they
+still run, and they now run once instead of twice: unit **316/11**, e2e **4/1**, and 316 + 4 = 320
+exactly as before. The exclusion was added on 2026-09-09 with `tests/e2e/**`, and the arithmetic is
+the whole of the change — no assertion was deleted, skipped or weakened to reach the smaller number.
+
+The double count is why the figure is the kind CLAUDE.md's "counts are behaviour" clause is about: a
+number copied from a run is a fact about the config that produced it, and this one silently described
+a gate whose composition nobody had stated. The canonical baseline is now recorded in one place, 29.1,
+with the command that produces each figure beside it.
 
 ## 21. Preconditions and conflicts carried out of slice 6, 2026-09-05
 
