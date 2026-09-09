@@ -234,3 +234,23 @@ figures; a Site Supervisor sees neither.
 tripwire update plus the grant change, recorded against this item.
 
 *Details: DECISIONS.md §29.12 and §17.3.*
+
+## 13. When a tax amount lands on half a paisa, where should the odd paisa go? (§6.8 rule 5)
+
+**Question:** GST is calculated to the paisa, but percentages often produce
+fractions of a paisa (18% of Rs 124.75 is Rs 22.455 — half a paisa). Which
+way should it round, and should tax be worked out on each invoice line or
+once on the invoice total?
+
+**Why it blocks:** The books must add up to the paisa, and the tax
+authority’s expectation on rounding is a compliance detail, not a
+programmer’s choice.
+
+**Today without an answer:** The system rounds the total tax half-up
+(the .5 paisa goes up), and on an intra-state split the extra paisa goes
+to CGST. Tax is computed once per invoice, not per line.
+
+**Once answered:** If the owner (or an accountant) says per-line, or a
+different rounding, that is one function change plus its tests.
+
+*Details: DECISIONS.md §29.16 and the splitGst tests.*

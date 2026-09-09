@@ -1667,6 +1667,14 @@ accounts_manager, ops_manager, project_manager. The grants tripwire
 (rule10-grants.test.ts) fails on any grant change until an answer is filed
 against OWNER_QUESTIONS item 12. See 29.12.
 
+**GST rounding (added 2026-09-09, owner question 13).** Where the odd paisa
+goes on an intra-state split, whether tax rounds half-up or per the tax
+authority’s stated convention, and whether tax is computed per line or per
+invoice is the owner’s/accountant’s call. Today: total tax rounds half-up
+(roundPaise), the single odd paisa of the CGST/SGST split goes to CGST, and
+tax is computed once per invoice. Filed against OWNER_QUESTIONS item 13.
+
+
 **Does attendance override approved leave? Same §8.6 conversation, and it belongs to the same
 answer.** `hr-attendance-flow.test.ts:911` asserts that marking attendance on a day already covered
 by an approved leave request is permitted, and nothing outside that test says so — no spec line, no
@@ -4615,4 +4623,31 @@ the fixture period is deleted by id in a finally and again in afterAll,
 and the limit row the test inserts is deleted for the same reason (the
 next test asserts the empty-table refusal). This is the 29.4 marker
 discipline extended to rows whose identity is a date range rather than a
-name.
+name.
+### 29.16 The GST rounding rule pinned: roundPaise half-up, CGST takes the odd paisa, the writer is the authority, 2026-09-09
+
+**splitGst’s exact behaviour, reported.** Total tax =
+`roundPaise(taxable × pct / 100)`. roundPaise rounds half away from zero
+(JS Math.round semantics normalised for negatives: -2245.5 → -2246). On
+the intra-state branch the rounded total is halved by `Math.floor(tax/2)`
+for SGST and the remainder given to CGST, so cgst − sgst ∈ {0, 1} and is
+never negative. Inter-state puts the whole rounded tax in IGST.
+
+**The spec is silent.** NCC_BUILD_SPEC.md states no rounding rule for tax
+(grep across the whole file for rounding language: nothing about paise
+rounding). The rule is therefore a code decision pending the owner’s
+answer, filed as OWNER_QUESTIONS item 13 and §17.3.
+
+**Pinned by** four new tests in tests/money.test.ts (the suite’s splitGst
+block, now 7 tests): the exact half-paisa tie (18% of 12,475 = 2245.5 →
+2246) goes UP, the negative mirror goes away from zero, the odd total
+gives exactly one paisa to CGST (1124/1123 on 12,486), a large value
+(99,99,999 → 18,00,000, even halves) holds the same invariant, and no
+shape loses or invents a paisa in either branch.
+
+**The tolerance is deliberate; the writer is the authority.** The 025
+CHECK `ABS(cgst − sgst) ≤ 1` (29.9) exists to admit this rounding, not to
+define it: a future rounding change (per-line computation could produce
+differences up to the line count) fails a unit test first, and the CHECK
+only refuses what the writer could never legitimately produce. The
+database guards shape; the writer owns arithmetic.

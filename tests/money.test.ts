@@ -120,6 +120,52 @@ describe('splitGst', () => {
     expect(split.cgstPaise).toBe(0)
     expect(split.sgstPaise).toBe(0)
   })
+
+  it('rounds the total tax HALF-UP at the exact half-paisa (roundPaise, not floor)', () => {
+    // 9% of 2,00,001 paise (GST 9+9): 18000.09 — no tie. The tie needs a
+    // fraction of exactly .5: 18% of 1,00,000.25/100… instead take a taxable
+    // whose tax ends in .5 paise exactly. 18% of 37,807.50… construct:
+    // taxable 20,803 paise × 0.18 = 3744.54. taxable 20,797 × 0.18 =
+    // 3743.46. A tax of x.5 arises when taxable × pct / 100 has fraction .5,
+    // e.g. 18% of 12,475 = 2245.5 exactly — the half-paisa tie.
+    const tax = applyPct(12_475, 18)
+    expect(tax).toBe(2246) // Math.round(2245.5) = 2246 — half goes UP
+
+    // The mirror: a negative amount (a credit note) rounds half away from
+    // zero, not toward it — roundPaise(-2245.5) = -2246.
+    expect(roundPaise(-2245.5)).toBe(-2246)
+    expect(roundPaise(2245.5)).toBe(2246)
+  })
+
+  it('gives the single odd paisa to CGST, so cgst − sgst ∈ {0, 1} and never negative', () => {
+    // 18% of 12,475 = 2245.5 → rounds to 2246 (odd total). Half of 2246 is
+    // 1123 exactly, so no remainder there; use a taxable whose ROUNDED tax
+    // is odd: 18% of 12,476 = 2245.68 → 2246, even again. 18% of 12,477 =
+    // 2245.86 → 2246. Use 18% of 12,486 = 2247.48 → 2247, odd: the split
+    // must be 1124/1123, CGST taking the extra paisa.
+    const split = splitGst(12_486, 18)
+    expect(split.cgstPaise).toBe(1124)
+    expect(split.sgstPaise).toBe(1123)
+    expect(split.cgstPaise - split.sgstPaise).toBe(1)
+
+    // And a large value keeps the same invariant: 18% of 99,99,999 paise is
+    // 17,99,999.82 → 18,00,000 (even, equal halves).
+    const big = splitGst(9_999_999, 18)
+    expect(big.cgstPaise).toBe(900_000)
+    expect(big.sgstPaise).toBe(900_000)
+    expect(big.cgstPaise - big.sgstPaise).toBe(0)
+  })
+
+  it('never loses or invents a paisa across odd, half and large shapes', () => {
+    for (const taxable of [12_475, 12_486, 9_999_999, 100_001, 1]) {
+      const split = splitGst(taxable, 18)
+      expect(split.cgstPaise + split.sgstPaise).toBe(applyPct(taxable, 18))
+      expect(split.totalPaise).toBe(taxable + applyPct(taxable, 18))
+      const inter = splitGst(taxable, 18, true)
+      expect(inter.igstPaise).toBe(applyPct(taxable, 18))
+      expect(inter.totalPaise).toBe(taxable + inter.igstPaise)
+    }
+  })
 })
 
 describe('computeVoucher', () => {
