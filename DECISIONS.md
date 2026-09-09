@@ -4032,3 +4032,73 @@ the derived table (correct — the run genuinely collects what the config
 claims) and red under the copied one (the copied table disagreed with
 reality). The config was restored and the harness removed; the full unit gate
 re-run green at 316 in 11 files.
+
+### 29.4 Finance slice 4: the client-invoice writer, the GST split, and the allocation target enabled
+
+**The rule-5 chain, through the service.** `createInvoiceFromMilestone`
+(`src/modules/finance/invoiceService.ts`, four-file pattern: schemas in
+`schemas.ts`, the service in its own file beside `service.ts`, one POST route
+in `routes.tsx`) refuses a milestone whose status is anything but
+`certified`, refuses a second invoice on a milestone already invoiced, and
+moves the milestone to `invoiced` with `invoice_id` set. Proven by real
+service calls in `tests/integration/client-invoices.test.ts` (12 tests):
+pending refused naming the status, missing milestone NotFoundError,
+double-invoice refused, and the closed-period shape below.
+
+**The GST split is computed from the invoice's own `place_of_supply` and
+from nothing else.** 'KA' → CGST + SGST (9,000 + 9,000 on 1,00,000 at 18
+percent); any other code → IGST at the full rate (18,000, cgst and sgst
+stored 0). The fixtures make the proof adversarial: the KA invoice belongs
+to a client registered in MH and the MH invoice to a client registered in
+KA, so a regression that infers the split from `clients.state` or the
+project goes red. The zero shape (gst_pct 0) stores all tax columns 0 with
+total = taxable, and the empty-set aggregate over `v_project_actual` for
+the fixture projects reads COALESCEd 0, not NULL. **A spec divergence
+surfaced here: the §6.8 DDL block gives client_invoices an `igst_paise`
+column the on-disk migration never created — per 21.3 the DDL block is
+non-normative, so the inter-state split is proven by cgst/sgst storing 0
+and the IGST figure living in the total.** No `igst_paise` column was
+added: inventing one is a schema change the prose does not require.
+
+**Retention reads the percentage through the milestone (26.4).** The
+project_milestones table carries no retention column; the percentage read
+is the project row's `retention_pct` reached through the milestone's
+project_id — 5 percent of 1,00,000 is 5,000, and
+`net_receivable_paise = total − retention` (1,13,000). What 26.4 rules out
+(a client or company default silently rewriting the deduction) is what
+project-scoping avoids. A per-milestone override column does not exist; if
+the owner wants one, that is a migration and a 26.4 revisit.
+
+**The 021 period triggers cover the invoice write path through the
+service.** An invoice dated inside a closed period is refused by
+`createInvoiceFromMilestone` with the trigger's message ("closed
+accounting period"), and the refusal left the milestone still certified
+with `invoice_id` NULL — the same service-path proof
+finance-payments.test.ts runs for payments, not assumed from the
+trigger's existence.
+
+**The client_invoice allocation target is enabled; advance still refuses
+with the unchanged message.** The target is enabled in the only way that
+can be honest — by a writer existing
+(`createInvoiceFromMilestone`), exactly the condition the old refusal
+named. `allocatePaymentRows` gains the client_invoice branch: same
+over-allocation guard as expenses and contractor bills, against
+`net_receivable_paise` (the amount the client actually owes, total less
+retention), refusing cancelled/disputed documents, and
+**`received_paise` gets exactly one writer — the allocator** — the same
+grant §26.3 gives `expenses.paid_paise`; the invoice service never touches
+it and creates every row at received_paise = 0. Reconciliation in the
+§26.3 shape: SUM(payment_allocations) per fixture invoice equals
+received_paise, asserted over the whole fixture set against independent
+SQL, with a non-zero floor on the enumeration. Over-allocation is refused
+with the over-by figure. `advance` still refuses ("advance documents land
+with the slice that builds them").
+
+**Two fixture lessons the suite itself paid for.** (1) uq_period collides
+on reuse: a crashed run left its closed period behind and the next
+beforeAll died on `Duplicate entry` for (financial_year, month) — the
+cleanup now clears by created_by and the period uses a fresh year.
+(2) A crashed run also left roleless fixture users, which made
+crm-flow's `assignableUsers` floor (expects exactly the suite's own 2)
+read 4. Cross-suite fixture hygiene is real: **a user row without its
+user_roles row is visible to every suite that counts users.**

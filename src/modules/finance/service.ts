@@ -543,14 +543,54 @@ async function allocatePaymentRows(
         .set({ paid_paise: projected })
         .where('id', '=', alloc.documentId)
         .execute()
+    } else if (alloc.documentType === 'client_invoice') {
+      // Enabled this slice: invoiceService.createInvoiceFromMilestone writes
+      // client_invoices rows (rule 5), so the document a payment names here
+      // is real. Same over-allocation guard as the other targets, against
+      // net_receivable_paise (total less retention — that is what the client
+      // actually owes), and the single-writer rule for received_paise
+      // (DECISIONS 26.3 applied to the receivable side).
+      const doc = await trx
+        .selectFrom('client_invoices')
+        .select(['id', 'net_receivable_paise', 'received_paise', 'status'])
+        .where('id', '=', alloc.documentId)
+        .forUpdate()
+        .executeTakeFirst()
+      if (!doc) throw new NotFoundError(`Client invoice ${alloc.documentId} does not exist.`)
+      if (doc.status === 'cancelled' || doc.status === 'disputed') {
+        throw new UnprocessableError(`Client invoice ${alloc.documentId} is ${doc.status} and cannot receive payments.`)
+      }
+
+      const existing = Number(doc.received_paise ?? 0)
+      const projected = existing + alloc.allocatedPaise
+      if (projected > Number(doc.net_receivable_paise)) {
+        throw new UnprocessableError(
+          `Allocating ${formatPaiseAsRupees(alloc.allocatedPaise)} would take client invoice ${alloc.documentId} to ` +
+          `${formatPaiseAsRupees(projected)} against a net receivable of ${formatPaiseAsRupees(Number(doc.net_receivable_paise))} — ` +
+          `over by ${formatPaiseAsRupees(projected - Number(doc.net_receivable_paise))}.`
+        )
+      }
+
+      await trx.insertInto('payment_allocations').values({
+        payment_id: paymentId,
+        document_type: 'client_invoice',
+        document_id: alloc.documentId,
+        allocated_paise: alloc.allocatedPaise,
+      }).execute()
+
+      await trx
+        .updateTable('client_invoices')
+        .set({ received_paise: projected })
+        .where('id', '=', alloc.documentId)
+        .execute()
     } else {
-      // client_invoice and advance allocations have no writer yet: no module
-      // creates those documents today, so an allocation naming one is
-      // refused rather than silently accepted against a document nobody can
-      // show. Expenses, contractor bills and site advances (an expense row)
-      // are the payable documents.
+      // advance allocations still have no writer: no module creates advance
+      // documents as a payable today (site advances ride expenses rows), so
+      // an allocation naming one is refused rather than silently accepted
+      // against a document nobody can show. Expenses and client invoices are
+      // the targets enabled; contractor bills were enabled in slice 3.
       throw new UnprocessableError(
-        `Allocations against ${alloc.documentType} documents land with the slice that builds them. Expenses, contractor bills and site advances are the payable documents today.`
+        `Allocations against advance documents land with the slice that builds them. Expenses, contractor bills and client invoices are the payable documents today.`
       )
     }
   }

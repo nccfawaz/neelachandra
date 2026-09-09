@@ -206,6 +206,7 @@ export interface ClientInvoicesTable {
   project_id: number
   client_id: number
   invoice_date: SqlDate
+  place_of_supply: string
   due_date: SqlDate
   invoice_type: Generated<'advance' | 'milestone' | 'running_account' | 'extra_work' | 'final' | 'retention_release'>
   milestone_id: Generated<number | null>
@@ -277,9 +278,6 @@ export interface ContractorAttendanceTable {
   attendance_date: SqlDate
   skill_level: 'skilled' | 'semi_skilled' | 'unskilled' | 'mason' | 'carpenter' | 'barbender' | 'plumber' | 'electrician' | 'painter' | 'helper'
   uom: Generated<'per_day' | 'per_sqft' | 'per_cum' | 'per_kg' | 'lumpsum'>
-  // NOT NULL DEFAULT '' since migration 016, because uq_ca contains it and a key
-  // member that can be NULL is not a key member. '' is a day row; the CHECK
-  // chk_ca_work_type makes it unreachable on a measured one.
   work_type: Generated<string>
   headcount: number
   quantity: Generated<number | null>
@@ -1751,20 +1749,16 @@ export interface UsersTable {
   updated_at: SqlDateGen
 }
 
-// The two §6.8 rule 2 views (migration 020). The aggregates are COALESCEd to
-// 0 in the view, so the sums are never NULL; the Generated<> wrappers remain
-// because views report no insertability and Kysely's generator cannot know
-// the column is nullable in name only.
 export interface VProjectActualTable {
   project_id: Generated<number | null>
   cost_head_id: number
-  actual_paise: Generated<number>
+  actual_paise: Generated<number | null>
 }
 
 export interface VProjectCommittedTable {
   project_id: Generated<number | null>
   cost_head_id: Generated<number | null>
-  committed_paise: Generated<number>
+  committed_paise: Generated<number | null>
 }
 
 export interface VendorItemRatesTable {

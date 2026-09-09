@@ -9,7 +9,8 @@ import { PERMISSIONS } from '../../lib/permissions.js'
 import { readBody } from '../../middleware/csrf.js'
 import { NotFoundError, isAppError } from '../../lib/errors.js'
 import * as svc from './service.js'
-import { expenseCreateSchema, firstError, paymentCreateSchema, paymentAllocateSchema, siteAdvanceSchema } from './schemas.js'
+import { createInvoiceFromMilestone } from './invoiceService.js'
+import { clientInvoiceCreateSchema, expenseCreateSchema, firstError, paymentCreateSchema, paymentAllocateSchema, siteAdvanceSchema } from './schemas.js'
 
 /**
  * Finance module routes.
@@ -273,3 +274,23 @@ finance.post('/app/finance/advances', requirePermission(PERMISSIONS.FINANCE_PAYM
 })
 
 export default finance
+
+/* Client invoices, slice 4 (rule 5) ------------------------------------------ */
+
+/**
+ * Raises an invoice from a certified milestone. The rule lives in the
+ * service: certification required, one invoice per milestone, GST split from
+ * the stated place of supply, retention read through the milestone's
+ * project. Reaches the 021 period-lock trigger through the service insert
+ * exactly as the payment and expense paths do.
+ */
+finance.post('/app/finance/invoices', requirePermission(PERMISSIONS.FINANCE_INVOICE_MANAGE), async (c) => {
+  const parsed = clientInvoiceCreateSchema.safeParse(await readBody(c))
+  if (!parsed.success) return errRedirect(c, '/app/finance/invoices', firstError(parsed.error))
+
+  return guard(c, '/app/finance/invoices', async () => {
+    const r = await createInvoiceFromMilestone(c.get('db'), actorOf(c), parsed.data)
+    const split = r.igstPaise > 0 ? `IGST ${r.igstPaise}` : `CGST ${r.cgstPaise} + SGST ${r.sgstPaise}`
+    return `Invoice ${r.invoiceNo} raised: taxable ${r.taxablePaise}, ${split}, retention ${r.retentionPaise}, net receivable ${r.netReceivablePaise}.`
+  })
+})

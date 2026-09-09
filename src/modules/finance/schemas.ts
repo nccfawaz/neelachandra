@@ -162,3 +162,23 @@ export const siteAdvanceSchema = z.object({
 })
 
 export type SiteAdvanceInput = z.infer<typeof siteAdvanceSchema>
+/* Client invoices (spec 6.8 rule 5, slice 4) --------------------------------- */
+
+/**
+ * The invoice create contract. The place of supply is a required two-letter
+ * code exactly because the GST split reads it: 'KA' splits CGST + SGST, any
+ * other code IGST. There is no default here either — the schema refusing to
+ * guess mirrors the column refusing to default (DECISIONS 27.4).
+ */
+export const clientInvoiceCreateSchema = z.object({
+  milestoneId: requiredId,
+  invoiceDate: requiredDate,
+  dueDate: requiredDate,
+  placeOfSupply: z
+    .string()
+    .trim()
+    .regex(/^[A-Z]{2}$/, 'Enter the two-letter state code, e.g. KA.'),
+  narration: optionalText(500),
+})
+
+export type ClientInvoiceCreateInput = z.infer<typeof clientInvoiceCreateSchema>
