@@ -4348,3 +4348,50 @@ recorded as landed; the mapping keys are unchanged, so the ENUM tripwire
 needs no edit. The mapping test's group-by assertion now passes with a
 live contractor_bill row in the database, which is a stronger proof than
 the empty-green it replaced.
+
+### 29.9 The CGST/SGST half-pair closed: the same class as the expenses source pair, 2026-09-09
+
+**What 024 admitted.** Reported from information_schema, 024's clause was:
+`cgst_paise` is not null and `sgst_paise` is not null and `igst_paise` is not
+null and (`igst_paise` = 0 and `cgst_paise` >= 0 and `sgst_paise` >= 0 or
+`igst_paise` > 0 and `cgst_paise` = 0 and `sgst_paise` = 0). Proven by direct
+insert against real FK fixtures: **CGST 9,000/SGST 0 ADMITTED, CGST
+0/SGST 9,000 ADMITTED** — half the intra-state split, wrong on its own and
+a duplicate of no other row, the exact shape 015's chk_exp_source_pair
+closes for expenses.(source_table, source_id). Also admitted: all-zero and
+both legitimate branches (the shapes the service produces).
+
+**Migration 025** replaces the clause with the intra branch carrying
+`ABS(cgst_paise - sgst_paise) <= 1` instead of bare non-negativity. The
+inequality, not equality, because splitGst (src/lib/money.ts) puts the odd
+paisa on CGST — tax − floor(tax/2) vs floor(tax/2) — so an odd tax makes
+CGST = SGST + 1 on a legitimate row, and strict equality would refuse it.
+A half-pair fails the margin by an amount no rounding can produce. The
+one-paisa shape is proven admitted by direct insert (CGST 4,501/SGST
+4,500), alongside the re-run of the full probe set: both half-pairs now
+refused naming chk_inv_gst_branch, double taxation (all three non-zero)
+refused, all-zero and both branches admitted.
+
+**The all-zero row is permitted on purpose, stated rather than left as an
+accident.** gst_pct 0 is a real invoice shape (zero-rated or exempt
+supply), and the zero-gst test proves it stores 0/0/0 with total =
+taxable. No column records the *intended* rate alongside the split, so the
+CHECK cannot distinguish "zero because exempt" from "zero because the
+writer forgot" — the guard is on the shape (no half-pairs, no double
+taxation) and the writer-side rule (place_of_supply is the only split
+input, 29.5) carries the intent. If the owner wants the intent recorded,
+that is a gst_pct-on-the-split question for 17.3, not a tighter CHECK.
+
+**Not trivially satisfiable.** Every member is NOT NULL (009), the IS NOT
+NULL conjuncts keep the clause off UNKNOWN (the migration-013/014 rule),
+the intra branch pins igst_paise to exactly 0 and the inter branch pins
+both halves to exactly 0 — a row cannot satisfy both branches at once —
+and the probe set (half-pairs, all-zero, rounding, both branches, double
+taxation) is the case list the clause was written against, each proven by
+insert, not by reading.
+
+**Regression tests:** client-invoices.test.ts gains the two half-pair
+refusals and the odd-paisa admission (19 tests total, all green). Row
+count at migration time: 0 half-pairs existed (the service never produces
+one), so no backfill. Cited as the same half-pair class as
+expenses.(source_table, source_id) — see 19.1 and 20.2.

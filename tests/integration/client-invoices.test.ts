@@ -500,6 +500,71 @@ describe('the stored GST split (migration 024: igst_paise + chk_inv_gst_branch)'
     if (!refused) throw new Error('expected the both-branches row to be refused by chk_inv_gst_branch')
   })
 
+  it('the half-pair shapes are refused by chk_inv_gst_branch (migration 025)', async () => {
+    // 024's clause admitted CGST 9,000/SGST 0 and its mirror — the same
+    // wrong-on-its-own shape 015 closes for the expenses source pair. 025
+    // adds ABS(cgst − sgst) <= 1 on the intra branch. Proven by direct
+    // insert against the mapped (KA) branch; the service can never produce
+    // these shapes.
+    for (const [cgst, sgst] of [[9_000, 0], [0, 9_000]] as const) {
+      let refused = false
+      try {
+        await db.insertInto('client_invoices').values({
+          invoice_no: `PLIGST-${randomUUID().slice(0, 8)}`,
+          project_id: projectIdKA,
+          client_id: clientIdKA,
+          invoice_date: '2099-01-28',
+          due_date: '2099-01-31',
+          place_of_supply: 'KA',
+          taxable_paise: 50_000,
+          cgst_paise: cgst,
+          sgst_paise: sgst,
+          igst_paise: 0,
+          gst_pct: 18,
+          total_paise: 50_000 + cgst + sgst,
+          status: 'draft',
+          created_by: userId,
+        }).execute()
+      } catch (err) {
+        refused = true
+        expect(String((err as Error).message)).toContain('chk_inv_gst_branch')
+      }
+      if (!refused) throw new Error(`expected CGST ${cgst}/SGST ${sgst} to be refused by chk_inv_gst_branch`)
+    }
+  })
+
+  it('the odd-paisa rounding split is admitted: CGST = SGST + 1 passes the <= 1 guard', async () => {
+    // splitGst computes tax − floor(tax/2) and floor(tax/2), so an odd tax
+    // puts the extra paisa on CGST. A strict equality would refuse a
+    // legitimate row; the guard is the one-paisa margin instead.
+    let admitted = false
+    let invoiceId = 0
+    try {
+      const row = await db.insertInto('client_invoices').values({
+        invoice_no: `PLIGST-${randomUUID().slice(0, 8)}`,
+        project_id: projectIdKA,
+        client_id: clientIdKA,
+        invoice_date: '2099-01-28',
+        due_date: '2099-01-31',
+        place_of_supply: 'KA',
+        taxable_paise: 50_001,
+        cgst_paise: 4_501,
+        sgst_paise: 4_500,
+        igst_paise: 0,
+        gst_pct: 18,
+        total_paise: 59_001,
+        status: 'draft',
+        created_by: userId,
+      }).executeTakeFirst()
+      invoiceId = Number(row!.insertId ?? 0)
+      admitted = invoiceId > 0
+    } catch {
+      admitted = false
+    }
+    if (!admitted) throw new Error('expected the odd-paisa rounding split to be admitted')
+    await db.deleteFrom('client_invoices').where('id', '=', invoiceId).execute()
+  })
+
   it('an IGST-only row with the cgst/sgst columns omitted is refused — NOT NULL, no default', async () => {
     // The column has no DEFAULT (the migration-016 lesson): omitting it is
     // refused, so every writer states the split rather than inheriting it.
