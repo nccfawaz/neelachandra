@@ -4411,3 +4411,39 @@ grep are the other recorded instances; the 29.7 source-type sweep was
 investigated under the same suspicion and exonerated by an end-to-end
 trace (29.8), which is the standard of proof a clean sweep should carry
 with it the first time.
+
+### 29.11 The period-close writer: the lock finally has a key, 2026-09-09
+
+**The finding.** The 021 triggers enforce rule 7's lock, but grep across
+src/ showed no writer moving accounting_periods between open, soft_closed
+and closed — every seeded period sat at open and the lock was unengageable
+in production terms. Reported DDL: status ENUM(open, soft_closed, closed)
+NOT NULL DEFAULT open, closed_by/closed_at nullable, uq_period(financial_year,
+month).
+
+**The writer** (src/modules/finance/periodService.ts, POST route wired at
+/api/finance/periods/:periodId/close behind finance.period_close, which the
+live grants show only owner (id 1) and accounts_manager (id 6) hold):
+
+- **Transitions are one step per call: open → soft_closed → closed.** Both
+  statuses lock identically in 021; the distinction is the review window —
+  soft_closed is locked but visibly not final, the state a period is in
+  when someone notices a missed document.
+- **Reopening is refused.** The spec is silent on it, and every argument
+  for reopening is the argument rule 7 answers: post-close corrections are
+  a reversing entry in the current open period, never an edit to the
+  closed one. The refusal names that alternative. Logged here rather than
+  invented: if the owner ever wants a reopen, it is a §17.3 question.
+- **Closing refuses while unposted documents sit inside the window** — a
+  draft or pending_approval expense dated inside would be frozen
+  un-approvable by the lock (its approval updates the row). The refusal
+  names the count.
+- **Every transition is audited** (after_json carries status, financial_year,
+  month; closed_by/closed_at stamped on the row).
+
+**Proven** (tests/integration/period-lock.test.ts, +5 tests, 14 in the
+file): the two-step close with closed_by/closed_at read back; reopen
+refused naming the reversing entry; close refused naming "1 unposted
+expense document" with the period left open; a sales_exec roleKeys list
+refused; the audit rows verified for every transition. New /src/ count:
+77 (periodService.ts added).

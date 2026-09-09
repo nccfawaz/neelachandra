@@ -10,6 +10,7 @@ import { readBody } from '../../middleware/csrf.js'
 import { NotFoundError, isAppError } from '../../lib/errors.js'
 import * as svc from './service.js'
 import { createInvoiceFromMilestone } from './invoiceService.js'
+import { closePeriod } from './periodService.js'
 import { clientInvoiceCreateSchema, expenseCreateSchema, firstError, paymentCreateSchema, paymentAllocateSchema, siteAdvanceSchema } from './schemas.js'
 
 /**
@@ -292,5 +293,21 @@ finance.post('/app/finance/invoices', requirePermission(PERMISSIONS.FINANCE_INVO
     const r = await createInvoiceFromMilestone(c.get('db'), actorOf(c), parsed.data)
     const split = r.igstPaise > 0 ? `IGST ${r.igstPaise}` : `CGST ${r.cgstPaise} + SGST ${r.sgstPaise}`
     return `Invoice ${r.invoiceNo} raised: taxable ${r.taxablePaise}, ${split}, retention ${r.retentionPaise}, net receivable ${r.netReceivablePaise}.`
+  })
+})
+
+/* Period close (rule 7) ------------------------------------------------------ */
+
+/**
+ * Closes an accounting period one step (open → soft_closed → closed). The
+ * service holds the rules: only finance.period_close holders, no reopen,
+ * and a refusal naming unposted documents rather than freezing them.
+ */
+finance.post('/api/finance/periods/:periodId/close', requirePermission(PERMISSIONS.FINANCE_PERIOD_CLOSE), async (c) => {
+  return guard(c, '/app/finance/periods', async () => {
+    const periodId = idParam(c, 'periodId')
+    const roleKeys = c.get('roleKeys')
+    const r = await closePeriod(c.get('db'), actorOf(c), periodId, roleKeys)
+    return `Period ${r.label} is now ${r.status}.`
   })
 })

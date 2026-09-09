@@ -3,6 +3,8 @@ import { sql } from 'kysely'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { getDb } from '../../src/db/kysely.js'
 import { closePool, getPool } from '../../src/db/pool.js'
+import { closePeriod } from '../../src/modules/finance/periodService.js'
+import { sweepFixtures } from './fixture-markers.js'
 
 /**
  * The §6.8 rule 7 period lock (migration 021).
@@ -75,6 +77,9 @@ async function expectRefused(promise: Promise<unknown>, label: string): Promise<
 }
 
 beforeAll(async () => {
+  // Sweep any fixture rows a crashed predecessor left behind, BEFORE the
+  // high-water marks are read (DECISIONS 29.4).
+  await sweepFixtures(db)
   for (const table of TRACKED) {
     const res = await sql<{ n: number | null }>`select max(id) as n from ${sql.table(table)}`.execute(db)
     highWater.set(table, Number(res.rows[0]?.n ?? 0))
@@ -84,7 +89,7 @@ beforeAll(async () => {
     .insertInto('users')
     .values({
       email: `fixture.period.lock.${randomUUID().slice(0, 8)}@example.invalid`,
-      full_name: 'Fixture Period Lock User',
+      full_name: '[fixture] Period Lock User',
       status: 'active',
       must_change_password: 0,
     })
@@ -155,10 +160,14 @@ beforeAll(async () => {
 
 afterAll(async () => {
   // Child first, and before the periods: the period_id FKs are ON DELETE
-  // RESTRICT, so the rows must go before the periods they reference.
+  // RESTRICT, so the rows must go before the periods they reference. The
+  // audit rows come before users (fk_audit_user) — the close writer writes
+  // them for the fixture user.
+  await sql`delete from audit_log where user_id > ${highWater.get('users') ?? 0}`.execute(db)
   await sql`delete from expenses where id > ${highWater.get('expenses') ?? 0}`.execute(db)
   await sql`delete from payments where id > ${highWater.get('payments') ?? 0}`.execute(db)
   await sql`delete from client_invoices where id > ${highWater.get('client_invoices') ?? 0}`.execute(db)
+  await sql`update accounting_periods set closed_by = null where closed_by > ${highWater.get('users') ?? 0}`.execute(db)
   await sql`delete from accounting_periods where id > ${highWater.get('accounting_periods') ?? 0}`.execute(db)
   await sql`delete from projects where id > ${highWater.get('projects') ?? 0}`.execute(db)
   await sql`delete from clients where id > ${highWater.get('clients') ?? 0}`.execute(db)
@@ -357,5 +366,123 @@ describe('client_invoices: the lock fires on invoice_date', () => {
         .execute(),
       'an invoice dated inside a closed period',
     )
+  })
+})
+/**
+ * The period-close writer (§6.8 rule 7's route, DECISIONS 29.11).
+ *
+ * The 021 triggers enforce the lock, but a lock nobody can engage is dead
+ * code. These tests prove the writer that moves open → soft_closed →
+ * closed, the refusals that make it safe, and the audit trail.
+ */
+describe('the period-close writer (rule 7, 29.11)', () => {
+  it('a holder of finance.period_close steps a period open → soft_closed → closed', async () => {
+    const open = await db
+      .insertInto('accounting_periods')
+      .values({
+        financial_year: 'TF-9897',
+        month: 1,
+        period_start: '2098-01-01',
+        period_end: '2098-01-31',
+        status: 'open',
+      })
+      .executeTakeFirst()
+    const periodId = Number(open!.insertId ?? 0)
+
+    const first = await closePeriod(db, { userId, ip: '127.0.0.1' }, periodId, ['owner'])
+    expect(first.status).toBe('soft_closed')
+
+    const second = await closePeriod(db, { userId, ip: '127.0.0.1' }, periodId, ['owner'])
+    expect(second.status).toBe('closed')
+
+    const row = await db.selectFrom('accounting_periods').selectAll().where('id', '=', periodId).executeTakeFirstOrThrow()
+    expect(row.status).toBe('closed')
+    expect(Number(row.closed_by)).toBe(userId)
+    expect(row.closed_at).not.toBeNull()
+    void closedPeriodId
+  })
+
+  it('reopening is refused, naming the reversing-entry alternative', async () => {
+    const open = await db
+      .insertInto('accounting_periods')
+      .values({
+        financial_year: 'TF-9897',
+        month: 2,
+        period_start: '2098-02-01',
+        period_end: '2098-02-28',
+        status: 'open',
+      })
+      .executeTakeFirst()
+    const periodId = Number(open!.insertId ?? 0)
+    await closePeriod(db, { userId, ip: '127.0.0.1' }, periodId, ['accounts_manager'])
+    await closePeriod(db, { userId, ip: '127.0.0.1' }, periodId, ['accounts_manager'])
+
+    await expect(
+      closePeriod(db, { userId, ip: '127.0.0.1' }, periodId, ['accounts_manager'])
+    ).rejects.toThrow(/already closed\. Reopening a closed period is not supported/)
+  })
+
+  it('closing refuses while unposted documents sit inside the window, naming the count', async () => {
+    const open = await db
+      .insertInto('accounting_periods')
+      .values({
+        financial_year: 'TF-9897',
+        month: 3,
+        period_start: '2098-03-01',
+        period_end: '2098-03-31',
+        status: 'open',
+      })
+      .executeTakeFirst()
+    const periodId = Number(open!.insertId ?? 0)
+
+    // A draft expense dated inside the window.
+    await db.insertInto('expenses').values({
+      expense_no: `PLPER-${randomUUID().slice(0, 8)}`,
+      expense_date: '2098-03-15',
+      expense_type: 'other',
+      payee_type: 'other',
+      payee_name: 'Fixture period-close blocker',
+      status: 'draft',
+      created_by: userId,
+    }).execute()
+
+    await expect(
+      closePeriod(db, { userId, ip: '127.0.0.1' }, periodId, ['owner'])
+    ).rejects.toThrow(/still holds 1 unposted expense document/)
+
+    const row = await db.selectFrom('accounting_periods').select('status').where('id', '=', periodId).executeTakeFirstOrThrow()
+    expect(row.status).toBe('open')
+  })
+
+  it('a caller holding neither owner nor accounts_manager is refused', async () => {
+    const open = await db
+      .insertInto('accounting_periods')
+      .values({
+        financial_year: 'TF-9897',
+        month: 4,
+        period_start: '2098-04-01',
+        period_end: '2098-04-30',
+        status: 'open',
+      })
+      .executeTakeFirst()
+    const periodId = Number(open!.insertId ?? 0)
+    await expect(
+      closePeriod(db, { userId, ip: '127.0.0.1' }, periodId, ['sales_exec'])
+    ).rejects.toThrow(/needs finance\.period_close/)
+  })
+
+  it('every transition is audited', async () => {
+    const audits = await sql<{ action: string; after_json: unknown }>`
+      select action, after_json from audit_log
+      where action = 'finance.period_close' and entity_type = 'accounting_period'
+      order by id desc limit 4
+    `.execute(db)
+    expect(audits.rows.length).toBeGreaterThanOrEqual(4)
+    for (const row of audits.rows) {
+      // after_json comes back as a parsed JSON object through the driver.
+      const after = (row.after_json ?? {}) as { status?: string; financial_year?: string }
+      expect(['soft_closed', 'closed']).toContain(after.status)
+      expect(after.financial_year).toMatch(/^TF-/)
+    }
   })
 })
