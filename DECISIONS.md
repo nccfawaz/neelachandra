@@ -4262,3 +4262,40 @@ client_invoices, projects, clients, leads. Each suite owns those through
 its own high-water id cleanup, and a global delete there would reach
 across suites mid-run. The user and period tables are swept globally
 because those are the two shapes whose identity crosses suites.
+
+### 29.7 The (source_type, source_table) mapping, and §20.2 closed, 2026-09-09
+
+**What 20.2 left open.** The CHECK 015 added closes the half-pair hole, but
+the mapping between the source_type ENUM and the source_table values the
+writers actually set was nowhere recorded — nothing stopped a writer
+producing a pair the ENUM cannot express, or an ENUM member landing with no
+writer at all. Finance has landed, so the mapping is now enumerable.
+
+**The mapping of record** (tests/integration/expenses-source-mapping.test.ts,
+WRITER_MAPPING — the table here summarises it, the test enforces it):
+
+| source_type | source_table | status |
+|---|---|---|
+| manual | NULL | **written** — finance/service.ts createExpense (~:96) and issueSiteAdvance (~:818); the only live writer, proven by the group-by assertion |
+| grn | goods_receipts | no writer yet — inventory GRN post writes the ledger but no expense row |
+| contractor_bill | contractor_bills | designed (18.3), writer not landed — hr/service.ts:2608 carries the intent in the audit payload, expense_id stays NULL |
+| equipment_deployment | equipment_deployments | no writer — fk_eqd_expense (009) exists but nothing fills it |
+| campaign_spend | campaigns | no writer — marketing phase 5 |
+| payroll | NULL | no writer — payroll is attendance-driven, not an expense posting |
+
+**ENUM members no writer produces: five of six** (grn, contractor_bill,
+equipment_deployment, campaign_spend, payroll). Writer pairs the ENUM
+cannot express: none found — the two live writers both produce mapped
+pairs. No §17.3 item was needed; nothing was invented to fit.
+
+**The tripwire.** expenses-source-mapping.test.ts (3 tests) enumerates the
+ENUM from information_schema with a non-zero floor (28.1) and asserts the
+member set equals the mapping keys; a third test groups the live expenses
+rows by (source_type, source_table) and asserts every observed pair is the
+mapped one. A new ENUM member reds the file with an instruction naming
+WRITER_MAPPING; a writer producing an unmapped pair reds the group-by test.
+
+**20.2 is closed.** The source pair is now guarded at every layer: the
+UNIQUE index (012) for duplicates, the CHECK (015) for the half-pair, and
+the mapping tripwire for the vocabulary. Proven by
+tests/integration/expenses-source-mapping.test.ts, green 3/3.
