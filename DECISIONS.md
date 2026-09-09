@@ -4578,4 +4578,41 @@ company-money widget demands view_company_pnl alone; the money audience
 is exactly owner + accounts_manager against the seed sets for all eight
 roles; no widget ORs a money permission with a weaker arm;
 projects_over_budget’s audience all hold view_cost; a weaker-permission
-role sees no money widget at all — refusal by absence, never a zero.
+role sees no money widget at all — refusal by absence, never a zero.
+### 29.15 The period lock fires on the contractor-bill posting, and the approval rolls back whole, 2026-09-09
+
+**Proven through the service, not a direct insert.** The 021 lock fires on
+expenses BEFORE INSERT, and the posting’s expense_date is today(), not the
+bill’s coverage period — so the lock engages when today’s period is
+closed, whatever period the bill covers. The test
+(hr-contractor-flow, 'the posting inside the approval is refused when
+today falls in a closed period') builds a closed period containing the
+real today, drives a bill through the full path a clerk uses — approve
+attendance, generate bill, approveContractorBill — and asserts:
+
+- the refusal is the trigger’s own message ('date falls inside a closed
+  accounting period'), the exact error the clerk sees on screen;
+- the bill afterwards is status 'draft', approved_at NULL, expense_id
+  NULL — the whole approval rolled back, not half-applied;
+- zero expenses rows carry (contractor_bills, billId) — the posting went
+  with the rollback.
+
+**Invoice and payment paths were already covered through the service:**
+client-invoices.test.ts proves the closed-period refusal through
+createInvoiceFromMilestone, finance-payments.test.ts through
+createPayment. The contractor-bill path was the one writer the lock had
+never been proven against.
+
+**No stuck-clerk item.** The refusal leaves a draft bill the clerk can
+re-approve on day one of the next open period (or finance can close the
+month properly first) — the correction path is the ordinary workflow,
+unlike the day-row case in §17.3 where nothing can be done. Filed as
+none rather than added to the stuck list.
+
+**Test-hygiene note.** Driving the lock with today’s real dates meant a
+crashed test would leave today closed for every later suite in the gate;
+the fixture period is deleted by id in a finally and again in afterAll,
+and the limit row the test inserts is deleted for the same reason (the
+next test asserts the empty-table refusal). This is the 29.4 marker
+discipline extended to rows whose identity is a date range rather than a
+name.

@@ -125,6 +125,9 @@ let secondBillNo = ''
  */
 const LIMIT_ROLE = 'fixture_contractor_approver'
 
+/** The closed-period fixture's id, deleted first in afterAll (see there). */
+let closedPeriodId: number | null = null
+
 function contractorInput(over: Record<string, unknown>) {
   return contractorSchema.parse({
     name: 'Fixture Contractor',
@@ -379,6 +382,14 @@ beforeAll(async () => {
 afterAll(async () => {
   // contractor_attendance.bill_id is RESTRICT and every _by column points at
   // users with RESTRICT, so the order in TRACKED is load-bearing.
+  // The closed-period fixture (covering today's real dates) goes FIRST: it
+  // is deleted by id whether or not the test that made it reached its own
+  // cleanup, because leaving it behind would close today for every later
+  // suite in the gate.
+  if (closedPeriodId !== null) {
+    await sql`delete from accounting_periods where id = ${closedPeriodId}`.execute(db)
+    closedPeriodId = null
+  }
   for (const table of TRACKED) {
     await sql`delete from ${sql.table(table)} where id > ${highWater.get(table) ?? 0}`.execute(db)
   }
@@ -911,6 +922,104 @@ describe('generating a contractor bill', () => {
  * leaves behind is what finance will key on.
  */
 describe('approving a contractor bill', () => {
+  it('the posting inside the approval is refused when today falls in a closed period, and the whole approval rolls back', async () => {
+    // The 021 lock fires on expenses BEFORE INSERT (the posting's expense_date
+    // is today(), not the bill's coverage period). Proven through the service,
+    // not a direct insert: the clerk calls approveContractorBill exactly as
+    // the route does, and the refusal must come off the trigger with the
+    // whole transaction rolled back — status, approved_by and expense_id all
+    // unchanged. A half-applied approval (bill approved, posting missing) is
+    // the failure the same-transaction rule exists to prevent.
+    //
+    // Drive the lock with a period that contains today but is closed. The
+    // seeded 2026-27 periods are all open, so the fixture period is built
+    // around the real today rather than the 2099 fixture months used
+    // elsewhere in this file.
+    const todayStr = today()
+    const dayStart = todayStr.slice(0, 8) + '01'
+    const [y, m] = todayStr.split('-').map(Number)
+    const lastDay = new Date(Date.UTC(y, m, 0)).getUTCDate()
+    const dayEnd = todayStr.slice(0, 8) + String(lastDay).padStart(2, '0')
+    const closed = await db
+      .insertInto('accounting_periods')
+      .values({
+        financial_year: `TF-26${todayStr.slice(5, 7)}`,
+        month: 1,
+        period_start: dayStart,
+        period_end: dayEnd,
+        status: 'closed',
+      })
+      .executeTakeFirst()
+    closedPeriodId = Number(closed.insertId ?? 0)
+
+    // Everything from here to the finally runs with today's period closed, so
+    // the delete in the finally is load-bearing for every later test in this
+    // file, not just tidiness.
+    try {
+    // A fresh draft bill whose approval would post into today's (now closed)
+    // period. A fresh attendance day (OUTSIDE is past every earlier bill) so
+    // the earlier bills have not consumed it.
+    await svc.recordContractorAttendance(
+      db,
+      actor,
+      day(OUTSIDE, annaId, [{ skill: 'mason', headcount: '1' }]),
+      { canManageContractors: true }
+    )
+    await svc.approveContractorAttendance(db, otherActor, period(annaId, { from: OUTSIDE, to: OUTSIDE }))
+
+    // The limit check runs before the posting, so this test needs its own
+    // limit row: it runs before the test that inserts the shared one.
+    await db
+      .insertInto('approval_limits')
+      .values({
+        role_key: LIMIT_ROLE,
+        document_type: 'expense',
+        max_value: 2000000,
+        requires_second_approval_above: null,
+        effective_from: '2026-04-01',
+      })
+      .execute()
+
+    const bill = await svc.generateContractorBill(
+      db,
+      actor,
+      billInput(annaId, { from: OUTSIDE, to: OUTSIDE })
+    )
+    expect(bill.rows).toBeGreaterThan(0)
+
+    let message = ''
+    let refused = false
+    try {
+      await svc.approveContractorBill(db, otherActor, bill.billId, [LIMIT_ROLE])
+    } catch (caught) {
+      refused = true
+      message = caught instanceof Error ? caught.message : String(caught)
+    }
+    expect(refused, 'the approval went through despite the closed period — the lock did not see the posting').toBe(true)
+    expect(message).toContain('closed accounting period')
+
+    // The whole approval rolled back: the bill is still a draft nobody
+    // approved, with no expense back-link. The expense row (if any was
+    // attempted) is gone with the transaction.
+    const after = await q.findContractorBill(db, bill.billId)
+    expect(after).toMatchObject({ status: 'draft', approved_at: null, expense_id: null })
+
+    const postings = await db
+      .selectFrom('expenses')
+      .select((eb) => eb.fn.countAll<number>().as('n'))
+      .where('source_table', '=', 'contractor_bills')
+      .where('source_id', '=', bill.billId)      .executeTakeFirstOrThrow()
+    expect(Number(postings.n)).toBe(0)
+    } finally {
+      await sql`delete from accounting_periods where id = ${closedPeriodId}`.execute(db)
+      closedPeriodId = null
+      // The limit row must go too: the next test asserts the empty-table
+      // refusal, and this test inserted its own row before that assertion
+      // could hold.
+      await sql`delete from approval_limits where role_key = ${LIMIT_ROLE}`.execute(db)
+    }
+  })
+
   it('refuses the person who generated it, before it even looks at the limit', async () => {
     await expect(svc.approveContractorBill(db, actor, firstBillId, [LIMIT_ROLE])).rejects.toThrow(
       /you generated bill/i
@@ -921,6 +1030,10 @@ describe('approving a contractor bill', () => {
     // This is the state the running system is in today: 8.2 has not supplied the
     // figures, the table is seeded empty, and so nothing can be approved. The
     // refusal has to say so rather than reading a missing row as unlimited.
+    // The closed-period test above runs first in this describe and leaves its
+    // own limit row behind — it deletes by role_key in its finally so this
+    // test still sees the empty table the seed produces.
+    await db.deleteFrom('approval_limits').where('role_key', '=', LIMIT_ROLE).execute()
     await expect(svc.approveContractorBill(db, otherActor, firstBillId, [LIMIT_ROLE])).rejects.toThrow(
       /No expense approval limit is set for your role/
     )
