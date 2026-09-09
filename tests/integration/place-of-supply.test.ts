@@ -97,6 +97,15 @@ function invoiceValues() {
     client_id: clientId,
     invoice_date: '2099-01-15',
     due_date: '2099-01-31',
+    // Migration 024: igst_paise is NOT NULL with no default, so a direct
+    // insert must state the split. Intra-state figures here; the split's
+    // own rules are client-invoices.test.ts's subject.
+    cgst_paise: 9_000,
+    sgst_paise: 9_000,
+    igst_paise: 0,
+    total_paise: 1_18_000,
+    taxable_paise: 1_00_000,
+    gst_pct: 18,
     created_by: userId,
   }
 }

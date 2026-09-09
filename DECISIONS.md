@@ -4162,3 +4162,55 @@ green, 316/316 in 11.
 The first draft of the probe in `tests/integration/` did NOT go red — the
 integration config collected it, correctly. The probe that proves the
 invariant has to land where no include reaches.
+
+### 29.5 IGST gets its column: sketch-drift in the opposite direction to 21.3, 2026-09-09
+
+**Migration 024** adds `client_invoices.igst_paise BIGINT NOT NULL` (no
+default) and `chk_inv_gst_branch`, which refuses a row carrying CGST+SGST
+and IGST together. **Row count at migration time: 0** (reported before
+writing the file), so no backfill was needed and none is written — the
+no-default rule of 27.4 applies in full: every writer states the split,
+and omitting the column is refused ("Field 'igst_paise' doesn't have a
+default value", proven by direct insert).
+
+**This is sketch-drift in the opposite direction to 21.3, and is not a
+prose-versus-DDL conflict.** 21.3 records the migration carrying a column
+the DDL sketch lacked. Here the §6.8 DDL block NAMED `igst_paise` and
+009's table never created it — the drift ran the other way. The tax
+regime independently requires the column: without it, an inter-state
+invoice's tax lives only inside total_paise and no query can report CGST,
+SGST and IGST separately for GSTR-1. Both authorities agree, so the column
+is added without reopening 21.3.
+
+**The CHECK is written so it cannot evaluate UNKNOWN on any member**
+(the migration-013/014 rule): `cgst_paise IS NOT NULL AND sgst_paise IS
+NOT NULL AND igst_paise IS NOT NULL AND ((igst = 0 AND cgst >= 0 AND sgst
+>= 0) OR (igst > 0 AND cgst = 0 AND sgst = 0))`. All three columns are NOT
+NULL in 009, so the conjuncts are belt-and-braces — but they keep the
+constraint correct against a future relaxation and make the clause read as
+the rule it is.
+
+**The stored invariant is proven by real rows in
+tests/integration/client-invoices.test.ts (5 new tests, 17 total):**
+
+- cgst + sgst + igst = total − taxable, asserted on stored rows from both
+  split branches (KA intra-state and MH inter-state, created through the
+  service with the adversarial clients.state fixtures untouched —
+  place_of_supply remains the only split input);
+- the zero-gst_pct shape stores 0 in all three tax columns and passes the
+  CHECK;
+- the empty-aggregate shape: SUM(cgst + sgst + igst) over a no-row
+  predicate reads COALESCEd 0, not NULL;
+- a direct insert carrying BOTH branches is refused by
+  `chk_inv_gst_branch` (the service can never produce the shape, so the
+  CHECK's proof must bypass the service);
+- the omitting insert is refused for the missing default.
+
+**Ripple the migration caused, and what it proves about the suite web:**
+period-lock.test.ts and place-of-supply.test.ts both insert client_invoices
+rows directly and both failed on the new NOT NULL column; the
+schema-constraints CHECK inventory failed on the unclassified constraint.
+All three were updated — fixture rows state the split,
+`chk_inv_gst_branch` joins EXPLICIT_CHECKS with its citation. A new
+constraint that leaves three suites red until each is reconciled is the
+web doing its job.

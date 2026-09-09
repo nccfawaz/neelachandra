@@ -214,6 +214,7 @@ export interface ClientInvoicesTable {
   taxable_paise: Generated<number>
   cgst_paise: Generated<number>
   sgst_paise: Generated<number>
+  igst_paise: number
   gst_pct: Generated<number>
   total_paise: Generated<number>
   retention_paise: Generated<number>

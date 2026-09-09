@@ -73,6 +73,11 @@ const db = getDb()
 const EXPLICIT_CHECKS = [
   'contractor_attendance.chk_ca_quantity',
   'contractor_attendance.chk_ca_work_type',
+  // Migration 024: an invoice carries either CGST+SGST or IGST, never both.
+  // Written with IS NOT NULL conjuncts so it cannot evaluate UNKNOWN on any
+  // member (three-valued-logic rule); proven by insert in
+  // client-invoices.test.ts ('a row carrying BOTH branches is refused').
+  'client_invoices.chk_inv_gst_branch',
   'client_invoices.chk_inv_pos_shape',
   'expenses.chk_exp_source_pair',
 ] as const

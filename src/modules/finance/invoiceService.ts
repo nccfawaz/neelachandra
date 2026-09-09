@@ -114,6 +114,11 @@ export async function createInvoiceFromMilestone(
         taxable_paise: split.taxablePaise,
         cgst_paise: split.cgstPaise,
         sgst_paise: split.sgstPaise,
+        // Migration 024 gives IGST its own column (the DDL block named it;
+        // 009 never created it — recorded as sketch-drift opposite to 21.3).
+        // The writer states the split; chk_inv_gst_branch refuses a row
+        // carrying both branches, so a wrong split fails loudly at insert.
+        igst_paise: split.igstPaise,
         gst_pct: gstPct,
         total_paise: split.totalPaise,
         retention_paise: retentionPaise,

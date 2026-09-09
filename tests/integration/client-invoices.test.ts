@@ -118,6 +118,8 @@ async function insertProjectWithClient(seq: number, state: string): Promise<numb
     })
     .executeTakeFirst()
   const clientId = Number(client.insertId ?? 0)
+  if (state === 'MH') clientIdKA = clientId
+  else if (state === 'KA') clientIdMH = clientId
   const project = await db
     .insertInto('projects')
     .values({
@@ -389,6 +391,135 @@ describe('rule 7 via the service path: the 021 trigger covers client invoices', 
     expect(ms.status).toBe('certified')
     expect(ms.invoice_id).toBeNull()
     void closedPeriodId
+  })
+})
+
+describe('the stored GST split (migration 024: igst_paise + chk_inv_gst_branch)', () => {
+  it('cgst + sgst + igst equals the tax portion of the total, on both split branches', async () => {
+    // One intra-state and one inter-state invoice, created through the
+    // service, then the sum checked against total − taxable. This is the
+    // stored invariant, not the in-memory return value.
+    const msKA = await insertMilestone(projectIdKA, 7, 1_00_000)
+    const ka = await createInvoiceFromMilestone(db, actor, {
+      milestoneId: msKA,
+      invoiceDate: '2099-01-25',
+      dueDate: '2099-01-31',
+      placeOfSupply: 'KA',
+      narration: null,
+    })
+    const msMH = await insertMilestone(projectIdMH, 2, 1_00_000)
+    const mh = await createInvoiceFromMilestone(db, actor, {
+      milestoneId: msMH,
+      invoiceDate: '2099-01-26',
+      dueDate: '2099-01-31',
+      placeOfSupply: 'MH',
+      narration: null,
+    })
+
+    const rows = await db
+      .selectFrom('client_invoices')
+      .select(['id', 'taxable_paise', 'cgst_paise', 'sgst_paise', 'igst_paise', 'total_paise'])
+      .where('id', 'in', [ka.invoiceId, mh.invoiceId])
+      .execute()
+    expect(rows.length).toBe(2)
+    for (const row of rows) {
+      const tax = Number(row.cgst_paise) + Number(row.sgst_paise) + Number(row.igst_paise)
+      expect(tax).toBe(Number(row.total_paise) - Number(row.taxable_paise))
+    }
+    // And each branch stores its own figures in its own column.
+    const kaRow = rows.find((r) => r.id === ka.invoiceId)!
+    expect(Number(kaRow.igst_paise)).toBe(0)
+    expect(Number(kaRow.cgst_paise)).toBe(9_000)
+    const mhRow = rows.find((r) => r.id === mh.invoiceId)!
+    expect(Number(mhRow.igst_paise)).toBe(18_000)
+    expect(Number(mhRow.cgst_paise)).toBe(0)
+    expect(Number(mhRow.sgst_paise)).toBe(0)
+  })
+
+  it('the zero-gst_pct shape stores 0 in all three tax columns and passes the CHECK', async () => {
+    const msZero = await insertMilestone(projectIdZero, 2, 1_00_000)
+    const zero = await createInvoiceFromMilestone(db, actor, {
+      milestoneId: msZero,
+      invoiceDate: '2099-01-27',
+      dueDate: '2099-01-31',
+      placeOfSupply: 'KA',
+      narration: null,
+    })
+    const row = await db
+      .selectFrom('client_invoices')
+      .select(['cgst_paise', 'sgst_paise', 'igst_paise', 'total_paise', 'taxable_paise'])
+      .where('id', '=', zero.invoiceId)
+      .executeTakeFirstOrThrow()
+    expect(Number(row.cgst_paise)).toBe(0)
+    expect(Number(row.sgst_paise)).toBe(0)
+    expect(Number(row.igst_paise)).toBe(0)
+    expect(Number(row.total_paise)).toBe(Number(row.taxable_paise))
+  })
+
+  it('the empty-aggregate shape: SUM over no invoice rows reads COALESCEd 0, not NULL', async () => {
+    const res = await sql<{ tax: number | null }>`
+      select coalesce(sum(cgst_paise + sgst_paise + igst_paise), 0) as tax
+      from client_invoices
+      where invoice_date = '2090-01-01'
+    `.execute(db)
+    expect(Number(res.rows[0]!.tax)).toBe(0)
+  })
+
+  it('a row carrying BOTH branches is refused by chk_inv_gst_branch', async () => {
+    let refused = false
+    try {
+      // A direct insert: the service can never produce this shape, so the
+      // proof that the CHECK fires has to bypass it. place_of_supply 'KA'
+      // with an IGST figure is the contradiction the constraint exists for.
+      await db.insertInto('client_invoices').values({
+        invoice_no: `PLIGST-${randomUUID().slice(0, 8)}`,
+        project_id: projectIdKA,
+        client_id: clientIdKA,
+        invoice_date: '2099-01-28',
+        due_date: '2099-01-31',
+        place_of_supply: 'KA',
+        taxable_paise: 1_00_000,
+        cgst_paise: 9_000,
+        sgst_paise: 9_000,
+        igst_paise: 18_000,
+        gst_pct: 18,
+        total_paise: 1_36_000,
+        status: 'draft',
+        created_by: userId,
+      }).execute()
+    } catch (err) {
+      refused = true
+      expect(String((err as Error).message)).toContain('chk_inv_gst_branch')
+    }
+    if (!refused) throw new Error('expected the both-branches row to be refused by chk_inv_gst_branch')
+  })
+
+  it('an IGST-only row with the cgst/sgst columns omitted is refused — NOT NULL, no default', async () => {
+    // The column has no DEFAULT (the migration-016 lesson): omitting it is
+    // refused, so every writer states the split rather than inheriting it.
+    let refused = false
+    try {
+      const { igst_paise: _omit, ...withoutIgst } = {
+        invoice_no: `PLIGST-${randomUUID().slice(0, 8)}`,
+        project_id: projectIdKA,
+        client_id: clientIdKA,
+        invoice_date: '2099-01-29',
+        due_date: '2099-01-31',
+        place_of_supply: 'KA',
+        taxable_paise: 1_00_000,
+        cgst_paise: 9_000,
+        sgst_paise: 9_000,
+        gst_pct: 18,
+        total_paise: 1_18_000,
+        status: 'draft' as const,
+        created_by: userId,
+      }
+      await db.insertInto('client_invoices').values(withoutIgst).execute()
+    } catch (err) {
+      refused = true
+      expect(String((err as Error).message)).toContain("Field 'igst_paise' doesn't have a default value")
+    }
+    if (!refused) throw new Error('expected the omitting insert to be refused')
   })
 })
 

@@ -322,6 +322,13 @@ describe('client_invoices: the lock fires on invoice_date', () => {
         invoice_date: OPEN_DATE,
         due_date: '2099-01-31',
         place_of_supply: 'KA',
+        // Migration 024: igst_paise NOT NULL, no default. Intra-state shape.
+        cgst_paise: 9_000,
+        sgst_paise: 9_000,
+        igst_paise: 0,
+        total_paise: 1_18_000,
+        taxable_paise: 1_00_000,
+        gst_pct: 18,
         created_by: userId,
       })
       .executeTakeFirst()
@@ -339,6 +346,12 @@ describe('client_invoices: the lock fires on invoice_date', () => {
           invoice_date: CLOSED_DATE,
           due_date: '2099-02-28',
           place_of_supply: 'KA',
+          cgst_paise: 9_000,
+          sgst_paise: 9_000,
+          igst_paise: 0,
+          total_paise: 1_18_000,
+          taxable_paise: 1_00_000,
+          gst_pct: 18,
           created_by: userId,
         })
         .execute(),
