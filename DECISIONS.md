@@ -4522,4 +4522,60 @@ grant change stop here first.
 **Proofs cited:** the direct-insert probe was observed (1 row, matching
 pair); the empty set was observed as the failure that motivated the
 self-seed (expected 0 to be greater than 0). Both in this session’s
-transcript; the committed test carries both comments.
+transcript; the committed test carries both comments.
+### 29.14 The OR-widens-the-audience sweep, 2026-09-09
+
+**Scope, stated.** Every permission check in src/ that ORs, unions, or
+falls back across two or more permissions. Proven to cover the claim by
+exhausting the three syntactic shapes a union can take: the perms-array
+tables (WIDGETS in dashboard/widgets.ts, nav.ts items), the spread
+constants passed to requirePermission (grep for
+`requirePermission(.*...|` and the named constants QUOTE_READ,
+QUOTE_APPROVE, ITEM_READ, REQ_CREATE, and the HR attendance triple), and
+the imperative OR helpers (canAny — zero call sites — and inline
+`|| perms.has` — zero matches). Any union outside these three shapes
+cannot be written in this codebase.
+
+**Every union found, with audiences from the live grants:**
+
+- WIDGETS (16 entries): the only union over money.
+  receivables_ageing had ORed invoice_manage with view_company_pnl —
+  fixed in 29.12; cash_position and month_revenue are pnl-only. No
+  remaining widget ORs a money permission with a weaker arm.
+- nav.ts: seven multi-permission items (dprs, snags, POs, quotes,
+  expenses, attendance, leave). Nav is convenience, not control: each
+  route behind these items is individually guarded, and the queries
+  behind them take canViewValue/canRates/canPay flags, so no union
+  exposes money here.
+- QUOTE_READ = quote_create OR quote_approve: audience is sales_exec,
+  ops_manager, project_manager, owner, accounts_manager. Intended.
+  Quote money inside is re-gated by canValue
+  (crm.view_pipeline_value) at list, detail and print; the Money cell
+  renders 'restricted', the figure is absent from the HTML.
+- QUOTE_APPROVE = quote_approve OR quote_discount_override: discount_override
+  is held by owner only, so the union equals the quote_approve audience
+  plus owner. Escalated discounts self-approve only below the
+  approval_limits ceiling (submitQuote), self-approval blocked above
+  it. No exposure found.
+- ITEM_READ = inventory.view OR item_manage: audience includes
+  site_supervisor. Item rates are re-gated by canRates
+  (inventory.view_rates: accounts_manager, ops_manager, owner,
+  project_manager) at stock, ledger and item screens. No exposure.
+- HR attendance route = employee_view OR attendance_record OR
+  attendance_approve: widest arm reaches site_supervisor, but the
+  compensation tab behind the same module is canPay (hr.payroll_view:
+  accounts_manager, hr_manager, owner) and 404s otherwise; the
+  period-override affordance is finance.period_close. No exposure.
+- canAny: defined, zero callers. Inline `|| perms.has`: zero matches.
+
+**Verdict: one defect (receivables_ageing, already fixed), no further
+fixes required.** The unions that remain are entry-widening for
+dual-audience screens whose money cells carry the stronger gate
+internally — exactly the shape the CLAUDE.md rule prescribes.
+
+**Pinned by** tests/unit/or-audience.test.ts (6 tests): every
+company-money widget demands view_company_pnl alone; the money audience
+is exactly owner + accounts_manager against the seed sets for all eight
+roles; no widget ORs a money permission with a weaker arm;
+projects_over_budget’s audience all hold view_cost; a weaker-permission
+role sees no money widget at all — refusal by absence, never a zero.

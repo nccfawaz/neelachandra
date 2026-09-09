@@ -343,3 +343,19 @@ directory list. A scope narrower than the claim is a clean report about
 the wrong subject — the same empty-green as a gate that executes
 nothing, wearing a survey's clothes.
 
+
+## OR widens the audience
+
+A permission check that ORs two permissions admits the union of their
+audiences, so the weaker arm decides who gets in. Writing
+`perms: [MONEY_PERMISSION, COMMON_PERMISSION]` hands the money figure to
+every COMMON_PERMISSION holder. The founding instance: the
+`receivables_ageing` dashboard widget listed
+`finance.invoice_manage OR finance.view_company_pnl`, and project_manager
+holds invoice_manage — so company-wide receivables rendered on a project
+manager’s dashboard (DECISIONS 29.12). Rule: a company-scale money figure
+is gated by its money permission ALONE; where a screen serves two
+audiences, gate the money cell inside the route with the single stronger
+permission (the canValue/canRates/canPay pattern) rather than widening the
+entry check. The sweep’s full enumeration and the pinning test are in
+DECISIONS 29.14 and tests/unit/or-audience.test.ts.
