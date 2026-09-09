@@ -3,6 +3,7 @@ import { readdir } from 'node:fs/promises'
 import path from 'node:path'
 import { promisify } from 'node:util'
 import { describe, expect, it } from 'vitest'
+import { resolveConfig } from 'vitest/node'
 
 /**
  * The gate-collection tripwire.
@@ -23,25 +24,45 @@ import { describe, expect, it } from 'vitest'
  * fails here, and a file that stops being collected fails here — instead of
  * silently leaving the gate.
  *
- * Each config's expectation is computed from its own include/exclude globs,
- * so adding a fifth config means adding one line to CONFIGS, not editing
- * logic.
+ * Each config's expectation is DERIVED from the config file itself via
+ * vitest's own `resolveConfig` — never restated here. A CONFIGS table that
+ * copies the globs by hand is the AUTO_JSON_CHECKS shape: a wrong config and
+ * a wrong table agree, and the tripwire is silent. Importing the resolution
+ * means there is exactly one place each glob lives. A fourth suite config is
+ * one entry in CONFIG_NAMES, not a copy of its globs.
  */
 
 const run = promisify(execFile)
 
+/** The three suite configs, by path. Globs are never written here. */
+const CONFIG_NAMES = ['vitest.config.ts', 'vitest.integration.config.ts', 'vitest.e2e.config.ts']
+
 interface SuiteConfig {
-  /** Path relative to the project root, as passed to --config. */
   config: string
   include: string[]
   exclude: string[]
 }
 
-const CONFIGS: SuiteConfig[] = [
-  { config: 'vitest.config.ts', include: ['tests/**/*.test.ts'], exclude: ['tests/integration/**', 'tests/e2e/**'] },
-  { config: 'vitest.integration.config.ts', include: ['tests/integration/**/*.test.ts'], exclude: [] },
-  { config: 'vitest.e2e.config.ts', include: ['tests/e2e/**/*.test.ts'], exclude: [] },
-]
+/**
+ * Resolve a config file through vitest itself. This is the same resolution
+ * the runner performs, so the include/exclude read here cannot disagree with
+ * what the run collects unless vitest itself is inconsistent.
+ */
+async function readSuiteConfig(config: string): Promise<SuiteConfig> {
+  const { vitestConfig } = await resolveConfig({ config })
+  // Verbatim: no filtering. Filtering a glob out because it does not start
+  // with 'tests/' would mishandle a config that excludes 'money.test.ts'
+  // bare — the derived table would claim a file the run does not collect,
+  // red for the wrong reason. The disk enumeration only names tests/ files,
+  // so vitest's node_modules defaults are harmless here.
+  const include = vitestConfig.include ?? []
+  const exclude = vitestConfig.exclude ?? []
+  expect(
+    include.some((g) => g.startsWith('tests/')),
+    `${config} resolves to no tests/ include glob — readSuiteConfig is broken`
+  ).toBe(true)
+  return { config, include, exclude }
+}
 
 /**
  * Minimal glob-to-regex for the shapes this repo uses: *, *-glob, and literal / .
@@ -113,6 +134,9 @@ describe('the gate collects every test file it claims', () => {
         )
       }
       const onDisk = [...diskByDir.values()].flat()
+
+      const CONFIGS: SuiteConfig[] = []
+      for (const name of CONFIG_NAMES) CONFIGS.push(await readSuiteConfig(name))
 
       for (const cfg of CONFIGS) {
         const claimed = onDisk.filter((f) => claimedBy(cfg, f))

@@ -3980,3 +3980,43 @@ the last commit. With `PORT=3001` exported (or unset), every suite matches the
 figures above. The lesson recorded: **a suite's baseline is a function of the
 shell it inherits, and `??=` in a setup file is a documented gap, not a
 coincidence to trip over twice.**
+
+### 29.3 gate-collection's CONFIGS is derived from the configs, not copied
+
+**What changed.** `tests/gate-collection.test.ts` used to restate each suite
+config's include/exclude globs in a hand-written `CONFIGS` table. That is the
+`AUTO_JSON_CHECKS` mirror shape (CLAUDE.md, "An exemption cites the spec"): a
+wrong config and a wrong table agree, and the tripwire stays green while
+asserting against a fiction. The table now has **no globs in it at all** —
+`CONFIG_NAMES` lists the three config paths, and each is resolved through
+vitest's own `resolveConfig` (`vitest/node`), the same resolution the runner
+performs, and the include/exclude are read verbatim from the resolved config.
+The `resolveConfig`-based read cannot disagree with what the run collects
+unless vitest itself is inconsistent. Two details are load bearing:
+
+- The globs are taken **verbatim, unfiltered**. Filtering out globs that do
+  not start with `tests/` would mishandle a bare exclude like
+  `'money.test.ts'` and make the derived table claim a file the run does not
+  collect — red for the wrong reason.
+- `resolveConfig` merges vitest's own node_modules defaults into
+  `exclude`; they are harmless because the disk enumeration only ever names
+  `tests/` files, and the include floor (28.1) still guards the shape.
+
+**Proof, watched both ways.** With `exclude: ['tests/integration/**',
+'tests/e2e/**', 'tests/money.test.ts']` temporarily added to
+`vitest.config.ts` and the test file untouched:
+
+- the **derived** tripwire stayed green — the resolved exclude made
+  `claimed` miss `tests/money.test.ts`, and collected (10 files) agreed;
+  cross-checked independently with vitest's own `picomatch` against the
+  resolved globs (money.test.ts claimed: false), so the test's helper and
+  vitest's globber agree;
+- the **old hand-copied table**, re-inserted by the same run as a harness,
+  went red on the identical config: `vitest.config.ts claims 11 files but
+  collects only 10; not collected: tests/money.test.ts`.
+
+That contrast is the whole point: the same silent config drift is green under
+the derived table (correct — the run genuinely collects what the config
+claims) and red under the copied one (the copied table disagreed with
+reality). The config was restored and the harness removed; the full unit gate
+re-run green at 316 in 11 files.
