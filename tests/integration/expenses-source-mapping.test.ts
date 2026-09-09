@@ -40,18 +40,16 @@ const db = getDb()
  *   campaign spend is phase 5). They stay in the mapping as 'no writer yet'
  *   so a future writer has a row to satisfy and the suite reds if one
  *   appears without being recorded.
- * - contractor_bill: DECISIONS 18.3/29.4 record the DESIGN (source_table
- *   'contractor_bills'); the expenses-row writer itself does not exist yet —
- *   hr/service.ts approveContractorBill writes the intent into the audit
- *   payload (finance_source_type/table/id) and leaves expense_id NULL until
- *   the posting route lands. Recorded as designed-not-written.
+ * - contractor_bill: hr/service.ts approveContractorBill writes the expense
+ *   row in the approval transaction (DECISIONS 29.8) — the posting 18.8
+ *   deferred has landed; expense_id is back-linked on the bill.
  * - payroll: no writer; payroll runs through attendance approval, not an
  *   expenses row, and whether it ever becomes one is §6.8-adjacent.
  */
 const WRITER_MAPPING: Record<string, { sourceTable: string | null; status: string }> = {
   manual: { sourceTable: null, status: "written by finance createExpense + issueSiteAdvance ('manual', NULL, NULL)" },
   grn: { sourceTable: 'goods_receipts', status: 'no writer yet — inventory GRN post does not write an expense row' },
-  contractor_bill: { sourceTable: 'contractor_bills', status: 'designed (DECISIONS 18.3), writer not landed — audit payload carries the intent' },
+  contractor_bill: { sourceTable: 'contractor_bills', status: "written by hr approveContractorBill (DECISIONS 29.8) — same transaction as the approval, expense_id back-linked" },
   equipment_deployment: { sourceTable: 'equipment_deployments', status: 'no writer yet — fk_eqd_expense exists but nothing fills it' },
   campaign_spend: { sourceTable: 'campaigns', status: 'no writer yet — marketing phase 5' },
   payroll: { sourceTable: null, status: 'no writer; payroll is attendance-driven, not an expense posting' },
@@ -98,17 +96,48 @@ describe('the expenses source_type mapping (closes §20.2)', () => {
     }
   })
 
-  it('the manual writer actually writes the mapped pair', async () => {
+  it('the mapped pair is observable in the database, and every observed row matches', async () => {
+    // If the table holds no rows at all, write one through the manual
+    // writer's own insert shape so the group-by below has something to
+    // observe — a vacuous green on an empty set is the empty-green rule
+    // (DECISIONS 28.1). Seeded by direct insert (this suite is the
+    // mapping's own, not a writer test) and cleaned up below.
+    const before = await sql<{ n: unknown }>`select count(*) as n from expenses`.execute(db)
+    let probeId: number | null = null
+    if (Number(before.rows[0]?.n ?? 0) === 0) {
+      // The dev database holds no permanent user rows (fences: no real
+      // staff rows), so seed a marked probe user the sweep can clear.
+      await (await getPool()).query("INSERT INTO users (email, full_name, status, must_change_password) VALUES ('probe.mapping@example.invalid', '[fixture] mapping probe', 'active', 0)")
+      const [users] = await (await getPool()).query("SELECT id FROM users WHERE email = 'probe.mapping@example.invalid'") as [{ id: number }[], unknown]
+      expect(users.length, 'probe user insert failed — cannot prove the mapping').toBeGreaterThan(0)
+      const [res] = await (await getPool()).query(
+        "INSERT INTO expenses (expense_no, expense_date, expense_type, payee_type, payee_name, status, source_type, total_paise, created_by) VALUES ('PROBE-MAP-1', '2026-09-01', 'material_purchase', 'vendor', 'mapping probe', 'draft', 'manual', 1, ?)",
+        [users[0].id]
+      ) as [{ insertId: number }, unknown]
+      probeId = res.insertId
+    }
+    try {
     // Prove the mapping against reality: every expense row in the fixture
     // database with source_type 'manual' carries source_table NULL, and
     // every row with a non-manual type carries the mapped table.
     const rows = await sql<{ source_type: string; source_table: string | null; n: unknown }>`
       select source_type, source_table, count(*) as n from expenses group by source_type, source_table
     `.execute(db)
+    // Non-zero floor (DECISIONS 28.1): with the seed above, this group-by
+    // always has at least one row to observe. Without it the suite ran
+    // green against an empty table — observed live: the group-by saw 0
+    // rows on the dev database between suites and proved nothing.
+    expect(rows.rows.length, 'the group-by observed ZERO expense rows — this test proved nothing; the self-seed failed').toBeGreaterThan(0)
     for (const row of rows.rows) {
       const mapped = WRITER_MAPPING[row.source_type]
       expect(mapped, `expenses holds source_type '${row.source_type}' which the mapping does not record — add the writer's pair to WRITER_MAPPING or investigate the row`).toBeDefined()
       expect(row.source_table, `source_type '${row.source_type}' appears with source_table '${row.source_table}' but the mapping records '${mapped!.sourceTable}'`).toBe(mapped!.sourceTable)
+    }
+    } finally {
+      if (probeId !== null) {
+        await (await getPool()).query('DELETE FROM expenses WHERE id = ?', [probeId])
+      }
+      await (await getPool()).query("DELETE FROM users WHERE email = 'probe.mapping@example.invalid'")
     }
   })
 })

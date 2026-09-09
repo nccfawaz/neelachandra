@@ -4492,4 +4492,34 @@ suite until the visibility decision is recorded here.
 **Owner question, not a code decision.** Whether ops_manager should see
 contract value, and whether any role beyond owner should see company pnl,
 is filed in §17.3 and OWNER_QUESTIONS item 12; the tripwire makes any
-grant change stop here first.
+grant change stop here first.
+### 29.13 The mapping tripwire proven live, and its entry un-staled, 2026-09-09
+
+**Task 1 asked whether the tripwire can still see reality. Three answers:**
+
+1. **The mapping entry existed but was stale.**
+   'contractor_bill': mapped to 'contractor_bills' since 75c54e1, but
+   its status text still said 'writer not landed' after 29.8 landed the
+   writer. A mapping that records design history rather than current
+   writers is the same hand-maintained-mirror risk as the tripwire
+   itself; the entry now says what 29.8 shipped, and cites it.
+2. **The group-by observed reality.** A direct-insert probe row
+   (source_type contractor_bill, source_table contractor_bills) was seen
+   by the group-by and matched the mapping — the test is live, not
+   observing an empty set. When run between suites the group-by sees
+   0 rows (the dev database holds no permanent expense rows), so the
+   old test was a vacuous green in that state: it looped zero times and
+   passed. Fixture teardown runs before it in the gate, which is exactly
+   why it saw zero.
+3. **The empty-green hole is closed by seeding, not by a floor that
+   lies.** The test now seeds a marked probe expense (and a marked probe
+   user, because the dev database holds no permanent users) when the
+   table is empty, asserts the group-by is non-zero, verifies every
+   observed pair against the mapping, and deletes its probe in a finally.
+   A floor alone could not work here: the suite cannot demand rows other
+   suites cleaned up, so it makes its own observation possible.
+
+**Proofs cited:** the direct-insert probe was observed (1 row, matching
+pair); the empty set was observed as the failure that motivated the
+self-seed (expected 0 to be greater than 0). Both in this session’s
+transcript; the committed test carries both comments.
