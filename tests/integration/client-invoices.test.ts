@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { sql } from 'kysely'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { getDb } from '../../src/db/kysely.js'
+import { sweepFixtures } from './fixture-markers.js'
 import { closePool, getPool } from '../../src/db/pool.js'
 import { createInvoiceFromMilestone } from '../../src/modules/finance/invoiceService.js'
 import { createPayment, allocatePayment } from '../../src/modules/finance/service.js'
@@ -140,12 +141,16 @@ async function insertProjectWithClient(seq: number, state: string): Promise<numb
 }
 
 beforeAll(async () => {
+  // Sweep any fixture rows a crashed predecessor left behind, BEFORE the
+  // high-water marks are read (DECISIONS 29.4).
+  await sweepFixtures(db)
+
   for (const table of TRACKED) {
     const res = await sql<{ n: number | null }>`select max(id) as n from ${sql.table(table)}`.execute(db)
     highWater.set(table, Number(res.rows[0]?.n ?? 0))
   }
 
-  userId = await insertUser(`fixture.inv.${randomUUID().slice(0, 8)}@example.invalid`, 'Fixture Invoice User', RAISER_ROLE)
+  userId = await insertUser(`fixture.inv.${randomUUID().slice(0, 8)}@example.invalid`, '[fixture] Invoice User', RAISER_ROLE)
   actor = { userId, ip: '127.0.0.1' }
 
   // KA project whose client is registered in MH, and vice versa. If the
@@ -159,12 +164,13 @@ beforeAll(async () => {
   await db.updateTable('projects').set({ gst_pct: 0 }).where('id', '=', projectIdZero).execute()
 
   // A closed period far in the fixture future, for the trigger shape.
-  // ('2096-97' — a prior run's '2097-98' fixture left a row behind once,
-  // and uq_period (financial_year, month) collides on reuse.)
+  // The year carries the TF- fixture prefix (fixture-markers.ts): a period's
+  // identity is (financial_year, month), so a crashed run's leftover period
+  // collides on uq_period unless the sweep clears the prefix first.
   const closedPeriod = await db
     .insertInto('accounting_periods')
     .values({
-      financial_year: '2096-97',
+      financial_year: 'TF-9697',
       month: 12,
       period_start: '2096-12-01',
       period_end: '2096-12-31',

@@ -1,6 +1,7 @@
 import { sql } from 'kysely'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { getDb } from '../../src/db/kysely.js'
+import { sweepFixtures } from './fixture-markers.js'
 import { closePool } from '../../src/db/pool.js'
 import { addDays, today } from '../../src/lib/dates.js'
 import { parseJsonColumn } from '../../src/lib/json.js'
@@ -263,6 +264,10 @@ async function lastAudit(action: string) {
 }
 
 beforeAll(async () => {
+  // Sweep any fixture rows a crashed predecessor left behind, BEFORE the
+  // high-water marks are read (DECISIONS 29.4).
+  await sweepFixtures(db)
+
   for (const table of TRACKED) {
     const res = await sql<{ n: number | null }>`select max(id) as n from ${sql.table(table)}`.execute(db)
     highWater.set(table, Number(res.rows[0]?.n ?? 0))
@@ -272,7 +277,7 @@ beforeAll(async () => {
     .insertInto('users')
     .values({
       email: 'fixture.contractor.officer@example.invalid',
-      full_name: 'Fixture Contractor Officer',
+      full_name: '[fixture] Contractor Officer',
       status: 'active',
       must_change_password: 0,
     })
@@ -285,7 +290,7 @@ beforeAll(async () => {
     .insertInto('users')
     .values({
       email: 'fixture.contractor.approver@example.invalid',
-      full_name: 'Fixture Contractor Approver',
+      full_name: '[fixture] Contractor Approver',
       status: 'active',
       must_change_password: 0,
     })

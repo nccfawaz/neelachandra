@@ -1,6 +1,7 @@
 import { sql } from 'kysely'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { getDb } from '../../src/db/kysely.js'
+import { sweepFixtures } from './fixture-markers.js'
 import { closePool } from '../../src/db/pool.js'
 import { addDays, today } from '../../src/lib/dates.js'
 import { parseJsonColumn } from '../../src/lib/json.js'
@@ -59,8 +60,8 @@ const TRACKED = [
 
 const highWater = new Map<string, number>()
 
-const HR_OFFICER = { email: 'fixture.hr.officer@example.invalid', full_name: 'Fixture HR Officer' }
-const STAFF_LOGIN = { email: 'fixture.staff.beta@example.invalid', full_name: 'Fixture Employee Beta' }
+const HR_OFFICER = { email: 'fixture.hr.officer@example.invalid', full_name: '[fixture] HR Officer' }
+const STAFF_LOGIN = { email: 'fixture.staff.beta@example.invalid', full_name: '[fixture] Employee Beta' }
 
 /** CHAR(64), the sha256 of a cookie that never existed. */
 const SESSION_ID = 'f0'.repeat(32)
@@ -87,6 +88,10 @@ async function insertUser(u: { email: string; full_name: string }): Promise<numb
 }
 
 beforeAll(async () => {
+  // Sweep any fixture rows a crashed predecessor left behind, BEFORE the
+  // high-water marks are read (DECISIONS 29.4).
+  await sweepFixtures(db)
+
   for (const table of TRACKED) {
     const res = await sql<{ n: number | null }>`select max(id) as n from ${sql.table(table)}`.execute(db)
     highWater.set(table, Number(res.rows[0]?.n ?? 0))
@@ -168,7 +173,7 @@ afterAll(async () => {
  */
 function employeeInput(over: Record<string, unknown> = {}) {
   return employeeSchema.parse({
-    fullName: 'Fixture Employee Beta',
+    fullName: '[fixture] Employee Beta',
     fatherOrSpouseName: 'Fixture Parent Beta',
     dateOfBirth: '1994-06-15',
     gender: 'male',
@@ -192,7 +197,7 @@ function employeeInput(over: Record<string, unknown> = {}) {
     uan: '100200300400',
     pfNumber: 'KN/BNG/0012345/001',
     esiNumber: '3100012345',
-    bankAccountName: 'Fixture Employee Beta',
+    bankAccountName: '[fixture] Employee Beta',
     bankAccountNo: '00112233445566',
     bankIfsc: 'hdfc0001234',
     ...over,
@@ -307,7 +312,7 @@ describe('the employee master (6.6 rules 1 and 6)', () => {
     // before we see it and Object.keys on the string would be the characters.
     const after = parseJsonColumn(row.after_json) as Record<string, unknown>
     expect(after.employee_code).toBe(`EMP${String(staffId).padStart(4, '0')}`)
-    expect(after.full_name).toBe('Fixture Employee Beta')
+    expect(after.full_name).toBe('[fixture] Employee Beta')
     // audit.view is a wider grant than hr.employee_view, so these must not be
     // in the entry at all -- not blanked, absent.
     const keys = Object.keys(after)
@@ -420,7 +425,7 @@ describe('compensation as a revision history (6.6 rule 5)', () => {
     expect(Number(history[0]!.basic_paise)).toBe(4000000)
     expect(Number(history[0]!.conveyance_paise)).toBe(160000)
     expect(history[0]!.site_allowance_paise).toBeNull()
-    expect(history[0]!.approved_by_name).toBe('Fixture HR Officer')
+    expect(history[0]!.approved_by_name).toBe('[fixture] HR Officer')
   })
 
   it('closes the previous period the day before the new one starts', async () => {
@@ -631,7 +636,7 @@ describe('the exit checklist (6.6 rule 7)', () => {
         expense_type: 'other',
         payee_type: 'employee',
         employee_id: staffId,
-        payee_name: 'Fixture Employee Beta',
+        payee_name: '[fixture] Employee Beta',
         status: 'approved',
         taxable_paise: 5000000,
         total_paise: 5000000,

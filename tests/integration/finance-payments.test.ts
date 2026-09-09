@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { sql } from 'kysely'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { getDb } from '../../src/db/kysely.js'
+import { sweepFixtures } from './fixture-markers.js'
 import { closePool, getPool } from '../../src/db/pool.js'
 import { createExpense, submitExpense, approveExpense, createPayment, allocatePayment, msmeAgeing } from '../../src/modules/finance/service.js'
 import { UnprocessableError } from '../../src/lib/errors.js'
@@ -70,13 +71,17 @@ async function insertUser(email: string, fullName: string, roleId: number): Prom
 }
 
 beforeAll(async () => {
+  // Sweep any fixture rows a crashed predecessor left behind, BEFORE the
+  // high-water marks are read (DECISIONS 29.4).
+  await sweepFixtures(db)
+
   for (const table of TRACKED) {
     const res = await sql<{ n: number | null }>`select max(id) as n from ${sql.table(table)}`.execute(db)
     highWater.set(table, Number(res.rows[0]?.n ?? 0))
   }
 
-  raiser = { userId: await insertUser(`fixture.pay.raiser.${randomUUID().slice(0, 8)}@example.invalid`, 'Fixture Pay Raiser', RAISER_ROLE), ip: '127.0.0.1' }
-  approver = { userId: await insertUser(`fixture.pay.approver.${randomUUID().slice(0, 8)}@example.invalid`, 'Fixture Pay Approver', APPROVER_ROLE), ip: '127.0.0.1' }
+  raiser = { userId: await insertUser(`fixture.pay.raiser.${randomUUID().slice(0, 8)}@example.invalid`, '[fixture] Pay Raiser', RAISER_ROLE), ip: '127.0.0.1' }
+  approver = { userId: await insertUser(`fixture.pay.approver.${randomUUID().slice(0, 8)}@example.invalid`, '[fixture] Pay Approver', APPROVER_ROLE), ip: '127.0.0.1' }
 
   const client = await db
     .insertInto('clients')

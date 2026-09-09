@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { sql } from 'kysely'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { getDb } from '../../src/db/kysely.js'
+import { sweepFixtures } from './fixture-markers.js'
 import { closePool, getPool } from '../../src/db/pool.js'
 import { createExpense, submitExpense, approveExpense } from '../../src/modules/finance/service.js'
 import { ForbiddenError, UnprocessableError } from '../../src/lib/errors.js'
@@ -68,13 +69,17 @@ async function insertUser(email: string, fullName: string, roleId: number): Prom
 }
 
 beforeAll(async () => {
+  // Sweep any fixture rows a crashed predecessor left behind, BEFORE the
+  // high-water marks are read (DECISIONS 29.4).
+  await sweepFixtures(db)
+
   for (const table of TRACKED) {
     const res = await sql<{ n: number | null }>`select max(id) as n from ${sql.table(table)}`.execute(db)
     highWater.set(table, Number(res.rows[0]?.n ?? 0))
   }
 
-  raiser = { userId: await insertUser(`fixture.finance.raiser.${randomUUID().slice(0, 8)}@example.invalid`, 'Fixture Finance Raiser', RAISER_ROLE), ip: '127.0.0.1' }
-  approver = { userId: await insertUser(`fixture.finance.approver.${randomUUID().slice(0, 8)}@example.invalid`, 'Fixture Finance Approver', APPROVER_ROLE), ip: '127.0.0.1' }
+  raiser = { userId: await insertUser(`fixture.finance.raiser.${randomUUID().slice(0, 8)}@example.invalid`, '[fixture] Finance Raiser', RAISER_ROLE), ip: '127.0.0.1' }
+  approver = { userId: await insertUser(`fixture.finance.approver.${randomUUID().slice(0, 8)}@example.invalid`, '[fixture] Finance Approver', APPROVER_ROLE), ip: '127.0.0.1' }
 
   const client = await db
     .insertInto('clients')
@@ -214,7 +219,7 @@ describe('rule 3: dual approval above the threshold', () => {
 
   it('a second, different approver completes the approval', async () => {
     // The second approver needs the same role; use a third user.
-    const third = { userId: await insertUser(`fixture.finance.second.${randomUUID().slice(0, 8)}@example.invalid`, 'Fixture Finance Second Approver', APPROVER_ROLE), ip: '127.0.0.1' as string | null }
+    const third = { userId: await insertUser(`fixture.finance.second.${randomUUID().slice(0, 8)}@example.invalid`, '[fixture] Finance Second Approver', APPROVER_ROLE), ip: '127.0.0.1' as string | null }
     // Find the pending expense from the previous test.
     const pending = await db.selectFrom('expenses').select('id').where('status', '=', 'pending_approval').where('project_id', '=', projectId).orderBy('id', 'desc').executeTakeFirstOrThrow()
     const result = await approveExpense(db, third, Number(pending.id), ['accounts_manager'])

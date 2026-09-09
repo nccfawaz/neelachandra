@@ -1,6 +1,7 @@
 import { sql } from 'kysely'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { getDb } from '../../src/db/kysely.js'
+import { sweepFixtures } from './fixture-markers.js'
 import { closePool } from '../../src/db/pool.js'
 import { addDays, isWorkingDay, today } from '../../src/lib/dates.js'
 import { parseJsonColumn } from '../../src/lib/json.js'
@@ -171,6 +172,10 @@ async function cell(employeeId: number, date: string) {
 }
 
 beforeAll(async () => {
+  // Sweep any fixture rows a crashed predecessor left behind, BEFORE the
+  // high-water marks are read (DECISIONS 29.4).
+  await sweepFixtures(db)
+
   for (const table of TRACKED) {
     const res = await sql<{ n: number | null }>`select max(id) as n from ${sql.table(table)}`.execute(db)
     highWater.set(table, Number(res.rows[0]?.n ?? 0))
@@ -180,7 +185,7 @@ beforeAll(async () => {
     .insertInto('users')
     .values({
       email: 'fixture.attendance.officer@example.invalid',
-      full_name: 'Fixture Attendance Officer',
+      full_name: '[fixture] Attendance Officer',
       status: 'active',
       must_change_password: 0,
     })
@@ -1038,7 +1043,7 @@ describe('rejecting, and withdrawing', () => {
     expect(row!.reject_reason).toBe('Site is short-handed that week')
     // approved_by is the only decision-maker column the table has, so a rejection
     // stamps it too and the list resolves it to a name.
-    expect(row!.decided_by_name).toBe('Fixture Attendance Officer')
+    expect(row!.decided_by_name).toBe('[fixture] Attendance Officer')
 
     expect(await cell(gammaId, workingDayIn(30))).toBeUndefined()
     const balances = await db
@@ -1419,7 +1424,7 @@ describe('the month matrix, one post for a whole month (spec 1761)', () => {
       .insertInto('users')
       .values({
         email: 'fixture.matrix.officer@example.invalid',
-        full_name: 'Fixture Matrix Officer',
+        full_name: '[fixture] Matrix Officer',
         status: 'active',
         must_change_password: 0,
       })

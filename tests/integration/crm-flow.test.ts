@@ -6,6 +6,7 @@ import { addDays, today } from '../../src/lib/dates.js'
 import * as q from '../../src/modules/crm/queries.js'
 import * as svc from '../../src/modules/crm/service.js'
 import { leadSchema, quoteSchema, visitCompleteSchema } from '../../src/modules/crm/schemas.js'
+import { sweepFixtures } from './fixture-markers.js'
 
 /*
  * The CRM module, executed against MariaDB.
@@ -70,8 +71,8 @@ const TRACKED = [
 const highWater = new Map<string, number>()
 
 /** Fake staff. Open question 8.1 is unanswered, so no real name appears here. */
-const SELLER = { email: 'fixture.seller@example.invalid', full_name: 'Fixture Seller One' }
-const APPROVER = { email: 'fixture.approver@example.invalid', full_name: 'Fixture Approver Two' }
+const SELLER = { email: 'fixture.seller@example.invalid', full_name: '[fixture] Seller One' }
+const APPROVER = { email: 'fixture.approver@example.invalid', full_name: '[fixture] Approver Two' }
 const SALES_EXEC_ROLE = 8
 
 let seller = { userId: 0, ip: '127.0.0.1' as string | null }
@@ -95,6 +96,10 @@ async function insertUser(u: { email: string; full_name: string }): Promise<numb
 }
 
 beforeAll(async () => {
+  // Sweep any fixture rows a crashed predecessor left behind, BEFORE the
+  // high-water marks are read (DECISIONS 29.4). The assignableUsers count
+  // below reads the whole users table, so a leftover user row poisons it.
+  await sweepFixtures(db)
   for (const table of TRACKED) {
     const res = await sql<{ n: number | null }>`select max(id) as n from ${sql.table(table)}`.execute(db)
     highWater.set(table, Number(res.rows[0]?.n ?? 0))

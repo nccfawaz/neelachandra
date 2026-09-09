@@ -4214,3 +4214,41 @@ All three were updated — fixture rows state the split,
 `chk_inv_gst_branch` joins EXPLICIT_CHECKS with its citation. A new
 constraint that leaves three suites red until each is reconciled is the
 web doing its job.
+
+### 29.6 Fixture isolation: the marker sweep, chosen over scoping counts, 2026-09-09
+
+**The shape fixed, not the two incidents.** A user row without its
+user_roles row is visible to every suite that counts users, and a crashed
+run's leftover accounting_periods row collides on uq_period
+(financial_year, month). Both are the same shape: fixture rows whose
+cleanup never ran poison the next run.
+
+**The choice: an identifiable marker with child-first teardown, not scoped
+counting.** Scoped counting (assert only on rows the suite owns) would
+have left the period collision unfixed — a uq_period collision is not a
+count, it is an insert failure — and would have taught every future
+counting assertion to distrust the table. The marker fixes both and keeps
+the counts honest: `full_name`/`name` beginning with the `[fixture]`
+marker, fixture periods under the `TF-` year prefix, and a shared
+`sweepFixtures` (tests/integration/fixture-markers.ts) that deletes
+children first (user_roles before users) and runs at the START of every
+suite's beforeAll as well as in afterAll — so a crashed predecessor's
+debris is cleared before the high-water marks are read.
+
+**Proven by the twice-run test.** Crash debris planted by hand (a fixture
+user with no user_roles row, a `TF-9697` closed period — the exact shapes
+29.4 recorded), then the full integration gate run twice in a row:
+
+- RUN 1 (debris present): `Test Files 14 passed (14) / Tests 282 passed (282)`
+- RUN 2 (immediately after): `Test Files 14 passed (14) / Tests 282 passed (282)`
+- after both: `fixture users left: 0 fixture periods left: 0`
+
+Before the sweep, RUN 1 under the same debris failed 5 tests (the
+crm-flow assignableUsers count at 4) or died in beforeAll on the period
+collision — both incidents 29.4 recorded.
+
+**What the sweep deliberately does not touch:** expenses, payments,
+client_invoices, projects, clients, leads. Each suite owns those through
+its own high-water id cleanup, and a global delete there would reach
+across suites mid-run. The user and period tables are swept globally
+because those are the two shapes whose identity crosses suites.

@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { sql } from 'kysely'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { getDb } from '../../src/db/kysely.js'
+import { sweepFixtures } from './fixture-markers.js'
 import { closePool } from '../../src/db/pool.js'
 import { issueSiteAdvance, openAdvanceOutstanding } from '../../src/modules/finance/service.js'
 import { runBudgetAlerts } from '../../src/modules/finance/budgetAlerts.js'
@@ -58,12 +59,16 @@ async function insertUser(email: string, fullName: string, roleId: number): Prom
 }
 
 beforeAll(async () => {
+  // Sweep any fixture rows a crashed predecessor left behind, BEFORE the
+  // high-water marks are read (DECISIONS 29.4).
+  await sweepFixtures(db)
+
   for (const table of TRACKED) {
     const res = await sql<{ n: number | null }>`select max(id) as n from ${sql.table(table)}`.execute(db)
     highWater.set(table, Number(res.rows[0]?.n ?? 0))
   }
 
-  actor = { userId: await insertUser(`fixture.adv.actor.${randomUUID().slice(0, 8)}@example.invalid`, 'Fixture Advance Actor', 2), ip: '127.0.0.1' }
+  actor = { userId: await insertUser(`fixture.adv.actor.${randomUUID().slice(0, 8)}@example.invalid`, '[fixture] Advance Actor', 2), ip: '127.0.0.1' }
   // The actor also holds accounts_manager so the budget-alert notification
   // recipients query finds at least one active watcher (roles 1 and 6).
   await db.insertInto('user_roles').values({ user_id: actor.userId, role_id: 6 }).execute()
