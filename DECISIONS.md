@@ -1775,8 +1775,18 @@ blockers read `payee_type = 'employee'` expenses and attendance, not imprest adv
 An employee holding an open site advance can exit today with no blocker raised for it. The question
 is whether an open advance should block exit the way an unsettled store issue does, or whether an
 exit with an open advance is a finance matter (the advance is recovered from the final payment)
-rather than an HR one. It joins rate precedence and the stuck clerk as a §6.8 question only the
-owner can answer.
+rather than an HR one. It joins rate precedence and the stuck clerk as a §6.8 question only the owner can answer.
+
+**Added 2026-09-09 — does retention ever vary by milestone?** §6.8 rule 5
+deducts a retention percentage on every milestone invoice. The system reads
+the percentage from the project row reached through the milestone — the
+project_milestones table carries no retention column of its own (29.5, and
+the reading recorded at 26.4). What the owner should confirm: retention
+never varies per milestone. If a milestone can carry its own percentage —
+a higher hold early, nothing on the final account — that is a new column on
+project_milestones plus an invoice-service change, and 26.4's statement of
+where the percentage lives must be revisited with it. The question is also
+on OWNER_QUESTIONS.md (item 11) so an answer can be filed against it.
 
 ## 18. HR, third slice: contractor labour and bills, 2026-09-05
 
