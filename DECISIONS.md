@@ -4128,3 +4128,37 @@ cleanup now clears by created_by and the period uses a fresh year.
 crm-flow's `assignableUsers` floor (expects exactly the suite's own 2)
 read 4. Cross-suite fixture hygiene is real: **a user row without its
 user_roles row is visible to every suite that counts users.**
+
+### 29.3b Union coverage supersedes per-config derivation, 2026-09-09
+
+**Why per-config agreement proved nothing.** The 29.3 proof showed exactly
+this: with `tests/money.test.ts` added to the unit config's exclude, the
+derived table stayed green — correct per its own invariant, since the run
+collected everything the config claimed — while a real suite had silently
+left the gate. Derived-from-config only guarantees the table and the config
+agree; it does not guarantee the config runs anything. Tautologies are
+green by construction.
+
+**The replacement invariant: union coverage.** Every `*.test.ts` on disk
+under `tests/` (enumerated recursively — a new subdirectory is what a
+future suite directory looks like, and the fixed directory list missed the
+probe) must appear in the `vitest list` of AT LEAST ONE config. The failure
+message names each orphan and instructs: add it to an include or delete it.
+A per-file ownership report (file ← config) is asserted alongside so the
+owner of every file is legible. The non-zero floors survive: collected
+non-empty per config, disk enumeration non-empty.
+
+**Proof, both directions, watched:**
+
+- Exclude `tests/integration/hr-flow.test.ts` from the integration config
+(test untouched) → RED: `These test files are on disk but collected by NO
+suite config, so no gate runs them: tests/integration/hr-flow.test.ts.`
+Restored → green, 316/316.
+- Add `tests/middleware/orphan-probe.test.ts` (and a second probe in a new
+`tests/deep/` directory, caught only after the enumeration was made
+recursive) → RED with the same message naming the orphan. Restored →
+green, 316/316 in 11.
+
+The first draft of the probe in `tests/integration/` did NOT go red — the
+integration config collected it, correctly. The probe that proves the
+invariant has to land where no include reaches.

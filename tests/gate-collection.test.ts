@@ -110,8 +110,10 @@ async function collectedFiles(config: string): Promise<Set<string>> {
     shell: process.platform === 'win32',
   })
   const files = new Set<string>()
-  for (const line of stdout.split('\n')) {
-    const match = line.match(/^(tests\/[^\s>]+\.test\.ts)/)
+  for (const line of stdout.split('\n')) {        // Anchored to the start of the line: the lister also echoes file
+        // names mid-line in error paths, and a mid-line match would
+        // "collect" a file the config never ran.
+        const match = line.match(/^(tests\/[^\s>]+\.test\.ts)/)
     if (match) files.add(match[1]!)
   }
   return files
@@ -126,46 +128,61 @@ describe('the gate collects every test file it claims', () => {
       expect(allDisk).toBe(true)
 
       const diskByDir = new Map<string, string[]>()
-      for (const dir of ['tests', 'tests/integration', 'tests/e2e', 'tests/middleware']) {
+      // Enumerate recursively: a new SUBDIRECTORY under tests/ is exactly
+      // the shape a future suite directory takes, and a directory list here
+      // would miss it (the tests/deep probe below proved that). Files whose
+      // vitest list never names them are the failure this test exists for.
+      async function walkTests(dir: string): Promise<string[]> {
         const entries = await readdir(dir, { withFileTypes: true })
-        diskByDir.set(
-          dir,
-          entries.filter((e) => e.isFile() && e.name.endsWith('.test.ts')).map((e) => `${dir}/${e.name}`)
-        )
+        const found: string[] = []
+        for (const e of entries) {
+          if (e.isDirectory()) found.push(...(await walkTests(`${dir}/${e.name}`)))
+          else if (e.isFile() && e.name.endsWith('.test.ts')) found.push(`${dir}/${e.name}`)
+        }
+        return found
       }
-      const onDisk = [...diskByDir.values()].flat()
+      const onDisk = await walkTests('tests')
 
       const CONFIGS: SuiteConfig[] = []
       for (const name of CONFIG_NAMES) CONFIGS.push(await readSuiteConfig(name))
 
+      // The invariant is UNION COVERAGE, not per-config agreement (DECISIONS
+      // 29.3, superseding the derived-CONFIGS form): every *.test.ts on disk
+      // under tests/ must be collected by AT LEAST ONE config. Per-config
+      // agreement proved nothing — a config that excludes a real suite and a
+      // table that agrees with it both move together, and the excluded file
+      // silently leaves the gate while every comparison stays true.
+      const collectedBy = new Map<string, string[]>()
       for (const cfg of CONFIGS) {
-        const claimed = onDisk.filter((f) => claimedBy(cfg, f))
         const collected = await collectedFiles(cfg.config)
-        // The non-zero floors (DECISIONS 28.1): an empty claimed set or an
-        // empty collected set makes the missing-comparison below vacuously
-        // true, and the first draft of this test passed green for exactly
-        // that reason while a file was excluded. The floor on `collected`
-        // also catches the npx-vitest-list-exits-0-on-env-failure shape —
-        // error output parses to zero files and the tripwire would otherwise
-        // report a missing set the size of everything.
-        expect(
-          claimed,
-          `${cfg.config}'s include/exclude globs claim zero test files — the glob ` +
-            `mapping is broken and the comparison below would be vacuous. See DECISIONS 28.1.`
-        ).not.toHaveLength(0)
+        // The non-zero floors (DECISIONS 28.1): an empty collected set makes
+        // the union below miss files that were never listed — the lister
+        // failing without a non-zero exit shape.
         expect(
           collected,
           `${cfg.config}'s vitest list returned zero test files — the lister failed ` +
-            `without a non-zero exit, and the comparison below would be vacuous. See DECISIONS 28.1.`
+            `without a non-zero exit, and the union below would be vacuous. See DECISIONS 28.1.`
         ).not.toHaveLength(0)
-        const missing = claimed.filter((f) => !collected.has(f))
-        expect(
-          missing,
-          `${cfg.config} claims ${claimed.length} files but collects only ${collected.size}; ` +
-            `not collected: ${missing.join(', ')}. A suite that stops running fails the gate ` +
-            `instead of disappearing — see DECISIONS 27.1.`
-        ).toEqual([])
+        collectedBy.set(cfg.config, [...collected])
       }
+      expect(onDisk.length, 'no *.test.ts files found on disk — the enumeration is broken').toBeGreaterThan(0)
+
+      const orphaned = onDisk.filter((f) => !CONFIGS.some((cfg) => collectedBy.get(cfg.config)!.includes(f)))
+      expect(
+        orphaned,
+        `These test files are on disk but collected by NO suite config, so no gate runs them: ` +
+          `${orphaned.join(', ')}. Add the file to a config's include, or delete it — ` +
+          `a suite nothing runs is a suite that cannot fail. See DECISIONS 29.3.`
+      ).toEqual([])
+
+      // Report which config claims each file, so a new file's owner is
+      // visible in the failure message rather than discovered by hand.
+      const ownership = onDisk.map((f) => {
+        const owners = CONFIGS.filter((cfg) => collectedBy.get(cfg.config)!.includes(f)).map((cfg) => cfg.config)
+        return `${f} <- ${owners.join(', ') || 'NOTHING'}`
+      })
+      expect(ownership.length).toBe(onDisk.length)
+      expect(ownership.every((line) => !line.endsWith('NOTHING')), `unowned files present: ${ownership.filter((l) => l.endsWith('NOTHING')).join('; ')}`).toBe(true)
     }
   )
 })
