@@ -295,3 +295,14 @@ fails loudly, at a named point, when the service is absent — as
 `vitest.integration.config.ts` does for MariaDB and `chromium.launch()` does for
 a missing browser. What it may never do is appear inside a gate whose contract
 says the dependency does not exist.
+The same rule governs environment: **a gate must not depend on environment it
+does not set.** A suite whose values survive by `??=` inherits whatever the
+shell has exported, and the shell is not part of the tree. The instance:
+the machine exported `PORT=0`, which beat the schema default and failed five
+suites at import with "Number must be greater than or equal to 1" (DECISIONS
+29.2). Test setup files now FORCE every value a run requires — the suite
+passes with nothing handed to it, and a hostile exported variable cannot
+reach a test. A count produced under inherited environment was a property of
+the machine, not of the tree: every count reported before this fix was
+machine-dependent in exactly that sense.
+

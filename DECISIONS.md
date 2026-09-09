@@ -3975,24 +3975,50 @@ gains the matching exclude.
 - `node scripts/migrate.mjs` → 23 migration files, none pending.
 - `tsc --listFilesOnly | grep -c '/src/'` → 75.
 
-### 29.2 The ambient PORT=0 poisons every suite's import: found while proving 29.1
+### 29.2 The ambient PORT=0 poisons every suite's import — fixed by forcing the environment, 2026-09-09
 
-Establishing 29.1's baseline, the *first* run of the fixed unit gate failed 5 of
-11 files with `Environment validation failed: PORT: Number must be greater than
-or equal to 1`. Cause: **the machine's ambient environment exports `PORT=0`**
-(which the dev stack, port 3307/3000, does not read). `tests/setup-env.ts`
-deliberately uses `??=` so existing variables win, and `env.ts` coerces then
-validates `min(1)`, so a zero in the shell defeats the setup file. The
-integration and e2e configs did not fail because their setup files set PORT or
-the suites read it differently.
+**The finding.** Establishing 29.1's baseline, the first run of the fixed
+unit gate failed 5 of 11 files with `Environment validation failed: PORT:
+Number must be greater than or equal to 1`. Cause: the machine's ambient
+environment exports `PORT=0`. `tests/setup-env.ts` used `??=` so existing
+variables win, and `env.ts` coerces then validates `min(1)`, so a zero in
+the shell defeated the setup file. The integration and e2e configs failed
+the same way through their own setup files.
 
-Nothing in the tree caused this and nothing in the tree can be blamed, but the
-reporting rule is the same as CLAUDE.md's: a red baseline is not explained by
-the last commit. With `PORT=3001` exported (or unset), every suite matches the
-figures above. The lesson recorded: **a suite's baseline is a function of the
-shell it inherits, and `??=` in a setup file is a documented gap, not a
-coincidence to trip over twice.**
+**The fix (2026-09-09, this entry supersedes the original 29.2 finding as
+the operative state).** A gate must not depend on environment it does not
+set (the rule now sits in CLAUDE.md beside the services rule). Both setup
+files FORCE every key `src/env.ts` validates — `process.env[key] = value`,
+no `??=`:
 
+- `tests/setup-env.ts` (unit + e2e): forces all 17 validated keys,
+  including `PORT: '3000'`, the SMTP and upload paths, and the fake DB
+  credentials — safe to force because no unit or e2e test opens a pool.
+- `tests/integration/setup-db-env.ts`: forces every non-DB key; the DB_*
+  keys keep their real-source contract and are never invented. When a local
+  `.env` exists its DB_* values are forced (the developer's file is the
+  environment of record on that machine, and CI sets DB_* itself where no
+  `.env` exists), so an exported `DB_PORT=0` cannot poison the run either.
+
+**The proof, run in a hostile shell** — `PORT=0 DATABASE_URL=…evil…
+SMTP_HOST=""` exported, nothing passed on the command line:
+
+- `npm test` → `Test Files 11 passed (11) / Tests 316 passed (316)`
+- `npm run test:integration` → `Test Files 14 passed (14) / Tests 277 passed (277)`
+- `npm run test:e2e` → `Test Files 1 passed (1) / Tests 4 passed (4)`
+
+identical to the baseline established in 29.1. `DATABASE_URL` was chosen
+because it is the name a leaky tool might reach for; it is not validated by
+`env.ts` and would have done nothing even under the old regime, but a
+bootstrap that survives it is a bootstrap that survives the class.
+
+**Correction to the record: every count reported before this fix was
+machine-dependent.** Not the numbers themselves — with a sane shell they
+were and are the tree's counts — but the gate that produced them would have
+gone red on this machine with no tree change, and a green that depends on
+the shell is not reproducible by a fresh clone. From this entry on, the
+gates run hermetically: the suite passes with nothing handed to it, and any
+future red is a fact about the tree.
 ### 29.3 gate-collection's CONFIGS is derived from the configs, not copied
 
 **What changed.** `tests/gate-collection.test.ts` used to restate each suite
