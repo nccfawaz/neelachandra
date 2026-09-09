@@ -4299,3 +4299,52 @@ WRITER_MAPPING; a writer producing an unmapped pair reds the group-by test.
 UNIQUE index (012) for duplicates, the CHECK (015) for the half-pair, and
 the mapping tripwire for the vocabulary. Proven by
 tests/integration/expenses-source-mapping.test.ts, green 3/3.
+
+### 29.8 The contractor-bill posting writer, and the §18.8 "contradiction" dissolved, 2026-09-09
+
+**The finding.** Task 6's sweep (29.7) reported no writer producing the
+(contractor_bill, contractor_bills) pair; §18.8 was read as claiming one
+exists. On tracing `approveContractorBill` end to end — every write to
+`expenses` across src/ (Kysely insertInto/updateTable, raw SQL), the audit
+payload, and the live database (0 bills with expense_id set, 0 expenses
+with source_type contractor_bill) — **§18.8 is accurate as written**: it
+records that the posting is *not built* and expense_id stays NULL, with
+the identity carried in the audit payload. There was no contradiction;
+the prompt's premise misread a deferred posting for a claimed one. The
+sweep's scope was correct and needs no correction.
+
+**But the state §18.8 deferred was no longer defensible**: uq_exp_source
+and chk_exp_source_pair guarded a shape nothing produced, and the payment
+allocator had been writing against contractor_bills.paid_paise (28.2)
+while the expense posting that rule 1 requires did not exist. So the
+writer is now implemented, inside `approveContractorBill`'s existing
+transaction:
+
+- `expenses` row with all four identity values — source_type
+  'contractor_bill', source_table 'contractor_bills', source_id = the
+  bill id, and contractor_bills.expense_id back-linked (fk_cb_expense) —
+  expense_type labour_contractor, payee_type contractor, approved by the
+  approving actor;
+- **the gross is the single source** (§6.6-2): total_paise = bill.gross_paise,
+  net_payable_paise = bill.net_payable_paise, and no expense_lines rows —
+  the amounts live in the bill's own columns, so nothing can drift
+  between bill and posting (proven: zero expense_lines for the posting);
+- period_id stamped best-effort via periodForDate, so the 021 lock sees
+  the date;
+- the audit payload now carries the real expense_id and expense_no.
+
+**Proven** (tests/integration/hr-contractor-flow.test.ts, 51 tests): the
+posted row read back with all four identity values and the gross figures;
+`contractor_bills.expense_id` populated in the same transaction; a second
+posting of the same bill refused by **uq_exp_source at the database**
+(errno 1062); the half-pair (source_table set, source_id NULL) refused by
+**chk_exp_source_pair**. The prior "leaves the finance identity behind"
+test asserted expense_id NULL and zero postings — it was updated to the
+new reality, which is the suite web working in the ordinary direction.
+
+**§20.2's mapping table stands unamended** — (contractor_bill,
+contractor_bills) was recorded as *designed, writer not landed* and is now
+recorded as landed; the mapping keys are unchanged, so the ENUM tripwire
+needs no edit. The mapping test's group-by assertion now passes with a
+live contractor_bill row in the database, which is a stronger proof than
+the empty-green it replaced.

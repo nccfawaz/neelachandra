@@ -36,6 +36,7 @@ import type {
 } from './schemas.js'
 import { uomLabel, LEAVE_DAY_STATUSES } from './schemas.js'
 import { getSetting } from '../../lib/settings.js'
+import { periodForDate } from '../finance/queries.js'
 
 /**
  * HR policy (spec 6.6).
@@ -2495,6 +2496,9 @@ export interface ContractorBillApprovalResult {
   grossPaise: number
   netPayablePaise: number
   limitRoleKey: string
+  /** The expenses row the approval posted (§6.8 rule 1). */
+  expenseId: number
+  expenseNo: string
 }
 
 /**
@@ -2589,6 +2593,48 @@ export async function approveContractorBill(
       .where('id', '=', billId)
       .execute()
 
+    // §6.8 rule 1's posting, in the same transaction as the approval (DECISIONS
+    // 18.8 recorded the identity before the writer existed; 18.10 deferred it).
+    // The gross is the single source (§6.6-2: the bill is summed from approved,
+    // snapshotted attendance rows and nothing on an approval form can change
+    // it): taxable = gross, no tax arithmetic — a labour bill's GST treatment
+    // is the vendor's, not ours. period_id is stamped best-effort like the
+    // finance writers, so the 021 lock sees the date.
+    const inserted = await trx
+      .insertInto('expenses')
+      .values({
+        expense_no: `TMP-${randomUUID().slice(0, 12)}`,
+        expense_date: today(),
+        project_id: Number(bill.project_id),
+        expense_type: 'labour_contractor',
+        payee_type: 'contractor',
+        contractor_id: Number(bill.contractor_id),
+        source_type: 'contractor_bill',
+        source_table: 'contractor_bills',
+        source_id: billId,
+        narration: `Contractor bill ${bill.bill_no}`,
+        total_paise: gross,
+        net_payable_paise: Number(bill.net_payable_paise),
+        status: 'approved',
+        approved_by: actor.userId,
+        approved_at: nowSqlDateTime(),
+        period_id: await periodForDate(trx, today()),
+        created_by: actor.userId,
+      })
+      .executeTakeFirst()
+    const expenseId = Number(inserted.insertId ?? 0)
+    const expenseNo = await nextNumber(trx, 'expense', today())
+    await trx.updateTable('expenses').set({ expense_no: expenseNo }).where('id', '=', expenseId).execute()
+
+    // The back-link (fk_cb_expense): the bill's expense_id is the one column
+    // finance reads to find the posting, and it is written here — inside the
+    // same transaction — or not at all.
+    await trx
+      .updateTable('contractor_bills')
+      .set({ expense_id: expenseId })
+      .where('id', '=', billId)
+      .execute()
+
     await writeAudit(trx, {
       userId: actor.userId,
       action: 'hr.contractor_bill_approve',
@@ -2603,12 +2649,12 @@ export async function approveContractorBill(
         net_payable_paise: Number(bill.net_payable_paise),
         limit_role_key: limit.roleKey,
         limit_document_type: 'expense',
-        // The identity 6.8 will post against. Nothing is written to `expenses`
-        // in this slice; `expense_id` stays NULL until 6.8 lands.
+        // The posting now exists in this transaction.
         finance_source_type: 'contractor_bill',
         finance_source_table: 'contractor_bills',
         finance_source_id: billId,
-        expense_id: null,
+        expense_id: expenseId,
+        expense_no: expenseNo,
       },
       ip: actor.ip,
     })
@@ -2618,6 +2664,8 @@ export async function approveContractorBill(
       grossPaise: gross,
       netPayablePaise: Number(bill.net_payable_paise),
       limitRoleKey: limit.roleKey,
+      expenseId,
+      expenseNo,
     }
   })
 }

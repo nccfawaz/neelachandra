@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { sql } from 'kysely'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { getDb } from '../../src/db/kysely.js'
@@ -964,41 +965,123 @@ describe('approving a contractor bill', () => {
       netPayablePaise: 1129020,
       limitRoleKey: LIMIT_ROLE,
     })
+    expect(result.expenseId).toBeGreaterThan(0)
+    expect(result.expenseNo).toMatch(/^NCC\/EXP\//)
 
     const row = await q.findContractorBill(db, firstBillId)
-    expect(row).toMatchObject({ status: 'approved', expense_id: null })
+    expect(row).toMatchObject({ status: 'approved' })
+    expect(Number(row!.expense_id)).toBe(result.expenseId)
     expect(row!.approved_at).not.toBeNull()
 
-    // The point of the slice. 6.8 rule 1 is not built, so `expense_id` is still
-    // NULL and no expenses row exists -- but the identity it will post against
-    // is recorded, and it is the bill's own id.
+    // §6.8 rule 1's posting, same transaction as the approval (DECISIONS 29.8).
+    // All four identity values, plus gross as the single source: total = gross,
+    // net = the bill's net, and the expense is approved by the same actor.
+    const posted = await db
+      .selectFrom('expenses')
+      .select([
+        'id', 'expense_no', 'source_type', 'source_table', 'source_id',
+        'total_paise', 'net_payable_paise', 'status', 'approved_by',
+        'contractor_id', 'project_id', 'expense_type', 'payee_type',
+      ])
+      .where('id', '=', result.expenseId)
+      .executeTakeFirstOrThrow()
+    expect(posted.source_type).toBe('contractor_bill')
+    expect(posted.source_table).toBe('contractor_bills')
+    expect(Number(posted.source_id)).toBe(firstBillId)
+    expect(posted.expense_no).toBe(result.expenseNo)
+    expect(Number(posted.total_paise)).toBe(1214000)
+    expect(Number(posted.net_payable_paise)).toBe(1129020)
+    expect(posted.status).toBe('approved')
+    expect(Number(posted.approved_by)).toBe(otherActor.userId)
+    expect(Number(posted.contractor_id)).toBeGreaterThan(0)
+    expect(posted.expense_type).toBe('labour_contractor')
+    expect(posted.payee_type).toBe('contractor')
+
+    // The audit still records the identity, now with the real expense_id.
     const audit = await lastAudit('hr.contractor_bill_approve')
     expect(audit).toMatchObject({ entity_type: 'contractor_bill', entity_id: firstBillId })
     expect(audit?.payload).toMatchObject({
       status: 'approved',
       bill_no: firstBillNo,
       gross_paise: 1214000,
-      limit_document_type: 'expense',
-      limit_role_key: LIMIT_ROLE,
       finance_source_type: 'contractor_bill',
       finance_source_table: 'contractor_bills',
       finance_source_id: firstBillId,
-      expense_id: null,
+      expense_id: result.expenseId,
+      expense_no: result.expenseNo,
     })
-
-    const posted = await db
-      .selectFrom('expenses')
-      .select((eb) => eb.fn.countAll<number>().as('n'))
-      .where('source_table', '=', 'contractor_bills')
-      .where('source_id', '=', firstBillId)
-      .executeTakeFirstOrThrow()
-    expect(Number(posted.n)).toBe(0)
   })
 
   it('refuses to approve the same bill twice', async () => {
     await expect(svc.approveContractorBill(db, otherActor, firstBillId, [LIMIT_ROLE])).rejects.toThrow(
       /is approved\. Only a bill that has not been approved/
     )
+  })
+
+  it('a second posting of the same bill is refused by uq_exp_source at the database', async () => {
+    // The service refuses on status before it can reach the insert, so the
+    // database-level proof is a direct insert of the mapped pair. This is the
+    // same refusal hr-contractor-flow proved for 012, now against a pair a
+    // real writer produces.
+    let err: (Error & { code?: string; errno?: number }) | undefined
+    try {
+      await db
+        .insertInto('expenses')
+        .values({
+          expense_no: `FIXEXP/DUP-${randomUUID().slice(0, 8)}`,
+          expense_date: DAY_1,
+          expense_type: 'labour_contractor',
+          payee_type: 'contractor',
+          source_type: 'contractor_bill',
+          source_table: 'contractor_bills',
+          source_id: firstBillId,
+          created_by: actor.userId,
+        })
+        .execute()
+    } catch (caught) {
+      err = caught as Error & { code?: string; errno?: number }
+    }
+    expect(err?.code).toBe('ER_DUP_ENTRY')
+    expect(err?.errno).toBe(1062)
+    expect(err?.message).toMatch(/uq_exp_source/)
+  })
+
+  it('the half-pair is impossible: source_table set with source_id NULL is refused by chk_exp_source_pair', async () => {
+    // The writer always writes both columns together, but the guard that makes
+    // the posting trustworthy is the CHECK 015 added — proven against the
+    // mapped pair this writer produces, not just the manual shape.
+    let refused = false
+    try {
+      await db
+        .insertInto('expenses')
+        .values({
+          expense_no: `FIXEXP/HALF-${randomUUID().slice(0, 8)}`,
+          expense_date: DAY_1,
+          expense_type: 'labour_contractor',
+          payee_type: 'contractor',
+          source_type: 'contractor_bill',
+          source_table: 'contractor_bills',
+          source_id: null,
+          created_by: actor.userId,
+        })
+        .execute()
+    } catch (caught) {
+      refused = true
+      expect(String((caught as Error).message)).toContain('chk_exp_source_pair')
+    }
+    if (!refused) throw new Error('expected the half-pair insert to be refused by chk_exp_source_pair')
+  })
+
+  it('the posted expense carries the bill as its cost, with no expense lines to double-count', async () => {
+    // §6.6-2: the gross is summed from approved attendance. The posting is the
+    // bill, whole; there are no expense_lines rows (the amounts live in the
+    // bill's own columns), so nothing can drift between bill and posting.
+    const lines = await db
+      .selectFrom('expense_lines')
+      .select((eb) => eb.fn.countAll<number>().as('n'))
+      .where('expense_id', '=', (await q.findContractorBill(db, firstBillId))!.expense_id!)
+      .executeTakeFirstOrThrow()
+    expect(Number(lines.n)).toBe(0)
   })
 
   it('refuses rather than writing one signature where two are required', async () => {
@@ -1108,16 +1191,9 @@ describe('the double-posting constraint 6.8 rule 1 promises', () => {
 
   it('refuses a second post of the same document in the database, not in code', async () => {
     expect(firstBillId).toBeGreaterThan(0)
-    await insertExpense({
-      source_type: 'contractor_bill',
-      source_table: 'contractor_bills',
-      source_id: firstBillId,
-    })
-
-    // No service call anywhere in this test: the second insert is the same
-    // statement as the first and the refusal comes off the wire. errno 1062 with
-    // the constraint name in the message is the proof of which layer said no --
-    // an application check would throw a ConflictError with prose instead.
+    // The service approval now posts the first row itself (29.8), so the
+    // "second post" is a direct insert of the mapped pair — the duplicate
+    // refusal still comes off the wire against a pair a real writer produced.
     let err: (Error & { code?: string; errno?: number }) | undefined
     try {
       await insertExpense({
