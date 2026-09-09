@@ -971,6 +971,14 @@ unchanged. Then a fresh database migrated 001 through 011 from empty (`--db ncc_
 the identical three values and the same 12 checks, so the arithmetic does not depend on the dev
 database's history. Scratch database dropped.
 
+**2026-09-09, checkout line endings.** `.gitattributes` now carries `migrations/*.sql text eol=lf`
+(added in `d86630a`): a CRLF checkout of any applied migration would change every byte the
+checksum above covers and brick the runner on a machine that never edited anything. Proven by
+deleting `migrations/001_core_auth.sql` from disk and re-checking it out under the attribute —
+the restored file is LF (`\n` verified by `od -c`), `git status` is clean, and the runner still
+reports `Up to date. 23 migration files, none pending.`
+
+
 ### 13.4 `MODIFY COLUMN ... LONGTEXT` silently unmarks a JSON column
 Probed in a throwaway database before shipping 011's `ALTER TABLE settings MODIFY COLUMN
 value_json JSON NOT NULL COMMENT ...`, because a comment is not worth changing a constraint set
