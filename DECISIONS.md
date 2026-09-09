@@ -3843,7 +3843,11 @@ constraint was corrected by dropping and re-adding it, and the schema_migrations
 recomputed from the final file so the ledger matches what was applied. 'KAR' is refused by
 CHAR(2)'s length check before the CHECK evaluates; 'KA ' stores as 'KA' because CHAR strips
 trailing spaces — standard semantics, recorded rather than papered over. The full GST state-code
-list is deliberately not enumerated: a new code is reference data, not a schema change.
+list is deliberately not enumerated: a new code is reference data, not a schema change. The collation divergence is also stated in CLAUDE.md, section **"A CHECK clause's
+text is not even its own truth: collation joins the list" (line 265)**, which records it as
+the first case where a clause's appearance and its evaluation diverge for a reason other than
+NULL or parenthesis normalisation — added 2026-09-09, after this entry was written.
+
 
 
 ## 28. The empty-green sweep, migration immutability, and the rename, 2026-09-08
