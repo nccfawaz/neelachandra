@@ -4395,3 +4395,19 @@ refusals and the odd-paisa admission (19 tests total, all green). Row
 count at migration time: 0 half-pairs existed (the service never produces
 one), so no backfill. Cited as the same half-pair class as
 expenses.(source_table, source_id) — see 19.1 and 20.2.
+
+### 29.10 Sweep scope: the floor counts were narrower than the claims they backed, 2026-09-09
+
+CLAUDE.md gains the rule ("A sweep must state its scope and prove the scope
+covers the claim") after four instances, listed there. This entry records
+the correction to this file's own record: **the non-zero floor counts
+reported in 28.1 and 29.3 for on-disk test enumerations were narrower than
+the claims they supported** — the gate-collection walk covered four named
+directories, so its "every *.test.ts on disk" floor counted a subset, and
+the union-coverage green of 29.3 was true of that subset until 29.3b made
+the walk recursive and a probe in a new subdirectory proved the gap. The
+20.3 citation sweep's tests/-only scope and the single-CHECK migration
+grep are the other recorded instances; the 29.7 source-type sweep was
+investigated under the same suspicion and exonerated by an end-to-end
+trace (29.8), which is the standard of proof a clean sweep should carry
+with it the first time.

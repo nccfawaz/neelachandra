@@ -306,3 +306,31 @@ reach a test. A count produced under inherited environment was a property of
 the machine, not of the tree: every count reported before this fix was
 machine-dependent in exactly that sense.
 
+
+## A sweep must state its scope and prove the scope covers the claim
+
+Four instances of one mistake:
+
+- the gate-collection disk enumeration listed four fixed directories, so a
+  new subdirectory under tests/ was invisible to the union-coverage claim
+  (29.3b) — found only because a probe was planted where no include
+  reached;
+- the §20.3 citation sweep grepped tests/ only and missed
+  queries.ts:1020, a rule citation sitting in src/ where the next reader
+  would act on it;
+- the early CHECK migration grep saw one of the thirteen CHECKs the
+  schema actually carries, and reported a clean sweep;
+- the 29.7 source-type sweep was accused of the same shape (it was not —
+  §18.8 had accurately deferred the writer — but the accusation was only
+  dismissible by tracing approveContractorBill end to end, which is the
+  proof the sweep itself should have attached).
+
+The rule: **before reporting a sweep clean, write down what the search
+covered, and show that the coverage matches the claim.** "Every CHECK in
+the schema" is claimed by information_schema, not by grep over
+migrations/. "Every citation in the codebase" covers src/ and tests/, not
+tests/ alone. "Every test file on disk" is a recursive walk, not a
+directory list. A scope narrower than the claim is a clean report about
+the wrong subject — the same empty-green as a gate that executes
+nothing, wearing a survey's clothes.
+
