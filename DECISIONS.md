@@ -3912,3 +3912,71 @@ pattern: assert a non-zero floor on the enumeration before comparing sets.
   requires `employment_type`; `project_budgets` keys lines through `budget_lines.budget_id`
   and needs `total_paise` + `prepared_by` to become approved; the roles table's column is
   `key`, and `accounts_manager` is role id 6.
+
+## 29. The e2e suite inside the unit gate, and the corrected unit count, 2026-09-09
+
+### 29.1 The unit gate ran a browser suite: gate-integrity, not cosmetic
+
+**What happened.** Until `d86630a` (2026-09-09), `vitest.config.ts` excluded
+`tests/integration/**` but not `tests/e2e/**`, so `npm test` collected
+`tests/e2e/attendance-hint.test.ts` (added in `e314109`) into the *unit* gate.
+The unit count reported for several sessions was **320; the true unit count was
+316** — the extra four were the e2e file. Found while reconciling the baseline
+against the task's expected figures.
+
+**Proof that the four tests were neither passing unit tests nor skippable
+without a browser.** Checked out the pre-fix commit `1cd3b68`, dev server left
+running (irrelevant — see below), ran the bare unit gate:
+`npx vitest run` → **12 files, 320 passed**. The four attendance-hint tests
+**passed** — they were not skipped, because they did not fail to run: they
+actually launched Chromium and asserted against it.
+
+**They required an installed Chromium, and the run proves it.** Re-running the
+same file on the same checkout with `PLAYWRIGHT_BROWSERS_PATH` pointed at a
+non-existent directory:
+`PLAYWRIGHT_BROWSERS_PATH=/c/Users/HP/does-not-exist npx vitest run tests/e2e/attendance-hint.test.ts`
+→ `Error: browserType.launch: Executable doesn't exist at ...chrome-headless-shell.exe`,
+**1 file failed, 4 skipped**. So without a browser binary the four tests skip
+and the gate reports fewer tests than claimed — the count was a function of the
+machine, not of the tree.
+
+**They did NOT require the dev server or the database.** The file starts its own
+`node:http` static server on an ephemeral port (serving `public/` and a
+rendered component) and never imports the pool — the only external dependency
+is Playwright's chromium binary. Verified by reading `tests/e2e/attendance-hint.test.ts`
+(no DB import; `server.listen(0)`) and by the 320-pass run above.
+
+**Classification: gate-integrity defect, not cosmetic.** A unit gate that
+executes a browser suite is a gate that can go red on a machine with no browser
+installed (or green-with-skips naming a count that varies by machine) — the
+same "a green is only a green if you can say what it executed" class as the
+empty typecheck and the pool hang. The fix is `d86630a`:
+`vitest.config.ts` excludes `tests/e2e/**`, `package.json`'s `test:e2e` runs
+`vitest run --config vitest.e2e.config.ts` (it previously invoked playwright
+test, which no config file supported), and the gate-collection CONFIGS table
+gains the matching exclude.
+
+**Corrected baseline (2026-09-09, with PORT set; see 29.2):**
+- `npm test` → **316 tests in 11 files**, all passing.
+- `npm run test:integration` → **265 in 13**.
+- `npm run test:e2e` → **4 in 1**.
+- `node scripts/migrate.mjs` → 23 migration files, none pending.
+- `tsc --listFilesOnly | grep -c '/src/'` → 75.
+
+### 29.2 The ambient PORT=0 poisons every suite's import: found while proving 29.1
+
+Establishing 29.1's baseline, the *first* run of the fixed unit gate failed 5 of
+11 files with `Environment validation failed: PORT: Number must be greater than
+or equal to 1`. Cause: **the machine's ambient environment exports `PORT=0`**
+(which the dev stack, port 3307/3000, does not read). `tests/setup-env.ts`
+deliberately uses `??=` so existing variables win, and `env.ts` coerces then
+validates `min(1)`, so a zero in the shell defeats the setup file. The
+integration and e2e configs did not fail because their setup files set PORT or
+the suites read it differently.
+
+Nothing in the tree caused this and nothing in the tree can be blamed, but the
+reporting rule is the same as CLAUDE.md's: a red baseline is not explained by
+the last commit. With `PORT=3001` exported (or unset), every suite matches the
+figures above. The lesson recorded: **a suite's baseline is a function of the
+shell it inherits, and `??=` in a setup file is a documented gap, not a
+coincidence to trip over twice.**

@@ -281,3 +281,17 @@ case-flipped probe, not just a shape probe** — `'ka'` and `'KA'`, not only `'K
 The three-valued-logic section covers UNKNOWN; the parenthesisation section covers re-rendering;
 this covers the collation the comparison inherits from a column it never mentions.
 
+
+## A gate must not depend on services it does not start
+
+The e2e-in-unit-gate defect (DECISIONS 29.1) is a special case of a wider rule:
+**a test gate may not depend on a service — a database, a dev server, a browser
+binary, a network peer — that the gate itself does not start or explicitly
+require to be present.** A suite that silently needs Chromium, or silently needs
+a server already listening, produces a count that is a property of the machine
+and not of the tree, and a count that varies by machine is not a gate. A suite
+that needs an external service names that requirement in its config header and
+fails loudly, at a named point, when the service is absent — as
+`vitest.integration.config.ts` does for MariaDB and `chromium.launch()` does for
+a missing browser. What it may never do is appear inside a gate whose contract
+says the dependency does not exist.
