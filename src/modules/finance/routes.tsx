@@ -9,7 +9,7 @@ import { PERMISSIONS } from '../../lib/permissions.js'
 import { readBody } from '../../middleware/csrf.js'
 import { NotFoundError, isAppError } from '../../lib/errors.js'
 import * as svc from './service.js'
-import { expenseCreateSchema, firstError, paymentCreateSchema, paymentAllocateSchema } from './schemas.js'
+import { expenseCreateSchema, firstError, paymentCreateSchema, paymentAllocateSchema, siteAdvanceSchema } from './schemas.js'
 
 /**
  * Finance module routes.
@@ -251,6 +251,24 @@ finance.post('/api/finance/payments/:paymentId/allocate', requirePermission(PERM
   return guard(c, '/app/finance/payments', async () => {
     const result = await svc.allocatePayment(c.get('db'), actorOf(c), paymentId, parsed.data)
     return `${result.paymentNo}: ${result.allocatedCount} allocation${result.allocatedCount === 1 ? '' : 's'} recorded. paid_paise on each expense moved by exactly the allocated figure.`
+  })
+})
+
+/* Site advances, slice 3 (rule 6) ------------------------------------------ */
+
+/**
+ * Issues a site advance. The body is minimal because the rule lives in the
+ * service: it refuses when the employee's open advances would cross the
+ * site_advance_open_threshold setting, and records the advance as an expenses
+ * row so every existing guard sees it.
+ */
+finance.post('/app/finance/advances', requirePermission(PERMISSIONS.FINANCE_PAYMENT_RECORD), async (c) => {
+  const parsed = siteAdvanceSchema.safeParse(await readBody(c))
+  if (!parsed.success) return errRedirect(c, '/app/finance/advances', firstError(parsed.error))
+
+  return guard(c, '/app/finance/advances', async () => {
+    const result = await svc.issueSiteAdvance(c.get('db'), actorOf(c), parsed.data)
+    return `Site advance ${result.expenseNo} issued. Open outstanding on this employee is now ${result.openOutstandingPaise} paise.`
   })
 })
 

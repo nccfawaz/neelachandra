@@ -3865,3 +3865,35 @@ empty input. The floors added are for the secondary shapes: an enumeration that 
 erroring (json-columns, test-htaccess reachability) or an empty collected set (gate-collection),
 where the failure message now names the actual cause. CLAUDE.md's new section states the
 pattern: assert a non-zero floor on the enumeration before comparing sets.
+
+### 28.2 Finance slice 3: site advances, budget alerts, and the contractor-bill target enabled
+
+- **Rule 6, site advances** — `issueSiteAdvance` refuses an advance that would take an
+  employee's open outstanding past the `site_advance_open_threshold` setting (migration 023),
+  and a **missing settings row reads as zero** — no advance while any is open, the
+  conservative reading, not the unbounded one. Proven by
+  `tests/integration/finance-advances.test.ts` ("a missing settings row reads as a zero
+  threshold"), which also exposed a tripwire of its own: `getSetting` caches for 60 s, so the
+  test must call `invalidateSettings()` after deleting the row or the cache serves the value
+  the DB no longer has.
+- **The §26.3-shaped advance reconciliation** — `openAdvanceOutstanding` is the single read
+  of an employee's open balance (the same three open statuses the exit blockers use), and the
+  test reconciles it against independent SQL per fixture employee.
+- **Budget alerts read the 020 views, never recompute** — `src/modules/finance/budgetAlerts.ts`
+  joins the latest approved `project_budgets` per project to `budget_lines` and the two views,
+  COALESCEd, so the zero-rows case returns **no alert and no NULL comparison** (proven: empty
+  fixture set → 0 alerts, 0 notifications). A head whose actual reaches its budget alerts
+  exactly once, notified to active holders of `owner` and `accounts_manager` (proven with a
+  fixture actor holding both roles). Cron route: `POST /cron/budget-alerts`, beside
+  `/stock-alerts`, behind `cronAuth`.
+- **The first real bug the slice caught in its own query**: `budget_lines` carries no
+  `project_id` — the project lives on `project_budgets`. The first draft selected and joined
+  on `bl.project_id` and MariaDB refused it. The views themselves are untouched.
+- **Allocation targets** — `contractor_bill` allocations were already written by the payment
+  allocator; migration 023 adds the `contractor_bills.paid_paise` column it updates, under the
+  same single-writer rule as `expenses.paid_paise` (26.3). `client_invoice` and `advance`
+  targets still refuse with the same message: no module writes those documents yet.
+- **Fixtures worth repeating**: `employees` keys on `employee_code` (not `employee_no`) and
+  requires `employment_type`; `project_budgets` keys lines through `budget_lines.budget_id`
+  and needs `total_paise` + `prepared_by` to become approved; the roles table's column is
+  `key`, and `accounts_manager` is role id 6.

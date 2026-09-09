@@ -307,6 +307,7 @@ export interface ContractorBillsTable {
   tds_paise: Generated<number>
   penalty_paise: Generated<number>
   net_payable_paise: Generated<number>
+  paid_paise: Generated<number>
   status: Generated<'draft' | 'submitted' | 'verified' | 'approved' | 'paid' | 'disputed'>
   verified_by: Generated<number | null>
   approved_by: Generated<number | null>

@@ -6,6 +6,7 @@ import { nextNumber } from '../../lib/numbering.js'
 import { ConflictError, ForbiddenError, NotFoundError, UnprocessableError } from '../../lib/errors.js'
 import { resolveApprovalLimit } from '../../lib/permissions.js'
 import { formatPaiseAsRupees } from '../../lib/money.js'
+import { getSetting } from '../../lib/settings.js'
 import { nowSqlDateTime, today } from '../../lib/dates.js'
 import { costHeadStates, periodForDate } from './queries.js'
 import type { ExpenseCreateInput, PaymentAllocateInput, PaymentCreateInput } from './schemas.js'
@@ -504,14 +505,52 @@ async function allocatePaymentRows(
         .set({ paid_paise: projected })
         .where('id', '=', alloc.documentId)
         .execute()
+    } else if (alloc.documentType === 'contractor_bill') {
+      // Enabled this slice: hr/service.ts writes contractor_bills rows when a
+      // bill is approved (createContractorBill), so the document a payment
+      // names here is real. The same over-allocation guard as expenses, and
+      // the same single-writer rule for paid_paise (DECISIONS 26.3).
+      const doc = await trx
+        .selectFrom('contractor_bills')
+        .select(['id', 'net_payable_paise', 'paid_paise', 'status'])
+        .where('id', '=', alloc.documentId)
+        .forUpdate()
+        .executeTakeFirst()
+      if (!doc) throw new NotFoundError(`Contractor bill ${alloc.documentId} does not exist.`)
+      if (doc.status === 'disputed') {
+        throw new UnprocessableError(`Contractor bill ${alloc.documentId} is disputed and cannot be paid.`)
+      }
+
+      const existing = Number(doc.paid_paise ?? 0)
+      const projected = existing + alloc.allocatedPaise
+      if (projected > Number(doc.net_payable_paise)) {
+        throw new UnprocessableError(
+          `Allocating ${formatPaiseAsRupees(alloc.allocatedPaise)} would take contractor bill ${alloc.documentId} to ` +
+          `${formatPaiseAsRupees(projected)} against a net payable of ${formatPaiseAsRupees(Number(doc.net_payable_paise))} — ` +
+          `over by ${formatPaiseAsRupees(projected - Number(doc.net_payable_paise))}.`
+        )
+      }
+
+      await trx.insertInto('payment_allocations').values({
+        payment_id: paymentId,
+        document_type: 'contractor_bill',
+        document_id: alloc.documentId,
+        allocated_paise: alloc.allocatedPaise,
+      }).execute()
+
+      await trx
+        .updateTable('contractor_bills')
+        .set({ paid_paise: projected })
+        .where('id', '=', alloc.documentId)
+        .execute()
     } else {
-      // contractor_bill, client_invoice and advance allocations are slice 3
-      // surface: the schema accepts them and the guard is the same shape, but
-      // no module writes those documents yet, so an allocation naming one is
+      // client_invoice and advance allocations have no writer yet: no module
+      // creates those documents today, so an allocation naming one is
       // refused rather than silently accepted against a document nobody can
-      // show.
+      // show. Expenses, contractor bills and site advances (an expense row)
+      // are the payable documents.
       throw new UnprocessableError(
-        `Allocations against ${alloc.documentType} documents land with the slice that builds them. Expenses are the only payable documents today.`
+        `Allocations against ${alloc.documentType} documents land with the slice that builds them. Expenses, contractor bills and site advances are the payable documents today.`
       )
     }
   }
@@ -643,5 +682,130 @@ export async function msmeAgeing(db: Db, onDate: string): Promise<MsmeAgeingRow[
       daysOverdue: days,
       band,
     }
+  })
+}
+
+/* Site advances (spec 6.8 rule 6, slice 3) --------------------------------- */
+
+export interface IssueSiteAdvanceInput {
+  employeeId: number
+  projectId: number | null
+  amountPaise: number
+  narration?: string | null
+}
+
+export interface IssueSiteAdvanceResult {
+  expenseId: number
+  expenseNo: string
+  openOutstandingPaise: number
+}
+
+/**
+ * The outstanding balance of an employee's open site advances.
+ *
+ * An advance is an `expenses` row with `payee_type = 'employee'` and no
+ * `advance_settlement_of` (settlement rows point back at the advance they
+ * settle, so they are not advances themselves). Outstanding is what was
+ * approved less what has been paid against it — the same three statuses the
+ * exit-blockers query treats as open. This is the single read of the balance;
+ * reissueSiteAdvance below and the reconciliation test both go through it, so
+ * the rule and the report cannot disagree about what "outstanding" means.
+ */
+export async function openAdvanceOutstanding(db: Db, employeeId: number): Promise<number> {
+  const rows = await db
+    .selectFrom('expenses')
+    .select(['net_payable_paise', 'paid_paise'])
+    .where('employee_id', '=', employeeId)
+    .where('payee_type', '=', 'employee')
+    .where('advance_settlement_of', 'is', null)
+    .where('status', 'in', ['pending_approval', 'approved', 'part_paid'])
+    .execute()
+  return rows.reduce((sum, r) => sum + Number(r.net_payable_paise) - Number(r.paid_paise ?? 0), 0)
+}
+
+/**
+ * Issues a site advance (rule 6).
+ *
+ * The refusal is the whole rule: a new advance to an employee whose open
+ * advances already exceed the `site_advance_open_threshold` setting is
+ * refused, naming the outstanding figure. A missing settings row reads as a
+ * threshold of zero — no new advance while any is open — which is the
+ * conservative reading of a missing threshold, never the permissive one.
+ *
+ * The advance is an expenses row (source_type 'manual', payee_type
+ * 'employee', expense_type 'other' with the narration naming it), so the
+ * 021 period triggers, the exit blockers and the payment allocator all see
+ * it through the paths they already cover. There is no separate advances
+ * table to keep consistent with expenses — DECISIONS 18.6 recorded that
+ * choice and this builds on it.
+ */
+export async function issueSiteAdvance(
+  db: Db,
+  actor: Actor,
+  input: IssueSiteAdvanceInput
+): Promise<IssueSiteAdvanceResult> {
+  return db.transaction().execute(async (trx) => {
+    const outstanding = await trx
+      .selectFrom('expenses')
+      .select(['net_payable_paise', 'paid_paise'])
+      .where('employee_id', '=', input.employeeId)
+      .where('payee_type', '=', 'employee')
+      .where('advance_settlement_of', 'is', null)
+      .where('status', 'in', ['pending_approval', 'approved', 'part_paid'])
+      .forUpdate()
+      .execute()
+      .then((rows) => rows.reduce((sum, r) => sum + Number(r.net_payable_paise) - Number(r.paid_paise ?? 0), 0))
+
+    const threshold = await getSetting(trx, 'site_advance_open_threshold', 0)
+    if (outstanding + input.amountPaise > Number(threshold)) {
+      throw new UnprocessableError(
+        `This employee already has ${formatPaiseAsRupees(outstanding)} of open site advances. ` +
+        `Adding ${formatPaiseAsRupees(input.amountPaise)} would take that past the ` +
+        `${formatPaiseAsRupees(Number(threshold))} open-advance threshold. Settle or recover the existing advance first.`
+      )
+    }
+
+    const today_ = today()
+    const inserted = await trx
+      .insertInto('expenses')
+      .values({
+        expense_no: `TMP-${randomUUID().slice(0, 12)}`,
+        expense_date: today_,
+        project_id: input.projectId,
+        expense_type: 'other',
+        payee_type: 'employee',
+        employee_id: input.employeeId,
+        source_type: 'manual',
+        narration: input.narration ?? 'Site advance',
+        total_paise: input.amountPaise,
+        net_payable_paise: input.amountPaise,
+        status: 'approved',
+        approved_by: actor.userId,
+        approved_at: nowSqlDateTime(),
+        period_id: await periodForDate(trx, today_),
+        created_by: actor.userId,
+      })
+      .executeTakeFirst()
+    const expenseId = Number(inserted.insertId ?? 0)
+
+    const expenseNo = await nextNumber(trx, 'expense', today_)
+    await trx.updateTable('expenses').set({ expense_no: expenseNo }).where('id', '=', expenseId).execute()
+
+    await writeAudit(trx, {
+      userId: actor.userId,
+      action: 'finance.site_advance_issue',
+      entityType: 'expense',
+      entityId: expenseId,
+      after: {
+        expense_no: expenseNo,
+        employee_id: input.employeeId,
+        amount_paise: input.amountPaise,
+        open_outstanding_before_paise: outstanding,
+        threshold_paise: Number(threshold),
+      },
+      ip: actor.ip,
+    })
+
+    return { expenseId, expenseNo, openOutstandingPaise: outstanding + input.amountPaise }
   })
 }

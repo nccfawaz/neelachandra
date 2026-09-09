@@ -6,6 +6,7 @@ import { purgeExpired as purgeRateLimits } from '../../lib/ratelimit.js'
 import { today } from '../../lib/dates.js'
 import { stockAlerts } from '../../modules/inventory/service.js'
 import { runCrmFollowups } from '../../modules/crm/service.js'
+import { runBudgetAlerts } from '../../modules/finance/budgetAlerts.js'
 
 /**
  * Scheduled jobs, invoked by Hostinger cron over HTTP with X-Cron-Key.
@@ -107,6 +108,24 @@ cron.post('/document-expiry', async (c) => {
     .execute()
 
   return c.json({ ok: true, ran_on: on, expired_contractor_documents: licences.length, contractors: licences })
+})
+
+/**
+ * Budget alerts (spec 6.8, slice 3): every approved budget head whose
+ * committed + actual, read from the 020 views, has reached the line. The
+ * arithmetic lives in runBudgetAlerts, next to the views it reads, so the
+ * alert and the approval refusal cannot disagree.
+ */
+cron.post('/budget-alerts', async (c) => {
+  const result = await runBudgetAlerts(c.get('db'))
+
+  return c.json({
+    ok: true,
+    ran_on: result.ranOn,
+    budget_heads_at_or_over: result.alerts.length,
+    notifications_written: result.notified,
+    alerts: result.alerts,
+  })
 })
 
 export default cron

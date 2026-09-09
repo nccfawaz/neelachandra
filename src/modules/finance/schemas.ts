@@ -35,6 +35,16 @@ const optionalText = (max: number) =>
     .optional()
     .transform((v) => (v === '' || v === undefined ? null : v))
 
+const requiredId = z
+  .string()
+  .trim()
+  .min(1, 'Pick who this is for.')
+  .transform((v) => {
+    const n = Number.parseInt(v, 10)
+    return Number.isInteger(n) && n > 0 ? n : Number.NaN
+  })
+  .refine((n) => n > 0, 'Pick who this is for.')
+
 const optionalId = z
   .string()
   .optional()
@@ -143,3 +153,12 @@ export const paymentAllocateSchema = z.object({
 })
 
 export type PaymentAllocateInput = z.infer<typeof paymentAllocateSchema>
+
+export const siteAdvanceSchema = z.object({
+  employeeId: requiredId,
+  projectId: optionalId,
+  amountPaise: rupeesToPaise,
+  narration: optionalText(300),
+})
+
+export type SiteAdvanceInput = z.infer<typeof siteAdvanceSchema>
