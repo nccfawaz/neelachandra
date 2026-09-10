@@ -276,3 +276,26 @@ plus an audited status change; if reversing entries are confirmed, the
 manual path stays and the message is final.
 
 *Details: DECISIONS.md §29.11 (reopen refused) and §17.3 stuck-clerk list.*
+
+
+## 15. When a bill for last month is approved this month, which month does the cost belong to? (§6.8 rule 7)
+
+**Question:** A contractor's bill covers work done in August, but it is
+approved in September (that is normal — bills arrive late). Should the cost
+appear in August's books or September's?
+
+**Why it blocks:** The month-close lock only stops entries dated inside a
+closed month. Today the posted cost is dated the day of approval, so a bill
+for a closed month sails through into the current month. If the owner wants
+costs to land in the month the work happened, the lock can actually do that
+— but it changes which month every report shows.
+
+**Today without an answer:** The posted expense carries the approval date
+and the approval month's period. A closed source month never blocks an
+approval.
+
+**Once answered:** If work-month is confirmed, one line changes in the
+approval code (the bill's coverage end becomes the expense date) and the
+tests flip.
+
+*Details: DECISIONS.md §29.18 (bypass proven, not fixed — spec silent).*

@@ -4682,3 +4682,37 @@ the cross-table orphans a crashed run leaves behind (audit_log, vendors,
 expenses, projects, clients, items, package_spec_lines by marker) before
 the users themselves — the GRN suite's first run tripped over exactly such
 orphans.
+
+### 29.18 The expense-date survey: the contractor-bill posting is dated today, and the closed source month cannot block an approval, 2026-09-10
+
+**The survey.** What each writer stamps into its document's date column:
+createExpense/approveExpense use the user-supplied input.expenseDate;
+createPayment uses input.paymentDate (locked by trg_payments_period_bi on
+payment_date); createInvoiceFromMilestone uses the user-supplied
+invoiceDate; issueSiteAdvance uses today() (an advance is inherently a
+today event); postGrn uses grn.received_on — the source document's date;
+approveContractorBill uses today() — the approval date, not the bill's
+coverage period (hr/service.ts, approveContractorBill). All six stamp
+period_id: from the same date each uses, best-effort, per rule 7.
+
+**What the spec says: nothing.** Rule 7 (:2149) says closing a period
+"rejects any insert or update ... with a date inside it" and that
+period_id is stamped on approval. It never says which date a derived
+posting carries. Phase 7 (:752) makes GRN values and contractor attendance
+become cost, but assigns no date rule.
+
+**The consequence, proven both ways through the service.**
+(h1) Blocked wrongly: with today's period closed, approving a bill is
+refused by the 021 trigger even though the bill's source month is open —
+already proven in hr-contractor-flow ("refused when today falls in a
+closed period", whole rollback).
+(h2) Bypass: with August 2026 closed and today open, a bill whose
+attendance days fall on 2026-08-18 is approved without refusal, and the
+posted expense reads back expense_date = today with today's period_id, not
+the closed period's (new test "posts an expense dated today even when the
+bill covers a closed month"). The closed source month constrains nothing.
+
+**Recorded, not fixed.** The spec is silent, so the writer was not changed
+— changing expense_date to the bill's coverage end is a one-line change
+once the owner answers OWNER_QUESTIONS item 15, and the two existing tests
+state exactly what flips.

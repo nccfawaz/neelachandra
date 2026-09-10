@@ -1020,6 +1020,80 @@ describe('approving a contractor bill', () => {
     }
   })
 
+  it('posts an expense dated today even when the bill covers a closed month — the source-period bypass, recorded not fixed (spec silent)', async () => {
+    // The bypass shape: a bill whose attendance days fall inside a CLOSED
+    // period, approved today while today's period is open. The posting stamps
+    // expense_date = today(), so the 021 trigger sees today's open period and
+    // waves it through — the closed source month never constrains anything.
+    // The spec (rule 7, :2149) says the lock rejects rows "with a date inside
+    // it" but never says which date a derived posting carries, so this is
+    // recorded behaviour with proof, not a bug fixed by guessing.
+    const PAST_DAY = '2026-08-18'
+    const closed = await db
+      .insertInto('accounting_periods')
+      .values({
+        financial_year: 'TF-BY',
+        month: 1,
+        period_start: '2026-08-01',
+        period_end: '2026-08-31',
+        status: 'closed',
+      })
+      .executeTakeFirst()
+    const closedId = Number(closed.insertId ?? 0)
+
+    await db
+      .insertInto('approval_limits')
+      .values({
+        role_key: LIMIT_ROLE,
+        document_type: 'expense',
+        max_value: 2000000,
+        requires_second_approval_above: null,
+        effective_from: '2026-04-01',
+      })
+      .execute()
+
+    try {
+      await svc.recordContractorAttendance(
+        db,
+        actor,
+        day(PAST_DAY, annaId, [{ skill: 'mason', headcount: '1' }]),
+        { canManageContractors: true }
+      )
+      await svc.approveContractorAttendance(db, otherActor, period(annaId, { from: PAST_DAY, to: PAST_DAY }))
+
+      const bill = await svc.generateContractorBill(db, actor, billInput(annaId, { from: PAST_DAY, to: PAST_DAY }))
+      expect(bill.rows).toBeGreaterThan(0)
+      const billRow = await q.findContractorBill(db, bill.billId)
+      expect(String(billRow!.period_from)).toBe(PAST_DAY)
+
+      // The approval succeeds — nothing refuses it.
+      await svc.approveContractorBill(db, otherActor, bill.billId, [LIMIT_ROLE])
+      expect(await q.findContractorBill(db, bill.billId)).toMatchObject({ status: 'approved' })
+
+      // The posted expense carries today's date and today's period_id, not
+      // the closed source month's — the bypass made concrete.
+      const posting = await db
+        .selectFrom('expenses')
+        .select(['expense_date', 'period_id'])
+        .where('source_table', '=', 'contractor_bills')
+        .where('source_id', '=', bill.billId)
+        .executeTakeFirstOrThrow()
+      expect(String(posting.expense_date)).toBe(today())
+      const todayPeriod = await db
+        .selectFrom('accounting_periods')
+        .select('id')
+        .where('period_start', '<=', today())
+        .where('period_end', '>=', today())
+        .where('financial_year', '=', '2026-27')
+        .executeTakeFirstOrThrow()
+      expect(Number(posting.period_id)).toBe(Number(todayPeriod.id))
+      expect(Number(posting.period_id)).not.toBe(closedId)
+    } finally {
+      await sql`delete from accounting_periods where id = ${closedId}`.execute(db)
+      await sql`delete from approval_limits where role_key = ${LIMIT_ROLE}`.execute(db)
+    }
+  })
+
   it('refuses the person who generated it, before it even looks at the limit', async () => {
     await expect(svc.approveContractorBill(db, actor, firstBillId, [LIMIT_ROLE])).rejects.toThrow(
       /you generated bill/i
