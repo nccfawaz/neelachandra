@@ -7,6 +7,7 @@ import { closePool, getPool } from '../../src/db/pool.js'
 import { postStockMovement } from '../../src/modules/inventory/service.js'
 import { createGrn, postGrn } from '../../src/modules/inventory/service.js'
 import { grnSchema } from '../../src/modules/inventory/schemas.js'
+import { WRITER_MAPPING } from './expense-writer-mapping.js'
 
 /**
  * The GRN expense posting (§6.8 rule 1, "Posting a GRN creates an expenses
@@ -219,6 +220,11 @@ describe('the GRN posting writes the expense row (§6.8 rule 1)', () => {
     // All four identity values.
     expect(posted.source_type).toBe('grn')
     expect(posted.source_table).toBe('goods_receipts')
+    // Writer-side mapping assertion (DECISIONS 29.19): the pair this writer
+    // actually wrote must be expressible in the shared mapping table.
+    const mapped = WRITER_MAPPING[posted.source_type]
+    expect(mapped, `postGrn wrote source_type '${posted.source_type}' which the shared mapping does not record`).toBeDefined()
+    expect(posted.source_table, `postGrn wrote source_table '${posted.source_table}' but the mapping records '${mapped!.sourceTable}'`).toBe(mapped!.sourceTable)
     expect(Number(posted.source_id)).toBe(grn.grnId)
     expect(posted.expense_no).toMatch(/^NCC\/EXP\//)
 

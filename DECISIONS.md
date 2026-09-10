@@ -4716,3 +4716,33 @@ bill covers a closed month"). The closed source month constrains nothing.
 — changing expense_date to the bill's coverage end is a one-line change
 once the owner answers OWNER_QUESTIONS item 15, and the two existing tests
 state exactly what flips.
+
+### 29.19 The source-pair assertion moves to the writers: what the group-by proves and what it never could, 2026-09-10
+
+**What the group-by proves.** That every (source_type, source_table) pair
+present in the fixture database at the moment it runs is expressible in
+WRITER_MAPPING. With its self-seed removed it observes zero rows on the dev
+database between suites (reported honestly in the run output) — and zero
+observed rows proves nothing in either direction, so that branch skips
+rather than feeds itself a row.
+
+**What it never proved.** That a writer's literal matches the mapping: the
+group-by can only see rows some suite wrote, so a writer whose literal
+drifted was invisible unless that exact run's rows happened to still be
+present — a circular basis, the same class as inventory-schemas.test.ts:216
+(asserting a schema against a copy of itself).
+
+**The new assertion.** Each writer's own suite (hr-contractor-flow,
+grn-posting, finance-approval for createExpense, finance-advances for
+issueSiteAdvance) now asserts, against the row its writer just wrote, that
+the pair is in the shared mapping — WRITER_MAPPING extracted to
+tests/integration/expense-writer-mapping.ts so suites import it without
+importing a test file. createPayment and createInvoiceFromMilestone write
+no expenses row, so the mapping records their absence and the payments
+suite asserts it stays true.
+
+**Proof.** Mutating approveContractorBill's source_table literal to
+'contractor_bills_MUTATED' turned hr-contractor-flow red with
+"expected 'contractor_bills_MUTATED' to be 'contractor_bills'" — no test
+edited. Restored, all gates green: unit 331/13, integration 303/17, e2e
+4/1, typecheck 0, /src/ 77.

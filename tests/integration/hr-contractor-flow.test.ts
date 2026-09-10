@@ -9,6 +9,7 @@ import { parseJsonColumn } from '../../src/lib/json.js'
 import { getSetting } from '../../src/lib/settings.js'
 import * as q from '../../src/modules/hr/queries.js'
 import * as svc from '../../src/modules/hr/service.js'
+import { WRITER_MAPPING } from './expense-writer-mapping.js'
 import {
   contractorAttendanceSchema,
   contractorBillGenerateSchema,
@@ -1174,6 +1175,11 @@ describe('approving a contractor bill', () => {
       .executeTakeFirstOrThrow()
     expect(posted.source_type).toBe('contractor_bill')
     expect(posted.source_table).toBe('contractor_bills')
+    // Writer-side mapping assertion (DECISIONS 29.19): the pair this writer
+    // actually wrote must be expressible in the shared mapping table.
+    const mapped = WRITER_MAPPING[posted.source_type]
+    expect(mapped, `approveContractorBill wrote source_type '${posted.source_type}' which the shared mapping does not record`).toBeDefined()
+    expect(posted.source_table, `approveContractorBill wrote source_table '${posted.source_table}' but the mapping records '${mapped!.sourceTable}'`).toBe(mapped!.sourceTable)
     expect(Number(posted.source_id)).toBe(firstBillId)
     expect(posted.expense_no).toBe(result.expenseNo)
     expect(Number(posted.total_paise)).toBe(1214000)

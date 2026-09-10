@@ -6,6 +6,7 @@ import { sweepFixtures } from './fixture-markers.js'
 import { closePool, getPool } from '../../src/db/pool.js'
 import { createExpense, submitExpense, approveExpense } from '../../src/modules/finance/service.js'
 import { ForbiddenError, UnprocessableError } from '../../src/lib/errors.js'
+import { WRITER_MAPPING } from './expense-writer-mapping.js'
 
 /**
  * Finance slice 1 (spec 6.8 rules 1, 3, 4, 7).
@@ -178,6 +179,11 @@ describe('rule 1: manual expenses only', () => {
     expect(row.source_table).toBeNull()
     expect(row.source_id).toBeNull()
     expect(row.status).toBe('draft')
+    // Writer-side mapping assertion (DECISIONS 29.19): the pair this writer
+    // actually wrote must be expressible in the shared mapping table.
+    const mapped = WRITER_MAPPING[row.source_type!]
+    expect(mapped, `createExpense wrote source_type '${row.source_type}' which the shared mapping does not record`).toBeDefined()
+    expect(row.source_table, `createExpense wrote source_table '${row.source_table}' but the mapping records '${mapped.sourceTable}'`).toBe(mapped.sourceTable)
   })
 })
 

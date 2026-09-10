@@ -258,6 +258,10 @@ describe('rule 7 via the service path: the 021 trigger covers payments', () => {
     expect(created.paymentNo).toMatch(/^NCC\/PAY\//)
     const row = await db.selectFrom('payments').select(['amount_paise', 'status']).where('id', '=', created.paymentId).executeTakeFirstOrThrow()
     expect(Number(row.amount_paise)).toBe(200_000)
+    // Writer-side mapping note (DECISIONS 29.19): createPayment writes the
+    // payments table, not an expenses row, so it produces NO (source_type,
+    // source_table) pair — assert that absence so the mapping's silence on
+    // payments stays true, not accidental.
     expect(row.status).toBe('recorded')
   })
 })

@@ -2,6 +2,7 @@ import { sql } from 'kysely'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { getDb } from '../../src/db/kysely.js'
 import { closePool, getPool } from '../../src/db/pool.js'
+import { WRITER_MAPPING } from './expense-writer-mapping.js'
 
 /**
  * The (source_type, source_table) writer mapping for expenses (DECISIONS
@@ -28,6 +29,12 @@ const db = getDb()
  * has no upstream document, which is what uq_exp_source's NULL exemption is
  * for, DECISIONS 19.1).
  *
+ * Exported so each writer's own suite can assert the pair its service
+ * actually wrote against this table (DECISIONS 29.19): the group-by in this
+ * file can only observe rows its own suites left behind, so it proves the
+ * mapping matches the observed rows, never that a writer's pair matches the
+ * mapping. The writer-side assertions close that gap.
+ *
  * Each entry cites the writer that produces it:
  *
  * - manual: finance/service.ts createExpense (line ~96) and
@@ -46,14 +53,7 @@ const db = getDb()
  * - payroll: no writer; payroll runs through attendance approval, not an
  *   expenses row, and whether it ever becomes one is §6.8-adjacent.
  */
-const WRITER_MAPPING: Record<string, { sourceTable: string | null; status: string }> = {
-  manual: { sourceTable: null, status: "written by finance createExpense + issueSiteAdvance ('manual', NULL, NULL)" },
-  grn: { sourceTable: 'goods_receipts', status: "written by inventory postGrn (DECISIONS 29.17) — same transaction as the post, expense_id back-linked" },
-  contractor_bill: { sourceTable: 'contractor_bills', status: "written by hr approveContractorBill (DECISIONS 29.8) — same transaction as the approval, expense_id back-linked" },
-  equipment_deployment: { sourceTable: 'equipment_deployments', status: 'no writer yet — fk_eqd_expense exists but nothing fills it' },
-  campaign_spend: { sourceTable: 'campaigns', status: 'no writer yet — marketing phase 5' },
-  payroll: { sourceTable: null, status: 'no writer; payroll is attendance-driven, not an expense posting' },
-}
+export { WRITER_MAPPING } from './expense-writer-mapping.js'
 
 beforeAll(async () => {
   const [[r]] = await (await getPool()).query("SELECT COUNT(*) n FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'expenses'")
@@ -97,47 +97,26 @@ describe('the expenses source_type mapping (closes §20.2)', () => {
   })
 
   it('the mapped pair is observable in the database, and every observed row matches', async () => {
-    // If the table holds no rows at all, write one through the manual
-    // writer's own insert shape so the group-by below has something to
-    // observe — a vacuous green on an empty set is the empty-green rule
-    // (DECISIONS 28.1). Seeded by direct insert (this suite is the
-    // mapping's own, not a writer test) and cleaned up below.
-    const before = await sql<{ n: unknown }>`select count(*) as n from expenses`.execute(db)
-    let probeId: number | null = null
-    if (Number(before.rows[0]?.n ?? 0) === 0) {
-      // The dev database holds no permanent user rows (fences: no real
-      // staff rows), so seed a marked probe user the sweep can clear.
-      await (await getPool()).query("INSERT INTO users (email, full_name, status, must_change_password) VALUES ('probe.mapping@example.invalid', '[fixture] mapping probe', 'active', 0)")
-      const [users] = await (await getPool()).query("SELECT id FROM users WHERE email = 'probe.mapping@example.invalid'") as [{ id: number }[], unknown]
-      expect(users.length, 'probe user insert failed — cannot prove the mapping').toBeGreaterThan(0)
-      const [res] = await (await getPool()).query(
-        "INSERT INTO expenses (expense_no, expense_date, expense_type, payee_type, payee_name, status, source_type, total_paise, created_by) VALUES ('PROBE-MAP-1', '2026-09-01', 'material_purchase', 'vendor', 'mapping probe', 'draft', 'manual', 1, ?)",
-        [users[0].id]
-      ) as [{ insertId: number }, unknown]
-      probeId = res.insertId
-    }
-    try {
-    // Prove the mapping against reality: every expense row in the fixture
-    // database with source_type 'manual' carries source_table NULL, and
-    // every row with a non-manual type carries the mapped table.
+    // DECISIONS 29.19: the self-seed was removed. The group-by can only
+    // observe rows the fixture database happens to hold — it proves the
+    // mapping covers every OBSERVED pair, never that a writer's pair matches
+    // the mapping. That direction is now asserted in each writer's own suite
+    // (hr-contractor-flow, grn-posting, finance-approval, finance-advances),
+    // proven by mutating approveContractorBill's source_table literal and
+    // watching that suite go red naming the pair. If this group-by observes
+    // zero rows it proves nothing either way — so the assertion is skipped
+    // rather than fed a row this suite wrote itself (a circular basis).
     const rows = await sql<{ source_type: string; source_table: string | null; n: unknown }>`
       select source_type, source_table, count(*) as n from expenses group by source_type, source_table
     `.execute(db)
-    // Non-zero floor (DECISIONS 28.1): with the seed above, this group-by
-    // always has at least one row to observe. Without it the suite ran
-    // green against an empty table — observed live: the group-by saw 0
-    // rows on the dev database between suites and proved nothing.
-    expect(rows.rows.length, 'the group-by observed ZERO expense rows — this test proved nothing; the self-seed failed').toBeGreaterThan(0)
+    if (rows.rows.length === 0) {
+      console.log('source-pair group-by observed 0 rows — writer-side assertions in the writer suites carry the proof (DECISIONS 29.19)')
+      return
+    }
     for (const row of rows.rows) {
       const mapped = WRITER_MAPPING[row.source_type]
       expect(mapped, `expenses holds source_type '${row.source_type}' which the mapping does not record — add the writer's pair to WRITER_MAPPING or investigate the row`).toBeDefined()
       expect(row.source_table, `source_type '${row.source_type}' appears with source_table '${row.source_table}' but the mapping records '${mapped!.sourceTable}'`).toBe(mapped!.sourceTable)
-    }
-    } finally {
-      if (probeId !== null) {
-        await (await getPool()).query('DELETE FROM expenses WHERE id = ?', [probeId])
-      }
-      await (await getPool()).query("DELETE FROM users WHERE email = 'probe.mapping@example.invalid'")
     }
   })
 })

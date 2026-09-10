@@ -8,6 +8,7 @@ import { issueSiteAdvance, openAdvanceOutstanding } from '../../src/modules/fina
 import { runBudgetAlerts } from '../../src/modules/finance/budgetAlerts.js'
 import { invalidateSettings } from '../../src/lib/settings.js'
 import { UnprocessableError } from '../../src/lib/errors.js'
+import { WRITER_MAPPING } from './expense-writer-mapping.js'
 
 /**
  * Finance slice 3 (spec 6.8 rule 6 and the budget-alerts cron).
@@ -144,12 +145,17 @@ describe('rule 6: site advances', () => {
 
     const row = await db
       .selectFrom('expenses')
-      .select(['status', 'payee_type', 'net_payable_paise'])
+      .select(['status', 'payee_type', 'net_payable_paise', 'source_type', 'source_table'])
       .where('id', '=', result.expenseId)
       .executeTakeFirstOrThrow()
     expect(row.status).toBe('approved')
     expect(row.payee_type).toBe('employee')
     expect(Number(row.net_payable_paise)).toBe(400_000)
+    // Writer-side mapping assertion (DECISIONS 29.19): the pair this writer
+    // actually wrote must be expressible in the shared mapping table.
+    const mapped = WRITER_MAPPING[row.source_type!]
+    expect(mapped, `issueSiteAdvance wrote source_type '${row.source_type}' which the shared mapping does not record`).toBeDefined()
+    expect(row.source_table, `issueSiteAdvance wrote source_table '${row.source_table}' but the mapping records '${mapped.sourceTable}'`).toBe(mapped.sourceTable)
   })
 
   it('an advance that would cross the threshold is refused, naming the figures', async () => {
