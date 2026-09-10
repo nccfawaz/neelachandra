@@ -4817,3 +4817,38 @@ tie, negative mirror, odd-paisa-to-CGST, and large value — with the
 paisa-conservation assertion living inside the third test rather than as a
 fourth . Per-file breakdown in the run output; nothing was removed
 or merged. 331 in 13 is the corrected standing figure.
+
+### 29.23 invoice_amount_paise is advisory vendor input: the lines are the only cost basis, 2026-09-10
+
+**The sweep.** Scope: every occurrence of the identifier in src/ (grep -rn
+'invoice_amount_paise' src/) and every test file. Five hits, all accounted
+for: src/db/types.ts:654 (the nullable Generated column, per spec :1237),
+src/modules/inventory/service.ts:1586 (the only WRITE, from createGrn's
+form input), queries.ts:895 (a SELECT for the detail page) and
+routes.tsx:251/2310 (the Money display on the GRN page, gated by
+canRates). No writer or reader uses it in arithmetic; no test asserted it
+before this session. The posting reads only grn_lines (29.20).
+
+**What §6.6 says the cost basis is.** :752: "phase 4 (GRN values become
+material cost)" — and rule 3 (:1337) makes the per-line quantities the
+record: "Recording only one quantity destroys the ability to claim a
+shortage ... so the vendor invoice is queried before payment rather than
+after." The vendor's stated invoice total is an input to the
+query-the-invoice workflow, not a figure the system computes from or
+reconciles by.
+
+**The choice: advisory.** The alternative — a CHECK or service assertion
+refusing a post where a non-NULL invoice_amount_paise differs from the
+line total — was rejected: short supply and rate disputes are routine
+(:1337 says so in its first sentence), so the refusal would block the
+normal case and force clerks to type the vendor's number back after
+recomputing it. The discrepancy is a business matter (a §17.3-adjacent
+workflow: the notification to procurement and accounts fires on
+qty_challan != qty_received, and the invoice gets queried) — not something
+the schema can settle.
+
+**Proof (grn-posting.test.ts, "the posting ignores a disagreeing
+invoice_amount").** invoice_amount 999.99 against lines worth 500.00
+posts the expense at 500,000 paise from the lines, and the GRN keeps the
+vendor's 99,999 for the query workflow. Gates: unit 331/13, integration
+306/17, e2e 4/1, typecheck 0, /src/ 77.

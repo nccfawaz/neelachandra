@@ -389,6 +389,35 @@ describe('the GRN posting writes the expense row (§6.8 rule 1)', () => {
     expect(unagedRow!.band).toBe('unageable')
   })
 
+  it('the posting ignores a disagreeing invoice_amount (advisory vendor input, DECISIONS 29.23)', async () => {
+    // The vendor's stated invoice amount is input for the query-the-invoice
+    // workflow, not a cost basis: §6.6 rule 3 has the vendor invoice queried
+    // before payment, and :752 makes the LINES the material cost. Here the
+    // vendor claims 999.99 against lines worth 500.00 — a short supply or a
+    // rate dispute must not silently price the cost, either way.
+    const grn = await createGrn(
+      db,
+      { userId, ip: '127.0.0.1' },
+      grnInput({ invoiceAmount: '999.99' })
+    )
+    await postGrn(db, { userId, ip: '127.0.0.1' }, grn.grnId, true)
+    const e = await db
+      .selectFrom('expenses')
+      .select(['total_paise'])
+      .where('source_table', '=', 'goods_receipts')
+      .where('source_id', '=', grn.grnId)
+      .executeTakeFirstOrThrow()
+    expect(Number(e.total_paise)).toBe(500_000)
+    // The advisory figure itself is untouched on the GRN for the query
+    // workflow to act on.
+    const grnRow = await db
+      .selectFrom('goods_receipts')
+      .select(['invoice_amount_paise'])
+      .where('id', '=', grn.grnId)
+      .executeTakeFirstOrThrow()
+    expect(Number(grnRow.invoice_amount_paise)).toBe(99_999)
+  })
+
   it('the 021 trigger fires on the posting: a GRN received inside a closed period cannot post, and the post rolls back whole', async () => {
     // A closed period containing the GRN's date. GRN_DATE is 2026-09-01,
     // inside the seeded September 2026-27 period — but that one is open, so
