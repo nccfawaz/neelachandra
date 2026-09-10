@@ -2596,6 +2596,11 @@ number copied from a run is a fact about the config that produced it, and this o
 a gate whose composition nobody had stated. The canonical baseline is now recorded in one place, 29.1,
 with the command that produces each figure beside it.
 
+**Added 2026-09-10 — a second uncited figure, in a report rather than code.** The session-7 prompt's
+"+4 tests" for `a8de235` was wrong: three `it` blocks landed (money.test.ts 22 → 25). §29.22 records
+the reconciliation and names 331 in 13 as the standing unit figure. Same class as the 320/12 case
+above: a number asserted without being copied from a run.
+
 ## 21. Preconditions and conflicts carried out of slice 6, 2026-09-05
 
 Not a list of choices. Most entries here are a **precondition on work that has not started**, and the rest
@@ -4864,3 +4869,14 @@ invoice_amount").** invoice_amount 999.99 against lines worth 500.00
 posts the expense at 500,000 paise from the lines, and the GRN keeps the
 vendor's 99,999 for the query workflow. Gates: unit 331/13, integration
 306/17, e2e 4/1, typecheck 0, /src/ 77.
+
+**Added 2026-09-10 — the group-by is labelled observation-only.** On an
+empty expenses table it logs "source-pair group-by observed 0 rows —
+writer-side assertions in the writer suites carry the proof" and returns;
+no claim rests on it. The proof-carrying assertions are (a) the
+ENUM-versus-mapping comparison with its non-zero floors ("the source_type
+column was not found" / "the ENUM parsed to zero members") and (b) the
+writer-side pair assertions in each writer's suite. Quoted from
+expenses-source-mapping.test.ts:105-114: "If this group-by observes zero
+rows it proves nothing either way — so the assertion is skipped rather than
+fed a row this suite wrote itself (a circular basis)."
