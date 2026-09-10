@@ -4805,3 +4805,15 @@ invoice_no; msmeAgeing('2099-01-01') bands it 'due' with daysOverdue > 45.
 GRN with invoice_no/invoice_date absent → bill_date NULL, and the same
 report bands it 'unageable' — the gap visible, not hidden. Gates: unit
 331/13, integration 305/17, e2e 4/1, typecheck 0, /src/ 77.
+
+### 29.22 The unit-count discrepancy reconciled: 331 was true, 332 was arithmetic over a prose count, 2026-09-10
+
+The session-6 prompt expected unit 332 (322 + 6 + 4: or-audience, the
+rounding pins). The live run reports 331 and the per-file sum agrees
+(25+16+34+39+6+6+52+59+21+34+2+36+1 = 331 across 13 files). The arithmetic
+was wrong, not the count: a8de235 added **three**  blocks to
+money.test.ts (22 → 25), because §29.16's "four cases" are half-paisa
+tie, negative mirror, odd-paisa-to-CGST, and large value — with the
+paisa-conservation assertion living inside the third test rather than as a
+fourth . Per-file breakdown in the run output; nothing was removed
+or merged. 331 in 13 is the corrected standing figure.
