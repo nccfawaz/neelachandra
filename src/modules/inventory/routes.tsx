@@ -2125,7 +2125,14 @@ inventory.get('/app/inventory/grn/new', requirePermission(PERMISSIONS.INVENTORY_
               />
               <FormField label="Invoice number" name="invoiceNo" />
               <FormField label="Invoice date" name="invoiceDate" type="date" />
-              <FormField label="Invoice amount" name="invoiceAmount" type="number" step="0.01" min="0" hint="Rupees" />
+              <FormField
+                label="Vendor's invoice amount (advisory)"
+                name="invoiceAmount"
+                type="number"
+                step="0.01"
+                min="0"
+                hint="Rupees. The vendor's stated figure, for querying the invoice — the booked cost comes from the receipt lines."
+              />
               <FormField
                 label="Inspected by"
                 name="inspectedBy"
@@ -2307,7 +2314,11 @@ inventory.get('/app/inventory/grn/:grnId', requirePermission(PERMISSIONS.INVENTO
             rows={[
               ['Number', grn.invoice_no ?? '-'],
               ['Date', grn.invoice_date ? <DateText value={grn.invoice_date} /> : '-'],
-              ['Amount', <Money paise={paiseOf(grn, 'invoice_amount_paise')} hidden={!rates} />],
+              // 29.23: this is the vendor's stated figure — advisory input to
+              // the query-the-invoice workflow, never the booked cost. The
+              // posted cost derives from the lines and is labelled as such
+              // below, so the two figures cannot be mistaken for each other.
+              ["Vendor's invoice (advisory)", <Money paise={paiseOf(grn, 'invoice_amount_paise')} hidden={!rates} />],
             ]}
           />
         </Panel>

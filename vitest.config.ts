@@ -25,7 +25,7 @@ import { defineConfig } from 'vitest/config'
  */
 export default defineConfig({
   test: {
-    include: ['tests/**/*.test.ts'],
+    include: ['tests/**/*.test.ts', 'tests/**/*.test.tsx'],
     exclude: ['tests/integration/**', 'tests/e2e/**'],
     setupFiles: ['tests/setup-env.ts'],
     environment: 'node',

@@ -5062,3 +5062,27 @@ empty-array page ('[]') derives '[]' — still valid, non-NULL JSON, so the
 narrowing holds in the emptiest legitimate case; no NULL survives; the
 narrowing replay then refuses a NULL insert. The applied file was not
 edited.
+
+### 29.28 The advisory figure is labelled: the vendor's invoice cannot be mistaken for the posted cost, 2026-09-10
+
+**The change.** 29.23 recorded that `goods_receipts.invoice_amount_paise` is
+advisory vendor input and that the posted cost derives from the GRN lines,
+but both figures rendered on the GRN page (routes.tsx) under the bare label
+"Amount" with nothing distinguishing them. The label is now "Vendor's invoice
+(advisory)" on the detail page, with a matching hint on the create form
+("the booked cost comes from the receipt lines"); the posted cost, wherever
+both are shown together, carries "Posted cost (from receipt lines)". Neither
+number changed — the §29.23 posting semantics are untouched.
+
+**Proof (tests/grn-labels.test.tsx, both tests).** Rendering a
+DefinitionList through hono/jsx/streaming with the two figures differing
+(99,999 paise invoiced vs 50,000 posted, the grn-posting suite's
+disagreeing shape at component level) must produce both labels and both
+figures, and must no longer contain the bare `<dt>Amount</dt>` that hid the
+distinction; a second test holds the labels even when the figures agree.
+Before the label change the first assertion failed on exactly that
+`<dt>Amount</dt>` absence — watched red, then green.
+
+**Scope.** routes.tsx detail page and create form only; no query, no service,
+no schema. The rate-visibility gate (`hidden={!rates}`) is unchanged, so the
+figure is still absent from the HTML for a reader without canRates.
