@@ -65,12 +65,12 @@ describe('CSP Report-Only (§29.24)', () => {
     expect(res.status).toBe(204)
   })
 
-  it('the collector tolerates a malformed body without throwing', async () => {
+  it('the collector refuses a malformed body with 422, not a crash (29.27)', async () => {
     const res = await probe.request(CSP_REPORT_PATH, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: 'not-json',
     })
-    expect(res.status).toBe(204)
+    expect(res.status).toBe(422)
   })
 })
