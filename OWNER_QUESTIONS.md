@@ -298,4 +298,14 @@ approval.
 approval code (the bill's coverage end becomes the expense date) and the
 tests flip.
 
-*Details: DECISIONS.md §29.18 (bypass proven, not fixed — spec silent).*
+**The same answer decides a second thing: the MSME 45-day clock on
+contractor payables.** The ageing report runs every contractor-bill
+expense as unageable today (no bill date exists on the source —
+DECISIONS §29.21), so MSME exposure on contractor payables is currently
+invisible in the report. The date the clock should run from — the
+coverage period's end, the bill-generation date, or none at all — is the
+same work-month-versus-approval-month question, so one answer settles
+both.
+
+*Details: DECISIONS.md §29.18 (bypass proven, not fixed — spec silent) and
+§29.21 (the test proving every contractor-bill expense is unageable).*

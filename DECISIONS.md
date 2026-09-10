@@ -1804,6 +1804,18 @@ project_milestones plus an invoice-service change, and 26.4's statement of
 where the percentage lives must be revisited with it. The question is also
 on OWNER_QUESTIONS.md (item 11) so an answer can be filed against it.
 
+**Added 2026-09-10 — the same answer runs the MSME 45-day clock on
+contractor payables (with OWNER_QUESTIONS item 15).** Contractor bills carry
+no vendor-invoice date, so per §29.21's proof every contractor-bill expense
+lands 'unageable' in the ageing report — today's fixture set posts multiple
+contractor-bill expenses across hr-contractor-flow and every one is
+invisible to rule 8 (the test \"rule 8 on the new writer\" proves the
+report's banding, and the writer writes bill_date NULL for this source).
+MSME exposure on contractor payables is therefore unmeasurable until the
+owner picks the clock's start: coverage-period end, bill-generation date,
+or none. That is the same work-month-versus-approval-month choice item 15
+already asks, so one answer settles both.
+
 **Added 2026-09-10 — does a cost land on receipt or on the vendor's
 invoice? (GRN invoice-amount timing, DECISIONS 29.20.)** A GRN may
 legitimately arrive before the vendor's bill, so invoice_amount_paise is
