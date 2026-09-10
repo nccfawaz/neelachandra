@@ -5050,3 +5050,15 @@ response headers against golden files (greps for csp/security-header
 assertions in both return nothing), so TOLERANCE 0's byte-equivalence
 gate is untouched: Report-Only changes no body bytes. Gates: unit
 340/15, integration 312/19, e2e 4/1, typecheck 0, /src/ 78.
+
+**Amended 2026-09-10 — the backfill is now proven by replay, not by having
+run.** The migration shipped against a dev database holding zero revisions,
+so the UPDATE ... JOIN never executed and the narrowing succeeded trivially.
+tests/integration/revision-backfill-replay.test.ts reconstructs the
+pre-migration shape with TEMPORARY tables (no FK: MariaDB refuses them
+between temporaries), inserts NULL revisions, and applies 026's backfill
+clause VERBATIM: a populated page's schema_types is derived exactly; an
+empty-array page ('[]') derives '[]' — still valid, non-NULL JSON, so the
+narrowing holds in the emptiest legitimate case; no NULL survives; the
+narrowing replay then refuses a NULL insert. The applied file was not
+edited.
