@@ -9,6 +9,7 @@ import { PERMISSIONS, resolveApprovalLimit } from '../../lib/permissions.js'
 import { notify, notifyPermission } from '../../lib/notify.js'
 import type { ScopeContext } from '../../lib/scope.js'
 import { formatPaiseAsRupees, splitGst, variancePct } from '../../lib/money.js'
+import { periodForDate } from '../finance/queries.js'
 import { addDays, formatDate, nowSqlDateTime, today } from '../../lib/dates.js'
 import { batchBalances, equipmentDue, expiringBatches, lowStock } from './queries.js'
 import type {
@@ -1833,6 +1834,49 @@ export async function postGrn(
     await trx
       .updateTable('goods_receipts')
       .set({ status: 'posted', posted_at: nowSqlDateTime() })
+      .where('id', '=', grnId)
+      .execute()
+
+    // §6.8 rule 1's posting ("Posting a GRN creates an expenses row with
+    // source_type = 'grn'"), in the same transaction as the post — the post
+    // is the irreversible step, so its cost row appears or the whole post
+    // rolls back. The single source for the amount is the received lines
+    // themselves: accepted quantity × the line's own rate, summed here from
+    // the rows this post just read — nothing on the post form can change it,
+    // the same rule the contractor-bill posting applies to gross_paise.
+    // period_id is stamped best-effort like the finance writers; the 021
+    // lock sees received_on either way.
+    const receivedValuePaise = lines.reduce(
+      (sum, l) => sum + Math.round(Number(l.qty_accepted) * Number(l.rate_paise)),
+      0
+    )
+    const expenseInserted = await trx
+      .insertInto('expenses')
+      .values({
+        expense_no: `TMP-${randomUUID().slice(0, 12)}`,
+        expense_date: String(grn.received_on),
+        project_id: grn.project_id === null ? null : Number(grn.project_id),
+        expense_type: 'material_purchase',
+        payee_type: 'vendor',
+        vendor_id: Number(grn.vendor_id),
+        source_type: 'grn',
+        source_table: 'goods_receipts',
+        source_id: grnId,
+        narration: `Goods receipt ${grn.grn_no}`,
+        total_paise: receivedValuePaise,
+        status: 'approved',
+        approved_by: actor.userId,
+        approved_at: nowSqlDateTime(),
+        period_id: await periodForDate(trx, String(grn.received_on)),
+        created_by: actor.userId,
+      })
+      .executeTakeFirst()
+    const grnExpenseId = Number(expenseInserted.insertId ?? 0)
+    const grnExpenseNo = await nextNumber(trx, 'expense', String(grn.received_on))
+    await trx.updateTable('expenses').set({ expense_no: grnExpenseNo }).where('id', '=', grnExpenseId).execute()
+    await trx
+      .updateTable('goods_receipts')
+      .set({ expense_id: grnExpenseId })
       .where('id', '=', grnId)
       .execute()
 

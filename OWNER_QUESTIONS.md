@@ -254,3 +254,25 @@ to CGST. Tax is computed once per invoice, not per line.
 different rounding, that is one function change plus its tests.
 
 *Details: DECISIONS.md §29.16 and the splitGst tests.*
+
+
+## 14. If a month is closed by mistake, how do we fix it? (§6.8 rule 1)
+
+**Question:** An accounting period can be closed but never reopened. If a
+month is closed with a document still missing, what is the correction — a
+reversing entry in the current month, or something else?
+
+**Why it blocks:** A wrongly closed month currently has no undo. Any
+correction is manual and outside the system, so the books and the system
+can quietly disagree.
+
+**Today without an answer:** Reopening is refused (the spec is silent on
+it, so the system refuses rather than guesses). The recorded alternative
+is a reversing entry posted in the current open period, and the refusal
+message says so.
+
+**Once answered:** If the owner permits reopening, that is a role check
+plus an audited status change; if reversing entries are confirmed, the
+manual path stays and the message is final.
+
+*Details: DECISIONS.md §29.11 (reopen refused) and §17.3 stuck-clerk list.*

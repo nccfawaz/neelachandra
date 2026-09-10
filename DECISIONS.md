@@ -4651,3 +4651,34 @@ define it: a future rounding change (per-line computation could produce
 differences up to the line count) fails a unit test first, and the CHECK
 only refuses what the writer could never legitimately produce. The
 database guards shape; the writer owns arithmetic.
+
+### 29.17 The GRN posts its expense: the third ENUM member gains a writer, 2026-09-09
+
+**What the sweep found.** Of the three source_type members with no expense
+writer after 29.8 (grn, equipment_deployment, campaign_spend), the GRN flow
+exists and §6.6 requires the receipt's cost to reach expenses when the
+receipt is posted — the same deferred-posting shape 29.8 closed for
+contractor bills. equipment_deployment and campaign_spend stay deferred
+with recorded reasons: the deployment flow has no approval step to hang the
+posting on yet, and campaign spend is phase 5.
+
+**The implementation.** postGrn (src/modules/inventory/service.ts) now
+writes the expenses row inside the same transaction as the status flip:
+amount = the GRN's invoice_amount (single source), source_type='grn',
+source_table='goods_receipts', source_id=GRN id, expense_id back-linked on
+the GRN — the four identity values, same shape as 29.8.
+
+**Proof (tests/integration/grn-posting.test.ts, 3 tests):** posting creates
+the expense with all four identity values read back; a second post is
+refused (uq_exp_source at the database); the 021 period trigger fires
+through the service path — a post into a closed period is refused with the
+trigger's own message and the GRN stays draft with null expense_id and zero
+ledger rows (whole rollback). Mapping test updated: the grn row now cites
+this entry. Gates: unit 331/13, integration 302/17, e2e 4/1, typecheck 0,
+/src/ 77.
+
+**Also hardened:** the shared fixture sweep (fixture-markers.ts) now removes
+the cross-table orphans a crashed run leaves behind (audit_log, vendors,
+expenses, projects, clients, items, package_spec_lines by marker) before
+the users themselves — the GRN suite's first run tripped over exactly such
+orphans.
