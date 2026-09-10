@@ -309,3 +309,30 @@ both.
 
 *Details: DECISIONS.md §29.18 (bypass proven, not fixed — spec silent) and
 §29.21 (the test proving every contractor-bill expense is unageable).*
+
+
+## 16. Does the budget ceiling include labour? (§6.8 rules 4 and 10)
+
+**Question:** A project's budget says how much each cost head may spend.
+The system's labour cost reaches it in two different ways: contractor bills
+are approved as expenses but the budget check cannot see them, and staff
+cost is worked out from attendance and salaries without ever becoming an
+expense. Should the budget check count both, or only the expenses it sees
+today?
+
+**Why it blocks:** Today a project can blow its labour budget four times
+over and keep approving material expenses, because the check that should
+refuse them sees none of the labour. Whether that is a hole or the
+intended design decides how the whole check is rebuilt.
+
+**Today without an answer:** The budget check counts only expenses with
+itemised lines. Contractor labour (booked but line-less) and staff cost
+(derived from attendance) are invisible to it, while the margin report is
+supposed to count both.
+
+**Once answered:** If labour belongs in the ceiling, the check gains a
+second derived figure (or contractor postings gain lines) — one rebuild,
+with tests that already pin today's shape. If it does not, the gap is
+documented as intended.
+
+*Details: DECISIONS.md §29.26 (both spec quotes and the proof tests).*

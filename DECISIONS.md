@@ -4962,3 +4962,47 @@ slice. The marketing module is mounted and permission-guarded
 (src/modules/marketing/routes.tsx); §7.6 step 5 (the parity-verified editor
 unlock) remains fenced as always, and the CMS slice itself is gated on the
 owner answers in OWNER_QUESTIONS.md, not on schema work.
+
+### 29.26 Rule 4 does not see labour: the budget check and the margin rule use two cost bases, 2026-09-10
+
+**What the view sums.** v_project_actual (020:45-54) sums
+expense_lines.amount_paise over expenses with status IN (approved,
+part_paid, paid), not voided, project_id not null, grouped by cost head.
+**Booked labour never reaches it**: the contractor-bill posting (29.8)
+writes no expense_lines at all — §6.6-2 makes the bill's own columns the
+single source — so a 4,00,000 paise approved labour expense contributes
+zero to actual. Accrued staff cost does not exist in the codebase: a sweep
+of src/ finds no getProjectMargin and no attendance-to-
+employee_compensation sum anywhere; the only compensation read is the
+per-employee history query (hr/queries.ts:133). The empty-aggregate shape
+is safe: the view COALESCEs to 0 and costHeadStates maps a missing row to
+0, not NULL.
+
+**What rule 4 compares** (:2144): "If approving an expense would push
+committed + actual past budget_lines.amount_paise for that cost head, the
+approval is refused" — committed from v_project_committed, actual from
+v_project_actual, never recomputed. **What rule 10 says** (:2155):
+"getProjectMargin(projectId) returns contract_value - (actual + committed
++ accrued_staff_cost), where accrued_staff_cost comes from attendance rows
+joined to employee_compensation for the period."
+
+**Two bases, in the spec's own words.** Rule 10's margin includes labour
+cost derived outside expenses; rule 4's budget compares committed + actual
+with no accrual term and no contractor-bill contribution. The spec
+genuinely intends margin and budget to run on different bases, so this is
+**recorded, not fixed** — bringing labour into the actual-cost basis would
+either (a) violate §6.6-2's single-source rule by splitting the bill
+figure across expense_lines, or (b) change rule 4's arithmetic to read a
+second derived figure, and both are decisions the owner's answer to
+OWNER_QUESTIONS item 16 (does the budget ceiling include labour?) gates.
+
+**Proof (tests/integration/labour-budget-gap.test.ts, 4 tests).** A
+project with an approved LAB budget line of 100,000 and 400,000 paise of
+booked, approved contractor-bill labour against it: the LAB head is absent
+from v_project_actual (test 1); a material expense on the same project
+approves through approveExpense with no budget refusal (test 3) — the
+overrun check cannot see the labour that already blew the head. The
+empty-aggregate shape returns 0, never NULL (test 2), and the sweep for the
+accrual join is recorded as its negative result (test 4 comment; the grep
+is the citation). Gates: unit 335/14, integration 312/19, e2e 4/1,
+typecheck 0, /src/ 78.
