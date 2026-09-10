@@ -283,6 +283,53 @@ describe('the GRN posting writes the expense row (§6.8 rule 1)', () => {
     expect(err?.message).toMatch(/uq_exp_source/)
   })
 
+  it('a NULL or zero vendor invoice_amount changes nothing: the expense amount comes from the accepted lines, and a zero-value receipt is refused (DECISIONS 29.20)', async () => {
+    // Shape 1: invoice_amount NULL (goods arrived before the vendor's bill).
+    // The posting's single source is the lines (qty_accepted × rate_paise),
+    // so a missing invoice amount must not zero or block the cost.
+    const noInvoice = await createGrn(db, { userId, ip: '127.0.0.1' }, grnInput({ invoiceAmount: undefined }))
+    const r1 = await postGrn(db, { userId, ip: '127.0.0.1' }, noInvoice.grnId, true)
+    const e1 = await db
+      .selectFrom('expenses')
+      .select(['total_paise'])
+      .where('source_table', '=', 'goods_receipts')
+      .where('source_id', '=', noInvoice.grnId)
+      .executeTakeFirstOrThrow()
+    expect(Number(e1.total_paise)).toBe(500_000) // 100 × 50.00, from the lines
+    expect(r1.ledgerIds.length).toBe(1)
+
+    // Shape 2: invoice_amount explicitly 0 — same result, lines still rule.
+    const zeroInvoice = await createGrn(db, { userId, ip: '127.0.0.1' }, grnInput({ invoiceAmount: '0' }))
+    await postGrn(db, { userId, ip: '127.0.0.1' }, zeroInvoice.grnId, true)
+    const e2 = await db
+      .selectFrom('expenses')
+      .select(['total_paise'])
+      .where('source_table', '=', 'goods_receipts')
+      .where('source_id', '=', zeroInvoice.grnId)
+      .executeTakeFirstOrThrow()
+    expect(Number(e2.total_paise)).toBe(500_000)
+
+    // Shape 3: every line carries rate 0 → received value 0 → the posting is
+    // REFUSED, because a zero-value expense with a valid identity pair
+    // reconciles silently (DECISIONS 29.20).
+    const zeroValue = await createGrn(
+      db,
+      { userId, ip: '127.0.0.1' },
+      grnInput({ invoiceAmount: undefined, rate: ['0.00'] })
+    )
+    await expect(
+      postGrn(db, { userId, ip: '127.0.0.1' }, zeroValue.grnId, true)
+    ).rejects.toThrow(/zero accepted value.*no cost to post/s)
+    // The refused post rolled back: the GRN is still a draft with no ledger.
+    const grnRow = await db
+      .selectFrom('goods_receipts')
+      .select(['status', 'expense_id'])
+      .where('id', '=', zeroValue.grnId)
+      .executeTakeFirstOrThrow()
+    expect(grnRow.status).toBe('draft')
+    expect(grnRow.expense_id).toBeNull()
+  })
+
   it('the 021 trigger fires on the posting: a GRN received inside a closed period cannot post, and the post rolls back whole', async () => {
     // A closed period containing the GRN's date. GRN_DATE is 2026-09-01,
     // inside the seeded September 2026-27 period — but that one is open, so

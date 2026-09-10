@@ -1850,6 +1850,15 @@ export async function postGrn(
       (sum, l) => sum + Math.round(Number(l.qty_accepted) * Number(l.rate_paise)),
       0
     )
+    // A zero-value expense carrying a valid identity pair reconciles
+    // silently — worse than a refusal (DECISIONS 29.20): every later
+    // reconciliation sees a well-formed row with nothing in it. A receipt
+    // whose accepted value is zero is a data-entry error, not a cost.
+    if (receivedValuePaise === 0) {
+      throw new UnprocessableError(
+        `Goods receipt ${grn.grn_no} has zero accepted value (every line's accepted quantity × rate is zero), so there is no cost to post. Correct the receipt lines before posting.`
+      )
+    }
     const expenseInserted = await trx
       .insertInto('expenses')
       .values({

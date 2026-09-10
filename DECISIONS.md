@@ -1804,6 +1804,15 @@ project_milestones plus an invoice-service change, and 26.4's statement of
 where the percentage lives must be revisited with it. The question is also
 on OWNER_QUESTIONS.md (item 11) so an answer can be filed against it.
 
+**Added 2026-09-10 — does a cost land on receipt or on the vendor's
+invoice? (GRN invoice-amount timing, DECISIONS 29.20.)** A GRN may
+legitimately arrive before the vendor's bill, so invoice_amount_paise is
+nullable and the posting reads the accepted lines instead. Today the cost
+lands the day goods are received and the vendor's bill reconciles later.
+Whether the owner wants the three-way match to gate the posting (wait for
+the invoice) or receipt-date posting is intended is a §6.6 business rule,
+not a code choice.
+
 ## 18. HR, third slice: contractor labour and bills, 2026-09-05
 
 Four files in the projects pattern — `queries.ts`, `schemas.ts`, `service.ts`, `routes.tsx` — plus
@@ -4462,7 +4471,7 @@ file): the two-step close with closed_by/closed_at read back; reopen
 refused naming the reversing entry; close refused naming "1 unposted
 expense document" with the period left open; a sales_exec roleKeys list
 refused; the audit rows verified for every transition. New /src/ count:
-77 (periodService.ts added).
+77 (periodService.ts added).
 ### 29.12 Rule 10 visibility: company money is a permission, never a default zero, 2026-09-09
 
 **The grant rows, read live.** The two permission candidates rule 10 names
@@ -4500,7 +4509,7 @@ suite until the visibility decision is recorded here.
 **Owner question, not a code decision.** Whether ops_manager should see
 contract value, and whether any role beyond owner should see company pnl,
 is filed in §17.3 and OWNER_QUESTIONS item 12; the tripwire makes any
-grant change stop here first.
+grant change stop here first.
 ### 29.13 The mapping tripwire proven live, and its entry un-staled, 2026-09-09
 
 **Task 1 asked whether the tripwire can still see reality. Three answers:**
@@ -4530,7 +4539,7 @@ grant change stop here first.
 **Proofs cited:** the direct-insert probe was observed (1 row, matching
 pair); the empty set was observed as the failure that motivated the
 self-seed (expected 0 to be greater than 0). Both in this session’s
-transcript; the committed test carries both comments.
+transcript; the committed test carries both comments.
 ### 29.14 The OR-widens-the-audience sweep, 2026-09-09
 
 **Scope, stated.** Every permission check in src/ that ORs, unions, or
@@ -4586,7 +4595,7 @@ company-money widget demands view_company_pnl alone; the money audience
 is exactly owner + accounts_manager against the seed sets for all eight
 roles; no widget ORs a money permission with a weaker arm;
 projects_over_budget’s audience all hold view_cost; a weaker-permission
-role sees no money widget at all — refusal by absence, never a zero.
+role sees no money widget at all — refusal by absence, never a zero.
 ### 29.15 The period lock fires on the contractor-bill posting, and the approval rolls back whole, 2026-09-09
 
 **Proven through the service, not a direct insert.** The 021 lock fires on
@@ -4623,7 +4632,7 @@ the fixture period is deleted by id in a finally and again in afterAll,
 and the limit row the test inserts is deleted for the same reason (the
 next test asserts the empty-table refusal). This is the 29.4 marker
 discipline extended to rows whose identity is a date range rather than a
-name.
+name.
 ### 29.16 The GST rounding rule pinned: roundPaise half-up, CGST takes the odd paisa, the writer is the authority, 2026-09-09
 
 **splitGst’s exact behaviour, reported.** Total tax =
@@ -4746,3 +4755,27 @@ suite asserts it stays true.
 "expected 'contractor_bills_MUTATED' to be 'contractor_bills'" — no test
 edited. Restored, all gates green: unit 331/13, integration 303/17, e2e
 4/1, typecheck 0, /src/ 77.
+
+### 29.20 The GRN amount shapes: the lines are the single source, and a zero-value posting is refused, 2026-09-10
+
+**The column.** goods_receipts.invoice_amount_paise is nullable
+(Generated<number | null>); the dev database holds zero GRN rows, so no
+backfill question arises. The posting never reads it: postGrn's single
+source is the accepted lines themselves — qty_accepted × rate_paise summed
+from the rows the post just read — so a NULL or zero invoice_amount cannot
+zero or shift the expense.
+
+**Proof (grn-posting.test.ts, "a NULL or zero vendor invoice_amount changes
+nothing").** invoice_amount NULL → expense total_paise 500,000 (100 ×
+50.00 from the lines); invoice_amount 0 → same; every line rate 0 →
+received value 0 → the posting is REFUSED with "zero accepted value ... no
+cost to post" and the GRN stays draft with null expense_id and no ledger
+rows — a zero-value expense carrying a valid identity pair would reconcile
+silently, which is worse than a refusal (prompt's own criterion).
+
+**The timing question, not a code decision.** Goods can legitimately arrive
+before the vendor's invoice, so a GRN with no invoice amount is a real
+state, not an error — the cost lands on receipt and the vendor's bill
+reconciles later. Whether that is the owner's intent (versus waiting for
+the three-way match) is filed to §17.3; the code takes no position beyond
+posting from the lines.
