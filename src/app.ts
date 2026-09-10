@@ -39,6 +39,8 @@ import cron from './internal/cron/routes.js'
  * which tells an attacker their token was never checked.
  */
 
+import { cspReportOnly, cspReportRoutes } from './middleware/cspReport.js'
+
 const app = new Hono<AppEnv>()
 
 app.onError(errorHandler)
@@ -66,7 +68,12 @@ app.use(
   })
 )
 
-app.use('*', legacyRedirects())
+/* CSP Report-Only (§24.7/§29.24): the draft enforcing policy, applied as
+ * report-only so nothing changes what executes, with violations collected
+ * at /api/csp-report for §9's eventual tightening. Registered before the
+ * router mounts so every response — page, API, static — carries it. */
+app.use('*', cspReportOnly())
+app.route('/', cspReportRoutes)
 app.use('*', sessionMiddleware())
 
 app.use('/app/*', csrfProtect())
