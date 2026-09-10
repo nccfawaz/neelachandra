@@ -1676,7 +1676,7 @@ export async function postGrn(
   return await db.transaction().execute(async (trx) => {
     const grn = await trx
       .selectFrom('goods_receipts')
-      .select(['id', 'grn_no', 'status', 'po_id', 'vendor_id', 'location_id', 'project_id', 'received_on', 'invoice_no'])
+      .select(['id', 'grn_no', 'status', 'po_id', 'vendor_id', 'location_id', 'project_id', 'received_on', 'invoice_no', 'invoice_date'])
       .where('id', '=', grnId)
       .forUpdate()
       .executeTakeFirst()
@@ -1871,6 +1871,14 @@ export async function postGrn(
         source_type: 'grn',
         source_table: 'goods_receipts',
         source_id: grnId,
+        // Rule 8's 45-day clock runs from bill_date (§26.2): where the source
+        // document carries the vendor's invoice date, it is the bill date —
+        // a derived NULL here would leave a real MSME exposure silently
+        // unageable. Where the vendor's bill has not arrived, NULL keeps the
+        // refusal and the row still appears in the ageing report as unageable
+        // (DECISIONS 26.2), which is the correct visibility.
+        bill_date: grn.invoice_date === null ? null : String(grn.invoice_date),
+        bill_no: grn.invoice_no === null ? null : String(grn.invoice_no),
         narration: `Goods receipt ${grn.grn_no}`,
         total_paise: receivedValuePaise,
         status: 'approved',

@@ -4779,3 +4779,29 @@ state, not an error — the cost lands on receipt and the vendor's bill
 reconciles later. Whether that is the owner's intent (versus waiting for
 the three-way match) is filed to §17.3; the code takes no position beyond
 posting from the lines.
+
+### 29.21 Rule 8 reaches the new writers: the GRN posting derives bill_date from the vendor's invoice date, 2026-09-10
+
+**The survey.** Neither new writer set bill_date, so both produced expenses
+the MSME ageing report bands 'unageable' — a silent gap for exactly the
+vendors rule 8 protects. The sources differ:
+
+- postGrn's GRN carries invoice_no and invoice_date (the vendor's bill
+  details, entered at receipt when it arrived). Those are a real bill
+  identity, so the posting now writes bill_date = invoice_date and
+  bill_no = invoice_no. Where the vendor's bill has not arrived,
+  invoice_date is NULL and bill_date stays NULL — DECISIONS 26.2's refusal,
+  with the row still visible as 'unageable' in the report.
+- approveContractorBill's contractor_bills carries no vendor-invoice date —
+  only period_from/period_to, the work window. There is no bill date to
+  derive, so its expenses stay 'unageable' and the refusal stands; deriving
+  from the work period would start the 45-day clock before any bill
+  existed, understating nothing but misstating when payment terms began.
+
+**Proof (grn-posting.test.ts, "rule 8 on the new writer").** Fixture
+vendor now carries msme_udyam_no. GRN with invoice_date 2026-09-01 →
+expense.bill_date reads back 2026-09-01 and bill_no reads back the GRN's
+invoice_no; msmeAgeing('2099-01-01') bands it 'due' with daysOverdue > 45.
+GRN with invoice_no/invoice_date absent → bill_date NULL, and the same
+report bands it 'unageable' — the gap visible, not hidden. Gates: unit
+331/13, integration 305/17, e2e 4/1, typecheck 0, /src/ 77.

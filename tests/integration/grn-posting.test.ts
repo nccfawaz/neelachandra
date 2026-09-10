@@ -5,6 +5,7 @@ import { getDb } from '../../src/db/kysely.js'
 import { sweepFixtures } from './fixture-markers.js'
 import { closePool, getPool } from '../../src/db/pool.js'
 import { postStockMovement } from '../../src/modules/inventory/service.js'
+import { msmeAgeing } from '../../src/modules/finance/service.js'
 import { createGrn, postGrn } from '../../src/modules/inventory/service.js'
 import { grnSchema } from '../../src/modules/inventory/schemas.js'
 import { WRITER_MAPPING } from './expense-writer-mapping.js'
@@ -143,6 +144,7 @@ beforeAll(async () => {
     .values({
       code: `FIXVN-GRN${randomUUID().slice(0, 6)}`,
       name: 'Fixture Vendor for GRN posting',
+      msme_udyam_no: 'UDYAM-KR-03-0001234',
       vendor_type: 'material',
       city: 'Bengaluru',
       status: 'active',
@@ -328,6 +330,63 @@ describe('the GRN posting writes the expense row (§6.8 rule 1)', () => {
       .executeTakeFirstOrThrow()
     expect(grnRow.status).toBe('draft')
     expect(grnRow.expense_id).toBeNull()
+  })
+
+  it('rule 8 on the new writer: bill_date flows from the GRN\'s invoice date, and the MSME ageing report bands it (DECISIONS 29.21)', async () => {
+    // The fixture vendor carries msme_udyam_no, so the expense this posting
+    // writes is inside rule 8's scope. invoice_date 2026-09-01, aged from
+    // 2099-01-01 (an open seeded period's date) → ~848 days → 'due'.
+    const grn = await createGrn(db, { userId, ip: '127.0.0.1' }, grnInput())
+    await postGrn(db, { userId, ip: '127.0.0.1' }, grn.grnId, true)
+
+    const posted = await db
+      .selectFrom('expenses')
+      .select(['bill_date', 'bill_no'])
+      .where('source_table', '=', 'goods_receipts')
+      .where('source_id', '=', grn.grnId)
+      .executeTakeFirstOrThrow()
+    expect(String(posted.bill_date)).toBe(GRN_DATE)
+    const grnRow = await db
+      .selectFrom('goods_receipts')
+      .select(['invoice_no'])
+      .where('id', '=', grn.grnId)
+      .executeTakeFirstOrThrow()
+    expect(String(posted.bill_no)).toBe(String(grnRow.invoice_no))
+
+    // The ageing path over the posted expense: the row is banded from the
+    // derived bill_date, not refused as unageable.
+    const postedNo = await db
+      .selectFrom('expenses')
+      .select('expense_no')
+      .where('source_table', '=', 'goods_receipts')
+      .where('source_id', '=', grn.grnId)
+      .executeTakeFirstOrThrow()
+    const ageing = await msmeAgeing(db, '2099-01-01')
+    const row = ageing.find((r) => r.expenseNo === postedNo.expense_no)
+    expect(row, 'the GRN posting\'s expense is missing from the MSME ageing report').toBeDefined()
+    expect(row!.band).toBe('due')
+    expect(row!.daysOverdue).toBeGreaterThan(45)
+
+    // The unageable branch still exists for the real gap: a GRN whose vendor
+    // invoice has not arrived carries invoice_date NULL, and its expense is
+    // banded 'unageable' — visible, not hidden.
+    const noInvoice = await createGrn(
+      db,
+      { userId, ip: '127.0.0.1' },
+      grnInput({ invoiceNo: undefined, invoiceDate: undefined })
+    )
+    await postGrn(db, { userId, ip: '127.0.0.1' }, noInvoice.grnId, true)
+    const unaged = await db
+      .selectFrom('expenses')
+      .select(['bill_date', 'expense_no'])
+      .where('source_table', '=', 'goods_receipts')
+      .where('source_id', '=', noInvoice.grnId)
+      .executeTakeFirstOrThrow()
+    expect(unaged.bill_date).toBeNull()
+    const ageingAfter = await msmeAgeing(db, '2099-01-01')
+    const unagedRow = ageingAfter.find((r) => r.expenseNo === unaged.expense_no)
+    expect(unagedRow, 'the undated GRN expense is missing from the ageing report').toBeDefined()
+    expect(unagedRow!.band).toBe('unageable')
   })
 
   it('the 021 trigger fires on the posting: a GRN received inside a closed period cannot post, and the post rolls back whole', async () => {
