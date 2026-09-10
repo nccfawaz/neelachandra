@@ -116,9 +116,9 @@ const PERMISSIVE_OVER_NULL: Record<string, string> = {}
  * a reader who finds one wrong should correct it rather than assume it was agreed:
  * being written down here is not evidence that anyone chose it.
  *
- * The single exception is `site_page_revisions.schema_types`, whose entry is not a
- * reconstruction at all -- it cites spec :1387 against the declaration at 007:51
- * and records the disagreement as open. That is what a grounded entry looks like.
+ * The former single exception, `site_page_revisions.schema_types`, cited spec
+ * :1387 against the declaration at 007:51 and recorded the disagreement as open.
+ * Migration 026 closed it (DECISIONS 29.25); its entry now states the closed fact.
  *
  * This warning exists because of the defect in DECISIONS 20.2: a test asserted a
  * row shape was intended, citing a migration comment written in the same session
@@ -163,8 +163,8 @@ const AUTO_JSON_CHECKS: Record<string, { nullable: boolean; why: string }> = {
     why: '007:48. A revision that snapshots nothing cannot be rolled back to.',
   },
   'site_page_revisions.schema_types': {
-    nullable: true,
-    why: 'DECISIONS 21.4: NOT recorded as intentional. 007:51 declares it NULL while the column it snapshots (site_pages.schema_types, 007:27) is NOT NULL, and spec :1387 says every publish snapshots the previous state. Open as a precondition on the §7 CMS work.',
+    nullable: false,
+    why: 'Closed by migration 026 (DECISIONS 21.4, 29.25): the NULL form was admitted and the revert write it fed was refused by the page column own NOT NULL, so the snapshot was unusable on the only path the table exists for. Backfilled from the snapshotted page, then NOT NULL.',
   },
   'quotes.payment_schedule_json': {
     nullable: true,
@@ -374,10 +374,10 @@ describe('the twelve json_valid constraints, left permissive on purpose', () => 
       .map(([key]) => key)
       .sort()
 
-    // The other four are NOT NULL, so the NULL shape cannot arise and the
-    // question does not apply to them.
+    // The other five are NOT NULL (site_page_revisions.schema_types joined
+    // them when migration 026 landed), so the NULL shape cannot arise there.
     expect(reachable).toEqual(recorded)
-    expect(reachable).toHaveLength(8)
+    expect(reachable).toHaveLength(7)
   })
 
   it('evaluates to UNKNOWN over NULL and to FALSE over every other non-JSON', async () => {

@@ -4923,3 +4923,42 @@ absent; the draft carries the two concessions and no nonce; a valid
 violation report POSTs to 204 and lands in the log (observed in the run's
 output); a malformed body also answers 204. Gates: unit 335/14,
 integration 306/17, e2e 4/1, typecheck 0, /src/ 78 (cspReport.ts added).
+
+### 29.25 The §7 precondition closed: migration 026 makes every revision restorable, 2026-09-10
+
+**What the prose settles.** Spec :1387 ("every publish snapshots the
+previous state") and :1508 ("Restores a revision as a new draft") settle
+the semantics: a revision is a snapshot for the revert path, and the revert
+writes the revision's columns back toward site_pages. Nothing in §7's prose
+gives a revision a NULL schema_types a meaning.
+
+**No writer produces one — yet.** The tree's only site_page_revisions
+references are the type row (src/db/types.ts:1893) and the JSON-column
+registry (src/lib/json.ts:42); §21.4's survey stands. So no NULL revision
+exists: the dev database held 0 revision rows of any kind.
+
+**The rollback answer, proven rather than reasoned.** The pre-migration
+probe (run live before 026 shipped): a fixture page with schema_types set,
+a NULL revision inserted against it — ADMITTED by 007:51 — then the
+revert-shaped UPDATE of site_pages from that revision: **REFUSED with
+ER_BAD_NULL_ERROR, "Column 'schema_types' cannot be null"**. 21.4's
+prediction was exact: the snapshot was unusable on the only path the table
+exists for.
+
+**The fix.** Migration 026 backfills any NULL from its snapshotted page
+(the faithful value by :1387's definition) and declares the column NOT
+NULL. tests/integration/revision-schema.test.ts proves the post-migration
+contract: a NULL revision insert is refused (ER_BAD_NULL_ERROR), and the
+snapshot/restore round trip preserves schema_types through the revert
+write shape. The AUTO_JSON_CHECKS registry entry flipped to nullable:
+false, and its "exactly eight" NULL-reachable count is now seven — both
+caught red before the registry was updated, which is the tripwire working.
+Gates: unit 335/14, integration 308/18, e2e 4/1, typecheck 0, /src/ 78,
+26 migrations none pending.
+
+**§7's other preconditions: none found.** A sweep of DECISIONS §21 found
+21.4 (this one) as the only entry tagged as a precondition on the CMS
+slice. The marketing module is mounted and permission-guarded
+(src/modules/marketing/routes.tsx); §7.6 step 5 (the parity-verified editor
+unlock) remains fenced as always, and the CMS slice itself is gated on the
+owner answers in OWNER_QUESTIONS.md, not on schema work.
