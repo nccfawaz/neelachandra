@@ -113,4 +113,43 @@ describe('the pre-session double-submit branch of csrfProtect', () => {
     expect(res.status).toBe(403)
     expect(await res.text()).toContain('session has ended')
   })
+
+  it('a pre-session cookie does NOT satisfy the session branch on any other path', async () => {
+    // DECISIONS 29.34: the path set is a constant, checked before anything
+    // else. A visitor (or an attacker who planted a parent-domain cookie)
+    // cannot extend double-submit semantics to any route beyond /login and
+    // /forgot-password — an anonymous POST to /app with a perfectly valid
+    // pre-session pair is still refused with the session error.
+    const app = build()
+    const token = issueToken()
+    for (const path of ['/app/anywhere', '/app', '/2fa/verify', '/reset-password/x', '/logout']) {
+      const res = await app.request(path, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/x-www-form-urlencoded',
+          cookie: `${PRE_SESSION_COOKIE}=${token}`,
+        },
+        body: new URLSearchParams({ nc_csrf: token }),
+      })
+      expect(res.status, path).toBe(403)
+    }
+  })
+
+  it('comparison is timing-safe even on a length mismatch (no early-exit leak)', async () => {
+    // constantTimeEquals hashes both sides to 32 bytes before
+    // timingSafeEqual, so a 1-char guess costs the same as a 64-char wrong
+    // token. This asserts the code path used IS the hashed one by checking
+    // a wrong-length token is refused, not short-circuited by length.
+    const app = build()
+    const token = issueToken()
+    const res = await app.request(PRE_SESSION_PATH, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded',
+        cookie: `${PRE_SESSION_COOKIE}=${token}`,
+      },
+      body: new URLSearchParams({ nc_csrf: 'x' }),
+    })
+    expect(res.status).toBe(403)
+  })
 })

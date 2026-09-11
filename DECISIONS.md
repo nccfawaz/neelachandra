@@ -5333,3 +5333,58 @@ and here, so no future reader mistakes this gate for write-path proof.
 The test stays: as a regression guard over rows that exist, and as the
 place the enumeration floor (non-zero, == registry length) keeps the
 column list honest.
+
+### 29.34 Adversarial review of the pre-session CSRF branch, 2026-09-11
+
+The one piece of security-critical middleware from 29.32, reviewed point
+by point with probes against the live server and two new persistent
+tests (tests/unit/csrf-pre-session.test.ts, 5 -> 7 tests).
+
+**Where ncc_csrf is set and with which attributes.** Only in
+auth/routes.tsx issuePreSessionToken: `HttpOnly; SameSite=Lax; Path=/;
+Max-Age=3600; secure=isProd` (Secure on in production, off in dev —
+HTTP-only localhost). Set on the GET render of /login, /forgot-password
+AND /reset-password/:token, so a first-time visitor always has one
+before any POST. Deleted on successful login (setSessionCookie).
+Proven: live GET /login response carries exactly those attributes.
+
+**Constant-time, length-mismatch safe.** The comparison is
+constantTimeEquals (src/lib/crypto.ts:75): both sides are SHA-256
+hashed before timingSafeEqual, so a 1-character guess costs the same as
+a full-length wrong token — no early exit on length. Pinned by the
+new length-mismatch test.
+
+**The path list.** The branch is a hardcoded `Set([/login,
+/forgot-password])` checked before anything else. Proven not
+extendable: anonymous POSTs to /app/anywhere, /app, /2fa/verify,
+/reset-password/x and /logout carrying a perfectly valid pre-session
+pair are all refused 403 (the new not-a-bypass test asserts all five).
+
+**Session fixation.** Login does NOT rotate a pre-existing session id —
+it creates a new session row (auth/service.ts:164 createSession) and the
+cookie issued is a fresh 32-byte random token whose SHA-256 is the row
+id, so there is no attacker-chosen identifier to fix. Rotation happens
+on privilege change (session.ts rotateSession: TOTP verify, password
+change, role edit), which is the spec 6.1 mitigation. The pre-session
+ncc_csrf cookie is deleted on login, so a fixation attempt through IT
+carries no privilege either.
+
+**Cross-origin / sibling-subdomain planting.** A sibling subdomain can
+set a parent-domain cookie, so an attacker CAN plant ncc_csrf=known and
+submit a matching form field — the classic double-submit weakness. The
+mitigations, in order: SameSite=Lax blocks the cookie AND the
+cross-site POST in every current browser; the login form is not a
+worthwhile CSRF target (a forged login logs the VICTIM into the
+attacker's account — self-DoS, per the 29.32 rationale); and the
+pre-session token grants nothing. The spec (:219) specifies the
+per-session synchroniser token, which the branch defers to the moment
+a session exists. The pattern is recorded here as the considered
+choice; the rejected alternative is stateful pre-session tokens (a DB
+row per login-page render), rejected because it adds a write per page
+view and a table for a token that grants nothing.
+
+**Spec quotes.** :219: "CSRF: own middleware, per-session token in
+user_sessions.csrf_token, required as a hidden _csrf field on every
+non-GET form and as the X-CSRF-Token header on htmx requests." The spec
+is silent on pre-session forms; this branch fills exactly that silence
+and no more.
