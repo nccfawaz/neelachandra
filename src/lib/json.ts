@@ -97,3 +97,27 @@ export function parseJsonColumnArray(raw: unknown): unknown[] {
 export function jsonColumnEquals(raw: unknown, next: unknown): boolean {
   return JSON.stringify(parseJsonColumn(raw)) === JSON.stringify(next === undefined ? null : next)
 }
+
+/**
+ * The one WRITER-side encoder for every JSON column value.
+ *
+ * The read side has parseJsonColumn because mysql2 parses JSON columns before
+ * the code sees them; the write side has this because the reverse hazard is
+ * just as silent: a value that already came from a JSON column arrives as a
+ * live object, and Kysely's binding stringifies a bare object as the literal
+ * '[object Object]', which the column's json_valid CHECK then refuses — the
+ * instance is DECISIONS 29.29's first cms-revisions run, where all nine tests
+ * failed with `CONSTRAINT site_page_revisions.content_json failed`.
+ *
+ * Strings pass through (the caller stringified deliberately); objects and
+ * arrays are canonical JSON text; null/undefined is the caller's decision and
+ * passes through so a nullable column can be cleared. The string path is also
+ * the guard: a string that arrived from a JSON column read is gone forever,
+ * but a string about to be written was built by this codebase, and every
+ * caller builds it with JSON.stringify.
+ */
+export function toJsonText(value: unknown): string | null {
+  if (value === null || value === undefined) return null
+  if (typeof value === 'string') return value
+  return JSON.stringify(value)
+}

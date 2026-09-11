@@ -182,14 +182,39 @@ aggregate committed and actual cost per project per cost head, and the prose
 specifies the variance as `budget - (committed + actual)`. Without a COALESCE,
 a project with no POs and no expenses makes every derived figure NULL — not
 zero, and not an error, just a blank where a number was expected, silently,
-on every report the views feed. The rule: **an aggregate whose result feeds
-arithmetic or a NOT NULL expectation is wrapped in COALESCE at the point of
+on every report the views feed.The rule: **an aggregate whose result feeds arithmetic or a NOT NULL expectation is wrapped in COALESCE at the point of
 aggregation, and the zero-rows case is proven by evaluating the aggregate
 expression against an empty set — not by reading the definition.**
 `tests/integration/finance-views.test.ts` ("SUM over zero rows is 0, not
 NULL") runs `select coalesce(sum(amount_paise), 0)` against a non-matching
 `expense_id` and asserts `not.toBeNull()` and `0`, which is the evaluation
 shape the CHECK-tripwire section asks for, applied to aggregates.
+
+**A CHECK that returns NULL on NULL cannot police the column it guards — and
+the driver can hand the writer a shape the binding mangles before the CHECK
+ever sees it.** Two halves, one incident (DECISIONS 29.29, 2026-09-11):
+
+- The NULL half is the three-valued-logic rule above wearing a JSON column:
+  `json_valid(NULL)` is UNKNOWN, so the CHECK admits any NULL. On a nullable
+  JSON column that is the *wanted* behaviour — but it means the CHECK says
+  nothing about what else got in, so "the column is guarded" must be proven
+  by observing the stored bytes, never by reading the DDL.
+- The binding half is invisible to the server until too late: mysql2 parses
+  JSON columns into live objects on READ, and Kysely stringifies a bare
+  object on WRITE as the literal `[object Object]` — which json_valid then
+  refuses (`CONSTRAINT site_page_revisions.content_json failed`, all nine
+  cms-revisions tests red on the first live run). A round-trip through a
+  JSON column and back is not identity: read object → write object is a
+  guaranteed constraint failure.
+
+The rule: **the one reader (`parseJsonColumn`) and the one writer encoder
+(`toJsonText`), both in `src/lib/json.ts`, are the only sanctioned shapes for
+JSON column values in `src/`** — every write path sends either a string the
+caller built with `JSON.stringify` or the value through `toJsonText`, and
+`tests/integration/json-columns.test.ts` scans all twelve columns for stored
+`[object Object]` or json_valid failures so the class is caught at the gate,
+not at the first live suite run.
+
 
 ## A tripwire on a constraint's shape has to evaluate the clause, not match its text
 

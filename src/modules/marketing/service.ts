@@ -2,7 +2,7 @@ import { sql } from 'kysely'
 import type { Db, Queryable, Trx } from '../../db/kysely.js'
 import { writeAudit } from '../../lib/audit.js'
 import { NotFoundError, UnprocessableError } from '../../lib/errors.js'
-import { parseJsonColumn } from '../../lib/json.js'
+import { parseJsonColumn, toJsonText } from '../../lib/json.js'
 import type { PageEditInput } from './schemas.js'
 
 /**
@@ -53,17 +53,6 @@ function assertJsonSafe(value: string, column: string): string {
   return value
 }
 
-/**
- * mysql2 parses JSON columns into JS objects on read (the probe showed
- * content_json arriving as object, not string), while the insert must carry
- * a string — Kysely's own binding turns a bare object into the literal
- * '[object Object]', which json_valid rejects. Whatever the driver hands
- * back, the revision stores canonical JSON text.
- */
-function toJsonText(value: unknown, column: string): string {
-  const text = typeof value === 'string' ? value : value == null ? '' : JSON.stringify(value)
-  return assertJsonSafe(text, column)
-}
 
 /**
  * The one writer of site_page_revisions. Called before any change to the
@@ -94,8 +83,8 @@ export async function writeRevision(db: Trx, actor: Actor, pageId: number, chang
       schema_types: string | Record<string, unknown>
       content_json: string | Record<string, unknown>
     }
-    const contentJsonText = toJsonText(row.content_json, 'content_json')
-    const schemaTypesText = toJsonText(row.schema_types, 'schema_types')
+    const contentJsonText = assertJsonSafe(toJsonText(row.content_json) ?? '', 'content_json')
+    const schemaTypesText = assertJsonSafe(toJsonText(row.schema_types) ?? '', 'schema_types')
 
     const revisionNo = await nextRevisionNo(db, pageId)
     const inserted = await db

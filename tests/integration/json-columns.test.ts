@@ -2,7 +2,7 @@ import { sql } from 'kysely'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { getDb } from '../../src/db/kysely.js'
 import { closePool } from '../../src/db/pool.js'
-import { JSON_COLUMNS, jsonColumnEquals, parseJsonColumn } from '../../src/lib/json.js'
+import { JSON_COLUMNS, jsonColumnEquals, parseJsonColumn, toJsonText } from '../../src/lib/json.js'
 import { allSettings, coerceSetting } from '../../src/lib/settings.js'
 import * as svc from '../../src/modules/admin/service.js'
 
@@ -119,6 +119,49 @@ describe('the JSON column registry, against information_schema', () => {
       `.execute(db)
       expect(Number(result.rows[0]?.n ?? 0), `${entry} is registered but does not exist`).toBe(1)
     }
+  })
+
+  it('holds no row whose stored value fails JSON_VALID or is the literal [object Object]', async () => {
+    // The stored bytes are observed, not inferred. Every registered column is
+    // scanned for a value that is non-NULL and either fails json_valid or is
+    // exactly the '[object Object]' literal that Kysely's binding produces
+    // from a bare object (DECISIONS 29.29's first cms-revisions run failed
+    // all nine tests on exactly that literal).
+    //
+    // What the CHECKs do and do not catch, proven against this server on
+    // 2026-09-11: a json_valid CHECK refuses '[object Object]' on both INSERT
+    // and UPDATE on a nullable column (email_log.response_json, live-refused
+    // errno 4025), so the seven nullable columns are NOT naked — the
+    // three-valued-logic hole admits only NULL itself, which is legitimate
+    // for a nullable column. The literal could only be stored if a column
+    // lacked its CHECK entirely; the registry==CHECKs test above pins that at
+    // twelve, and this scan catches the case a future migration drops one.
+    expect(JSON_COLUMNS.length, 'the column enumeration is empty').toBeGreaterThan(0)
+    expect(JSON_COLUMNS.length).toBe(12)
+    for (const entry of JSON_COLUMNS) {
+      const [table, column] = entry.split('.')
+      const result = await sql<{ n: number }>`
+        select count(*) as n from ${sql.table(table)}
+        where ${sql.ref(column)} is not null
+          and (json_valid(${sql.ref(column)}) = 0 or ${sql.ref(column)} = '[object Object]')
+      `.execute(db)
+      expect(
+        Number(result.rows[0]?.n ?? 0),
+        `${entry} holds a value that is not valid JSON or is the '[object Object]' binding literal`
+      ).toBe(0)
+    }
+  })
+
+  it('toJsonText is the sanctioned write path: a raw object is normalised, null passes through', async () => {
+    // The writer-side twin of parseJsonColumn (src/lib/json.ts). Proves the
+    // encoding contract at the point every JSON write is expected to go
+    // through: an object that mysql2 would hand back from a read is encoded
+    // to canonical text rather than bound as '[object Object]'.
+    const parsed = { blocks: [{ type: 'richtext', text: 'x' }] }
+    expect(toJsonText(parsed)).toBe(JSON.stringify(parsed))
+    expect(toJsonText(JSON.stringify(parsed))).toBe(JSON.stringify(parsed))
+    expect(toJsonText(null)).toBe(null)
+    expect(toJsonText(undefined)).toBe(null)
   })
 })
 
