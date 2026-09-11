@@ -215,6 +215,20 @@ caller built with `JSON.stringify` or the value through `toJsonText`, and
 `[object Object]` or json_valid failures so the class is caught at the gate,
 not at the first live suite run.
 
+## Any script writing to the dev database marks its rows and cleans up in a finally that survives a hung pool
+
+A script that inserts rows and leaves cleanup to a graceful exit is a
+script that leaves debris: fourteen unmarked `probe.*@example.invalid`
+user rows from hung probe scripts poisoned the crm-flow gate for a full
+session (DECISIONS 29.30). The rule: **any script under scripts/ that
+writes rows to the dev database must (1) mark every row with the
+`[fixture]` marker (or an equivalent registered prefix) so the
+integration suites' sweep can find it, and (2) delete what it created in
+a `finally` that opens its own short-lived connection rather than
+depending on the process's pool closing cleanly.** The seeded owner from
+scripts/seed-users.mjs is the documented exception: bootstrap state
+(README:25), not debris, and the sweep must not delete it.
+
 
 ## A tripwire on a constraint's shape has to evaluate the clause, not match its text
 
