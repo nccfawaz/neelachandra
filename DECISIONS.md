@@ -5215,3 +5215,48 @@ tests. No other suite asserts a bare count over a globally-writable table.
 
 Proven by: tests/integration/crm-flow.test.ts (36/36 with a foreign row
 planted), full gate 326/326.
+
+### 29.31 The draft/live split: editPage stops writing the live row, 2026-09-11
+
+**The divergence, stated plainly.** Spec :1505: the block editor "Saves to
+`draft`, never to live". Spec :1506: preview "renders the draft through
+the real public layout ... so what is previewed is what publishes".
+Spec :1359: "publishing is a deliberate act with a preview". The writer
+as landed in 29.29 wrote content_json, schema_types and title straight
+onto the live row on every edit — so editing a published page changed
+the public site with no publish act. That diverges from the normative
+prose, and this entry is the record of the divergence 29.29 deferred.
+
+**The mechanism chosen: draft columns on site_pages (migration 027).**
+draft_title, draft_meta_description, draft_schema_types,
+draft_content_json, all nullable. editPage writes ONLY the draft
+columns; publishPage (new, the :1507 route's service) snapshots the
+LIVE row through writeRevision (:1387), copies draft -> live, stamps
+published_at/published_by; revertToRevision (:1508) restores a revision
+INTO the draft columns — live untouched, exactly "as a new draft".
+What is previewed (the draft columns) is what publishes, :1506
+literally.
+
+**Alternatives rejected.** A draft-revision pointer (edits write a
+flagged revision; publish promotes): :1508 restores *as a draft*, which
+a promote-pointer cannot express without a second flag, and it overloads
+site_page_revisions, whose NOT NULL narrowing (026) exists for
+restorability, not working drafts. Status-column only (live copy in the
+latest published revision): forces every public read through the
+revisions table and leaves a never-published page's first draft
+unrepresentable.
+
+**Proven by the service-level round trip**
+(tests/integration/cms-revisions.test.ts, 11/11): editing a published
+page leaves the live title and status unchanged (the assertion the old
+writer could not pass); publish moves draft to live and stamps the
+publisher; the pre-publish snapshot holds the replaced live state;
+publish refuses with no draft; the edit -> revert round trip never
+violates the schema_types NOT NULL (026). The tripwire earned its keep
+during implementation: publishPage's first draft copied the
+driver-parsed JSON objects raw and bound '[object Object]' — caught
+red, fixed through toJsonText.
+
+OWNER_QUESTIONS item 17 stays open: what the visitor sees in the
+meantime is now answerable by the owner against a working mechanism,
+not a refusal. The revert-re-publication refusal per :1508 stands.

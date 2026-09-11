@@ -109,8 +109,10 @@ describe('the JSON column registry, against information_schema', () => {
   it('registers every column that exists under a name the grep would miss', async () => {
     // Three of the twelve are not called *_json, which is how they were missed
     // the first time. This asserts they are real columns, not stale entries.
+    // (visible_to_roles and the two 027 draft columns make it five of
+    // fourteen now.)
     const odd = JSON_COLUMNS.filter((entry) => !entry.endsWith('_json'))
-    expect(odd).toHaveLength(3)
+    expect(odd).toHaveLength(4)
     for (const entry of odd) {
       const [table, column] = entry.split('.')
       const result = await sql<{ n: number }>`
@@ -137,7 +139,7 @@ describe('the JSON column registry, against information_schema', () => {
     // lacked its CHECK entirely; the registry==CHECKs test above pins that at
     // twelve, and this scan catches the case a future migration drops one.
     expect(JSON_COLUMNS.length, 'the column enumeration is empty').toBeGreaterThan(0)
-    expect(JSON_COLUMNS.length).toBe(12)
+    expect(JSON_COLUMNS.length).toBe(14) // +2 from migration 027's draft columns
     for (const entry of JSON_COLUMNS) {
       const [table, column] = entry.split('.')
       const result = await sql<{ n: number }>`

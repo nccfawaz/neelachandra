@@ -1465,11 +1465,14 @@ export interface SitePagesTable {
   id: Generated<number>
   slug: string
   title: string
+  draft_title: Generated<string | null>
   h1: Generated<string | null>
   meta_description: Generated<string | null>
+  draft_meta_description: Generated<string | null>
   canonical_path: Generated<string | null>
   og_image_file_id: Generated<number | null>
   schema_types: string
+  draft_schema_types: Generated<string | null>
   sitemap_priority: Generated<number>
   sitemap_changefreq: Generated<'always' | 'hourly' | 'daily' | 'weekly' | 'monthly' | 'yearly' | 'never'>
   noindex: Generated<number>
@@ -1477,6 +1480,7 @@ export interface SitePagesTable {
   published_at: SqlDateNull
   published_by: Generated<number | null>
   content_json: string
+  draft_content_json: Generated<string | null>
   created_at: SqlDateGen
   updated_at: SqlDateGen
 }

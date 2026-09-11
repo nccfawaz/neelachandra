@@ -150,6 +150,10 @@ const AUTO_JSON_CHECKS: Record<string, { nullable: boolean; why: string }> = {
     nullable: true,
     why: '004:342. NULL is "no role restriction", which is not the same as an empty array.',
   },
+  'site_pages.draft_schema_types': {
+    nullable: true,
+    why: '027:9. NULL is "no draft saved yet"; publish refuses a page with no draft.',
+  },
   'site_pages.schema_types': {
     nullable: false,
     why: '007:27. Every published page emits JSON-LD, so the list is never absent.',
@@ -157,6 +161,10 @@ const AUTO_JSON_CHECKS: Record<string, { nullable: boolean; why: string }> = {
   'site_pages.content_json': {
     nullable: false,
     why: '007:35. A page with no blocks has nothing to render.',
+  },
+  'site_pages.draft_content_json': {
+    nullable: true,
+    why: '027:11. NULL is "no draft saved yet"; only publish promotes a draft to live.',
   },
   'site_page_revisions.content_json': {
     nullable: false,
@@ -367,7 +375,7 @@ describe('the twelve json_valid constraints, left permissive on purpose', () => 
     expect(unjustified).toEqual([])
   })
 
-  it('is reachable by a NULL on exactly the eight nullable columns', () => {
+  it('is reachable by a NULL on exactly the nine nullable columns', () => {
     const reachable = autoKeys().filter((key) => nullable.get(key)).sort()
     const recorded = Object.entries(AUTO_JSON_CHECKS)
       .filter(([, decision]) => decision.nullable)
@@ -377,7 +385,7 @@ describe('the twelve json_valid constraints, left permissive on purpose', () => 
     // The other five are NOT NULL (site_page_revisions.schema_types joined
     // them when migration 026 landed), so the NULL shape cannot arise there.
     expect(reachable).toEqual(recorded)
-    expect(reachable).toHaveLength(7)
+    expect(reachable).toHaveLength(9)
   })
 
   it('evaluates to UNKNOWN over NULL and to FALSE over every other non-JSON', async () => {

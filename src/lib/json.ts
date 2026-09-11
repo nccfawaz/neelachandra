@@ -41,6 +41,8 @@ export const JSON_COLUMNS = [
   'site_page_revisions.content_json',
   'site_page_revisions.schema_types',
   'site_pages.content_json',
+  'site_pages.draft_content_json',
+  'site_pages.draft_schema_types',
   'site_pages.schema_types',
   'site_services.body_json',
 ] as const
