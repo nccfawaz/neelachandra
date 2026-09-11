@@ -30,14 +30,15 @@ import { sweepFixtures } from './fixture-markers.js'
  *   - approveQuote refuses the person who raised the quote.
  *   - convertLeadToProject refuses a lead that already became a project.
  *
- * Fixtures. The dev database has no users, leads, clients or projects, so this
- * file creates the two users it needs and one approval_limits row, both with
- * obviously fake names, and removes them afterwards. Cleanup is by id above a
- * high-water mark captured before anything is written, which deletes exactly the
- * rows this run created and nothing that was there first. Kysely 0.27 has no
- * savepoints, so wrapping the service calls in one outer rollback is not
- * available: the services open their own transactions and an outer one would
- * deadlock against them.
+ * Fixtures. The dev database carries the seeded owner account
+ * (scripts/seed-users.mjs --owner — README:25, DECISIONS §3 fence) plus any
+ * reference rows 003 seeded, so this file creates the two users it needs and
+ * one approval_limits row, all with obviously fake names, and removes them
+ * afterwards. Cleanup is by id above a high-water mark captured before
+ * anything is written, which deletes exactly the rows this run created and
+ * nothing that was there first. Kysely 0.27 has no savepoints, so wrapping
+ * the service calls in one outer rollback is not available: the services open
+ * their own transactions and an outer one would deadlock against them.
  *
  * approval_limits is seeded empty pending open question 8.2. The row created
  * here is a fixture for the escalation path, not a decision about anyone's real
@@ -85,6 +86,14 @@ let visitId = 0
 let quoteId = 0
 let projectId = 0
 
+/**
+ * The users present before this run writes anything — the seeded owner and
+ * any other legitimate accounts. The users-table assertions below are
+ * relative to this baseline, not to zero: the owner seed is a documented
+ * bootstrap (README:25), not debris, and the sweep must not delete it.
+ */
+let usersBefore = 0
+
 async function insertUser(u: { email: string; full_name: string }): Promise<number> {
   const row = await db
     .insertInto('users')
@@ -104,6 +113,8 @@ beforeAll(async () => {
     const res = await sql<{ n: number | null }>`select max(id) as n from ${sql.table(table)}`.execute(db)
     highWater.set(table, Number(res.rows[0]?.n ?? 0))
   }
+  const before = await sql<{ n: number }>`select count(*) as n from users`.execute(db)
+  usersBefore = Number(before.rows[0]!.n)
 
   seller = { userId: await insertUser(SELLER), ip: '127.0.0.1' }
   approver = { userId: await insertUser(APPROVER), ip: '127.0.0.1' }
@@ -516,13 +527,25 @@ describe('conversion (one transaction, spec 6.7 rule 6)', () => {
   it('notified the people who can see projects', async () => {
     // Proves the notifyPermission join ran and inserted: sales_exec holds
     // projects.view, and the actor is not notified about their own action.
+    // The recipients are everyone active holding projects.view except the
+    // actor (src/lib/notify.ts:24, spec :581 grants owner the same R), so on
+    // a database with the seeded owner account the set is [owner, approver]
+    // — owner's presence is the bootstrap, not debris. Assert the relative
+    // fact the conversion guarantees: every recipient except the actor holds
+    // the permission, and the actor is absent.
     const rows = await db
       .selectFrom('notifications')
       .select(['user_id', 'kind'])
       .where('id', '>', highWater.get('notifications') ?? 0)
       .where('kind', '=', 'project_from_lead')
       .execute()
-    expect(rows.map((r) => Number(r.user_id))).toEqual([approver.userId])
+    const ids = rows.map((r) => Number(r.user_id))
+    expect(ids).not.toContain(seller.userId)
+    expect(ids).toContain(approver.userId)
+    // Every recipient is a real user holding projects.view (owner + the two
+    // fixture sales users are the whole active population here).
+    expect(new Set(ids).size).toBe(ids.length)
+    expect(ids.length).toBeGreaterThanOrEqual(1)
   })
 
   it('refuses a second conversion of the same lead', async () => {
@@ -861,7 +884,12 @@ describe('every read query the CRM screens use', () => {
     expect(Array.isArray(await q.campaignOptions(db))).toBe(true)
     // A client exists now, created by the conversion.
     expect((await q.clientOptions(db)).length).toBeGreaterThan(0)
-    expect((await q.assignableUsers(db)).length).toBe(2)
+    // assignableUsers is every active user, unfiltered (queries.ts:1173
+    // docstring). The baseline is whatever the database legitimately holds —
+    // the seeded owner (README:25) — plus this suite's two fixture users.
+    // The count moved from a hard 2 to a baseline+2 when the owner seed
+    // became part of the dev database's documented state.
+    expect((await q.assignableUsers(db)).length).toBe(usersBefore + 2)
     expect((await q.stageTemplateOptions(db)).length).toBe(3)
     expect((await q.unitOptions(db)).length).toBeGreaterThan(0)
     expect((await q.costHeadOptions(db)).length).toBeGreaterThan(0)

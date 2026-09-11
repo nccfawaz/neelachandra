@@ -64,4 +64,14 @@ export async function sweepFixtures(db: Kysely<any>): Promise<void> {
   await sql`delete ur from user_roles ur join users u on ur.user_id = u.id where u.full_name like ${FIXTURE_MARKER + '%'}`.execute(db)
   await sql`delete from users where full_name like ${FIXTURE_MARKER + '%'}`.execute(db)
   await sql`delete from accounting_periods where financial_year like ${FIXTURE_PERIOD_PREFIX + '%'}`.execute(db)
+
+  // Unmarked-but-transient rows: the probe/scratch scripts (scripts/tmp-*)
+  // seed throwaway accounts at example.invalid that a hung or killed probe
+  // never cleans (the 2026-09-11 incident: fourteen probe.* rows moved
+  // crm-flow's assignableUsers count from 2 to 16). The .invalid TLD is not
+  // routable, so no real account can ever live there; the seeded owner
+  // (owner@neelachandra.com, README:25) does not match and is untouched.
+  await sql`delete ur from user_roles ur join users u on ur.user_id = u.id where u.email like ${'%@example.invalid'}`.execute(db)
+  await sql`delete a from audit_log a join users u on a.user_id = u.id where u.email like ${'%@example.invalid'}`.execute(db)
+  await sql`delete from users where email like ${'%@example.invalid'}`.execute(db)
 }
