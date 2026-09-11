@@ -5388,3 +5388,31 @@ user_sessions.csrf_token, required as a hidden _csrf field on every
 non-GET form and as the X-CSRF-Token header on htmx requests." The spec
 is silent on pre-session forms; this branch fills exactly that silence
 and no more.
+
+### 29.35 The route-coverage tripwire: 227 routes, and no test had posted to /login, 2026-09-11
+
+**The gap this gate closes.** No test drove or named POST /login when
+the CSRF deadlock (29.32) landed, and nothing noticed — coverage was
+judged by what the tests mention, a hand-maintained mirror of the
+router that drifts the moment a route lands. The enumeration here
+comes from the app's own router (Hono app.routes, walked recursively
+through sub-app mounts), so a new route enters the ledger the moment it
+is mounted.
+
+**The numbers.** The router mounts 249 concrete routes (method + path;
+middleware ALL-entries and the empty root excluded, as are the static
+asset routes which the parity gate covers). Of those, tests exercise or
+name 22; **227 are mounted with no test at all** — that number is the
+real coverage debt, and it is the floor of this gate. It only ever
+shrinks: the test asserts the exact count, so adding an entry without
+testing the route, or letting the debt grow, fails.
+
+**Proven both directions.** Green today (3/3 with the recorded debt);
+watched red by mounting a hypothetical
+`/app/marketing/untested-new-route` — the tripwire named the exact
+route in its failure output, then went green again after the route was
+removed. A stale-entry assertion also fails when an allowlist entry
+names a route the router no longer has.
+
+Proven by: tests/unit/route-coverage.test.ts (3 tests), full unit gate
+352/352.
