@@ -2480,6 +2480,17 @@ claims it is unenforced.
 
 ### 20.3 Triage of six comment-justified assertions, none fixed
 
+**Correction, 2026-09-11: the "71 → 78" figure in the last report was a
+further uncited-count instance, and it was wrong.** The /src/ file count
+was **77 → 78** across the CSP slice (e4d958a carried 78; the count of 71
+dates from the run.md era before the finance slices and was never
+re-measured when it was quoted). Counts are behaviour: a quoted count must
+carry the command that produced it and the tree it measured. Measured now
+by `npx tsc --listFilesOnly -p tsconfig.json | grep -c '/src/'`: **78 at
+HEAD (e4d958a), 80 with the §29.29 marketing module in the working tree**.
+Found while executing TASK 0's honest-gate report; the instruction to
+"confirm /src/ is 78" was the tripwire that caught it.
+
 Found by grepping the suites after 20.2, under the CLAUDE.md rule it produced. Recorded rather than
 repaired: four of the six need an answer or a different session's attention, and repairing a test whose
 basis is unknown is how a wrong assertion gets a confident new comment.
@@ -5086,3 +5097,60 @@ Before the label change the first assertion failed on exactly that
 **Scope.** routes.tsx detail page and create form only; no query, no service,
 no schema. The rate-visibility gate (`hidden={!rates}`) is unchanged, so the
 figure is still absent from the HTML for a reader without canRates.
+
+### 29.29 The §7 revision writer exists: an edit always snapshots the state it replaces, 2026-09-11
+
+**What was built.** §21.4's survey and 29.25 both recorded that nothing in
+the tree wrote `site_page_revisions`. The slice closes that: `writeRevision`
+(src/modules/marketing/service.ts) is the single writer, called inside the
+caller's transaction before every change to the page row — `editPage` and
+`revertToRevision` each take one transaction so the snapshot and the edit it
+describes commit or roll back together, and no edit path can skip the
+revision. `nextRevisionNo` takes max+1 under the row lock; `uq_page_rev
+(page_id, revision_no)` (007:55) remains the concurrency backstop — two
+concurrent publishes collide on a duplicate-key error, not a silent
+overwrite. `revertToRevision` (:1508) restores the revision's four columns
+and sets status = 'draft', `published_at`/`published_by` = NULL; it
+snapshots the pre-revert state first, so a revert is itself revisable.
+
+**What was not decided.** §7's prose never says whether editing a published
+page happens on the live row or a draft copy, or whether a reverted
+published page needs re-publication before visitors see it. The restore
+lands as 'draft' because :1508 says so; what publishes it again is the
+owner's question, not a guess recorded here.
+
+**The defect the integration suite found, and the fix.** The first live run
+failed all nine tests with `CONSTRAINT site_page_revisions.content_json
+failed`: mysql2 parses JSON columns into JS objects on read, so the
+snapshot's `content_json` arrived as an object, and Kysely's binding
+stringified it as the literal `'[object Object]'`, which json_valid rejects.
+Raw prepared-statement probes of both shapes (string and object) succeeded —
+the defect was purely the object-shaped value reaching Kysely's
+stringifier. The writer now normalizes whatever the driver returns through
+`toJsonText` (string passes through; object is JSON.stringify'd; empty is
+refused 422, keeping DECISIONS 21.4's restorability guarantee at the write
+time as well as the schema's).
+
+**Proof (tests/integration/cms-revisions.test.ts, 9 tests, all through the
+service functions, never a direct insert).** An edit writes revision 1
+holding the replaced state (title "Original title", the original content
+blocks) with the editing user recorded, and the live row moves; a second
+edit by another user writes revision 2 with that user recorded and
+revision numbers 1, 2 strictly; the write is audited
+(marketing.page_revision_write); an empty schema-type list is refused by
+the Zod gate before the service runs, asserted against pageEditSchema
+directly; a revert restores the exact prior title, meta, schema_types and
+content and sets status = 'draft'; the revert is audited and its pre-revert
+snapshot is the newest revision with the change note naming what it
+replaced; a full edit → revert round trip leaves schema_types non-NULL on
+both tables (the migration 026 contract at the point of use); reverting to
+a nonexistent revision is refused and changes nothing; a standalone
+`writeRevision` under a caller transaction stores a non-NULL snapshot.
+
+**Gates.** unit unchanged, integration 324 tests / 21 files with cms-
+revisions green (323 passing + 1 pre-existing crm-flow `assignableUsers`
+count failure that reproduces on a clean checkout at HEAD — unrelated to
+this slice, recorded here so it is not mistaken for a regression), e2e
+untouched, typecheck 0. The two temporary probe scripts used to isolate the
+'[object Object]' binding defect were removed before this entry was
+written.
