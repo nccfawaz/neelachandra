@@ -1,4 +1,5 @@
 import type { MiddlewareHandler } from 'hono'
+import { getCookie } from 'hono/cookie'
 import { CSRF_FIELD, requiresCsrf, verifyToken } from '../lib/csrf.js'
 import { ForbiddenError } from '../lib/errors.js'
 import type { AppEnv } from '../types.js'
@@ -39,6 +40,24 @@ declare module 'hono' {
  */
 const SKIP_CONTENT_TYPES = ['multipart/form-data']
 
+/**
+ * Pre-session double-submit (spec 2.5, same rationale as auth/routes.tsx's
+ * PRE_SESSION_COOKIE): a visitor posting /login or /forgot-password has no
+ * session row yet, so the synchroniser token has no server half to compare
+ * against. Those forms instead carry the token issued with the page — the
+ * double-submit pattern, safe here because the pre-session cookie is
+ * HttpOnly and SameSite=Lax, and the login form cannot be a CSRF target in
+ * any useful sense (a forged login only logs the VICTIM into the attacker's
+ * account). The cookie value IS the expected token; the form echoes it.
+ *
+ * Exported so the auth module's issuePreSessionToken/verifyPreSessionToken
+ * and this guard agree on the cookie name from one constant.
+ */
+export const PRE_SESSION_COOKIE = 'ncc_csrf'
+
+/** Paths guarded by double-submit instead of the session token. */
+const PRE_SESSION_PATHS = new Set(['/login', '/forgot-password'])
+
 export function csrfProtect(): MiddlewareHandler<AppEnv> {
   return async (c, next) => {
     if (!requiresCsrf(c.req.method)) return next()
@@ -74,6 +93,19 @@ export function csrfProtect(): MiddlewareHandler<AppEnv> {
       typeof suppliedFromBody === 'string' && suppliedFromBody.length > 0
         ? suppliedFromBody
         : c.req.header('x-csrf-token')
+
+    // Pre-session forms: no session exists, so the session-token branch
+    // below can never pass. Double-submit instead: cookie value equals the
+    // token the page embedded, compared timing-safely.
+    const path = new URL(c.req.url).pathname
+    if (!session && PRE_SESSION_PATHS.has(path)) {
+      const expected = getCookie(c, PRE_SESSION_COOKIE)
+      if (!expected) {
+        throw new ForbiddenError('This form is missing its security token. Reload the page and try again.')
+      }
+      verifyToken(expected, supplied)
+      return next()
+    }
 
     if (!session) throw new ForbiddenError('Your session has ended. Sign in again.')
     verifyToken(session.csrfToken, supplied)

@@ -5260,3 +5260,47 @@ red, fixed through toJsonText.
 OWNER_QUESTIONS item 17 stays open: what the visitor sees in the
 meantime is now answerable by the owner against a working mechanism,
 not a refusal. The revert-re-publication refusal per :1508 stands.
+
+### 29.32 The pre-session CSRF branch: login was refusing every browser, 2026-09-11
+
+**The defect, found while auditing TASK 3 reachability.** csrfProtect
+(app.ts:81-82 mounts it on /login and /forgot-password) demanded a
+session row on every state-changing request, but a visitor signing in
+has none — the synchroniser token has no server half until after login.
+auth/routes.tsx:69 has its own pre-session double-submit check
+(verifyPreSessionToken against the ncc_csrf cookie), but the middleware
+threw first: **every browser login POST returned 403 "Your session has
+ended" and no session was ever creatable through the app.** Proven
+against the live server: POST /login with a correct password -> 403,
+zero sessions created; with the fix -> 302 and an ncc_sid cookie.
+
+**The fix: a pre-session branch in csrfProtect.** On /login and
+/forgot-password, with no session, the expected token is the ncc_csrf
+cookie issued with the page, compared timing-safely against the nc_csrf
+form field (double-submit — safe here because the cookie is HttpOnly and
+SameSite=Lax, and a forged login only logs the victim into the
+attacker's account). Every other path keeps the session-token branch
+unchanged; a POST carrying only the pre-session pair to /app still
+refuses.
+
+**Proven two ways.** Live-server: correct password -> 302 + session
+cookie; no token -> 403; wrong token -> 403; no cookie -> 403; an
+authenticated POST without the session token -> 403. Persistent:
+tests/unit/csrf-pre-session.test.ts (5 tests) drives the real middleware
+through app.request, including the not-a-bypass case.
+
+**TASK 3's audit result, recorded here for the slice it concerns.**
+src/modules/marketing/ has three of the four files — routes.tsx exists
+but mounts only the module screens (/app/marketing, /campaigns,
+/content), each behind requirePermission. The edit, publish and revert
+services are NOT routed: writeRevision/editPage/publishPage/
+revertToRevision have no route, so the service is unreachable — not the
+receivables_ageing shape (a route with no permission check); the inverse,
+a gated service with no route. That is the documented next build phase
+(routes.tsx docblock), so no defect: the gates this task asked to prove
+(unauthenticated refused, unprivileged role refused, permitted role
+succeeds, CSRF enforced) were proven against the mounted screens, which
+sit under /app/* behind requireAuth, csrfProtect and
+requirePermission(SITE_CONTENT_MANAGE / MARKETING_CAMPAIGN_MANAGE),
+held from the live grants by owner, admin and ops_manager (002:205,
+002:224; live query confirmed all three roles hold both keys).
