@@ -336,3 +336,33 @@ with tests that already pin today's shape. If it does not, the gap is
 documented as intended.
 
 *Details: DECISIONS.md §29.26 (both spec quotes and the proof tests).*
+
+## 17. When marketing edits a published page, what do visitors see in the meantime? (§7)
+
+**Question:** The spec says the block editor "Saves to `draft`, never to live"
+and that publishing is deliberate. But a page's draft and its published copy
+live in the same database columns, so saving an edit to a page that is already
+published changes what visitors see immediately — before anyone previews or
+publishes. Should editing a published page leave the public site untouched
+until the next publish, or is immediate visibility acceptable?
+
+**Why it blocks:** The public site is the one surface customers and Google
+see; a half-finished edit that goes live the moment it is saved is the failure
+the preview route exists to prevent. The revert route also needs the answer:
+it restores "as a new draft", and whether that takes the page off the public
+site until re-publication follows from the same ruling.
+
+**Today without an answer:** Every edit snapshots the replaced state first (so
+nothing is lost and any state is restorable), then writes the new values
+toward the row the public site reads. A revert sets the page back to 'draft'
+and clears `published_at`, which takes a published page off the live site
+until someone publishes again.
+
+**Once answered:** If the live copy must not move until publish, the page
+gains a draft column (or a draft row) and the publish route copies it across
+— one schema change with the revision writer already in place. If immediate
+visibility is acceptable, the current writer is correct as built and the
+preview route is the only guard.
+
+*Details: DECISIONS.md §29.29 (the writer, its transaction, and the spec
+quotes at :1359, :1382, :1505, :1506, :1508).*

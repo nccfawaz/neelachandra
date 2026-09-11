@@ -5154,3 +5154,32 @@ this slice, recorded here so it is not mistaken for a regression), e2e
 untouched, typecheck 0. The two temporary probe scripts used to isolate the
 '[object Object]' binding defect were removed before this entry was
 written.
+
+**Amended 2026-09-11, landed.** The slice committed as 03e7a2c with its nine
+tests (cms-revisions 9/9 in the full gate, 324/324), after 8564eee cleared
+the crm-flow red that had been recorded above as pre-existing — the failure
+was the seeded owner account (a documented bootstrap, README:25) sitting
+inside the unfiltered assignableUsers read plus fourteen unmarked probe-user
+debris rows, not order dependence; the suite's own docstring premise "the
+dev database has no users" had drifted.
+
+**The two open questions, answered against the spec.** (1) §7 DOES require a
+published-versus-draft distinction: :1505 — the block editor "Saves to
+`draft`, never to live"; :1506 — the preview "renders the draft through the
+real public layout ... so what is previewed is what publishes"; :1359 —
+"publishing is a deliberate act with a preview". But the table has no draft
+column pair, so "saves to draft" on an already-published page currently moves
+what visitors see. That contradiction between :1505's words and the single
+row shape is not resolvable from the spec, so it is filed as OWNER_QUESTIONS
+item 17 rather than guessed at with a schema change. (2) Whether a reverted
+published page needs re-publication is NOT answered by the prose beyond
+:1508's "Restores a revision as a new draft"; the writer sets status =
+'draft' and clears published_at/published_by, which takes the page off the
+public site until someone publishes again — recorded as the behaviour, and
+item 17's answer governs whether it stays.
+
+**The alternative logged for item 17.** A `draft_content_json`/`draft_title`
+pair (or a shadow draft row) with the publish route copying draft → live —
+the shape :1505's sentence literally describes. Rejected for now because it
+is a schema change gated on the owner's answer, and the revision writer
+already guarantees nothing is lost under the current shape.
