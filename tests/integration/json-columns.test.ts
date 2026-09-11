@@ -130,6 +130,17 @@ describe('the JSON column registry, against information_schema', () => {
     // from a bare object (DECISIONS 29.29's first cms-revisions run failed
     // all nine tests on exactly that literal).
     //
+    // SCOPE CAVEAT (DECISIONS 29.33): a zero here is weak evidence. Most of
+    // these tables hold few rows — at the 2026-09-11 scan: audit_log 6,
+    // settings 25, site_pages 10, site_services 6, and five columns
+    // (site_page_revisions, quotes.payment_schedule_json, email_log,
+    // project_documents, dashboard_daily_snapshot) held ZERO rows, so their
+    // zero-invalid result is vacuous. This scan is a REGRESSION GUARD over
+    // rows that exist, not a proof that writes are safe; the live CHECK
+    // probes (errno 4025 refusals on INSERT and UPDATE) carry the actual
+    // proof, and the toJsonText contract test below carries the guarantee
+    // for columns whose writers arrive with future slices.
+    //
     // What the CHECKs do and do not catch, proven against this server on
     // 2026-09-11: a json_valid CHECK refuses '[object Object]' on both INSERT
     // and UPDATE on a nullable column (email_log.response_json, live-refused

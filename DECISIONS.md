@@ -5304,3 +5304,32 @@ sit under /app/* behind requireAuth, csrfProtect and
 requirePermission(SITE_CONTENT_MANAGE / MARKETING_CAMPAIGN_MANAGE),
 held from the live grants by owner, admin and ops_manager (002:205,
 002:224; live query confirmed all three roles hold both keys).
+
+### 29.33 The json-columns scan is a regression guard, not a proof, 2026-09-11
+
+**What the zero actually measured.** The live-DB scan in the
+json-columns gate observed zero stored `[object Object]` or json_valid
+failures across the registered columns — but most of those tables hold
+almost no rows. At the 2026-09-11 scan: audit_log 6 rows,
+settings.value_json 25, site_pages 10, site_services 6, and five columns
+held ZERO rows entirely (site_page_revisions both columns,
+quotes.payment_schedule_json, email_log.response_json,
+project_documents.visible_to_roles,
+dashboard_daily_snapshot.detail_json). A zero over zero rows is
+vacuous.
+
+**What carries the actual proof.** The live CHECK probes (2026-09-11,
+DECISIONS 4f33347's session): json_valid refuses the binding literal on
+INSERT (settings.value_json, site_pages.content_json) and on UPDATE even
+on a nullable column (email_log.response_json, errno 4025) — a CHECK
+that returns NULL on NULL cannot police the NULL case, but the literal is
+not NULL and is refused everywhere a CHECK exists. For columns whose
+writers have not arrived yet, the toJsonText contract test is the
+guarantee the first writer inherits.
+
+**The change.** The scope caveat is recorded in the tripwire test
+itself (tests/integration/json-columns.test.ts, the stored-value scan)
+and here, so no future reader mistakes this gate for write-path proof.
+The test stays: as a regression guard over rows that exist, and as the
+place the enumeration floor (non-zero, == registry length) keeps the
+column list honest.
