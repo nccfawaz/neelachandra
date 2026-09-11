@@ -94,6 +94,18 @@ let projectId = 0
  */
 let usersBefore = 0
 
+/**
+ * Gate-independence baselines (DECISIONS 29.6, third instance): the tables
+ * below can legitimately hold rows this suite did not write — the seeded
+ * owner's data, a colleague's manual test, a future second seed. Every
+ * count this suite asserts over such a table is a before/after delta, never
+ * a bare number.
+ */
+let visitsCompletedBefore = 0
+let visitsCancelledBefore = 0
+let quotesBefore = 0
+let stageTemplatesBefore = 0
+
 async function insertUser(u: { email: string; full_name: string }): Promise<number> {
   const row = await db
     .insertInto('users')
@@ -115,6 +127,17 @@ beforeAll(async () => {
   }
   const before = await sql<{ n: number }>`select count(*) as n from users`.execute(db)
   usersBefore = Number(before.rows[0]!.n)
+  const visits = await sql<{ completed: number; cancelled: number }>`
+    select
+      sum(case when status = 'completed' then 1 else 0 end) as completed,
+      sum(case when status = 'cancelled' then 1 else 0 end) as cancelled
+    from site_visits`.execute(db)
+  visitsCompletedBefore = Number(visits.rows[0]?.completed ?? 0)
+  visitsCancelledBefore = Number(visits.rows[0]?.cancelled ?? 0)
+  const quotes = await sql<{ n: number }>`select count(*) as n from quotes`.execute(db)
+  quotesBefore = Number(quotes.rows[0]!.n)
+  const templates = await sql<{ n: number }>`select count(*) as n from stage_templates`.execute(db)
+  stageTemplatesBefore = Number(templates.rows[0]!.n)
 
   seller = { userId: await insertUser(SELLER), ip: '127.0.0.1' }
   approver = { userId: await insertUser(APPROVER), ip: '127.0.0.1' }
@@ -806,16 +829,21 @@ describe('every read query the CRM screens use', () => {
     const visits = await q.listVisits(db, ALL, { limit: 25, offset: 0 })
     expect(visits.length).toBeGreaterThanOrEqual(3)
     expect(await q.countVisits(db, ALL, {})).toBe(visits.length)
-    expect(await q.countVisits(db, ALL, { status: 'completed' })).toBe(2)
-    expect(await q.countVisits(db, ALL, { status: 'cancelled' })).toBe(1)
+    // Delta, not a bare number: this database can hold visits other rows
+    // wrote (DECISIONS 29.6, gate-independence). The suite creates exactly
+    // two completed and one cancelled visit.
+    expect(await q.countVisits(db, ALL, { status: 'completed' })).toBe(visitsCompletedBefore + 2)
+    expect(await q.countVisits(db, ALL, { status: 'cancelled' })).toBe(visitsCancelledBefore + 1)
     expect(
       await q.countVisits(db, ALL, { from: addDays(today(), -1), to: addDays(today(), 7) })
     ).toBeGreaterThanOrEqual(3)
   })
 
   it('lists and counts quotes with every filter', async () => {
-    expect((await q.listQuotes(db, ALL, { limit: 25, offset: 0 })).length).toBe(3)
-    expect(await q.countQuotes(db, ALL, {})).toBe(3)
+    // Deltas over the quotes table, not bare counts (DECISIONS 29.6): the
+    // suite creates exactly three quotes.
+    expect((await q.listQuotes(db, ALL, { limit: 25, offset: 0 })).length).toBe(quotesBefore + 3)
+    expect(await q.countQuotes(db, ALL, {})).toBe(quotesBefore + 3)
     expect(await q.countQuotes(db, ALL, { status: 'accepted' })).toBe(1)
     expect(await q.countQuotes(db, ALL, { leadId })).toBe(1)
     expect(await q.countQuotes(db, ALL, { q: 'Fixture Client Alpha' })).toBe(1)
@@ -890,7 +918,10 @@ describe('every read query the CRM screens use', () => {
     // The count moved from a hard 2 to a baseline+2 when the owner seed
     // became part of the dev database's documented state.
     expect((await q.assignableUsers(db)).length).toBe(usersBefore + 2)
-    expect((await q.stageTemplateOptions(db)).length).toBe(3)
+    // Migration 004 seeds three templates, but the table is writable by any
+    // future seed or admin action, so the assertion is a delta over the
+    // pre-suite baseline (DECISIONS 29.6), not a hard 3.
+    expect((await q.stageTemplateOptions(db)).length).toBe(stageTemplatesBefore + 0)
     expect((await q.unitOptions(db)).length).toBeGreaterThan(0)
     expect((await q.costHeadOptions(db)).length).toBeGreaterThan(0)
   })

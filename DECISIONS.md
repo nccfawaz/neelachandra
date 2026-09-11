@@ -5183,3 +5183,35 @@ pair (or a shadow draft row) with the publish route copying draft → live —
 the shape :1505's sentence literally describes. Rejected for now because it
 is a schema change gated on the owner's answer, and the revision writer
 already guarantees nothing is lost under the current shape.
+
+### 29.30 Gate-independence, third instance: every count over a writable table becomes a delta, 2026-09-11
+
+**The rule, now three times learned.** 29.2: the ambient PORT env var
+poisoned suite imports. 29.1: an installed-Chromium assumption made the
+e2e gate environment-dependent. This instance: crm-flow pinned absolute
+counts over four tables the database can legitimately grow — `users` (the
+seeded owner, README:25, made :892 baseline+2), `site_visits` (:809-810,
+hard 2 and 1), `quotes` (:817-818, hard 3) and `stage_templates` (:893,
+hard 3 from migration 004). A second seed or a colleague's manual row
+would have turned any of them red without any defect.
+
+**The fix: before/after deltas, not bare numbers.** beforeAll reads a
+baseline for each of the four tables after the sweep, and every count
+assertion is `baseline + N this suite created`. The spec citations
+explaining why the owner legitimately appears stay in place (:581 grants
+`projects.view` to `owner`; README:25 documents the seed), but the
+assertion no longer depends on the seed existing.
+
+**Proven by the second-seed test.** A non-fixture user
+(`colleague.manual@neelachandra.com`) planted in `users` by hand, crm-flow
+run: `Test Files 1 passed (1) / Tests 36 passed (36)` — green with a row
+the suite did not write and does not sweep. Row removed after.
+
+**Scope sweep of the other suites.** Every remaining absolute count in
+tests/integration is fixture-scoped: `where id in [...]` on ids the suite
+created (client-invoices:430), `chitId`-scoped lines (hr-contractor-flow),
+`select 1 + 1` (db-smoke), or counts over tables no writer reaches outside
+tests. No other suite asserts a bare count over a globally-writable table.
+
+Proven by: tests/integration/crm-flow.test.ts (36/36 with a foreign row
+planted), full gate 326/326.
