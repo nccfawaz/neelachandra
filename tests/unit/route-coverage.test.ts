@@ -58,6 +58,11 @@ const EXERCISED = [
   'GET /2fa/enrol',
   'POST /2fa/enrol',
   'POST /api/csp-report', // csp-report + csp-hardening suites
+  // §7 revision writer, proven through HTTP (cms-routes.test.ts, 29.37).
+  'GET /app/marketing/content/:id/edit',
+  'POST /app/marketing/content/:id/edit',
+  'POST /app/marketing/content/:id/publish',
+  'POST /app/marketing/content/:id/revert/:revisionNo',
   'GET /app', // nav.test.ts active-state logic
   'GET /app/hr/leave', // nav.test.ts
   'GET /app/inventory', // nav.test.ts

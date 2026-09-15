@@ -5455,3 +5455,40 @@ been exercised anywhere in production-like conditions — it has not, by
 the route-coverage evidence. Recorded as a build item, not an owner
 question: no business decision is needed, only tests for the mounted
 verify routes.
+
+### 29.37 — The revision writer is reachable and gated, proven through the
+### route
+
+29.29/29.33 landed the §7 writer as schemas.ts + service.ts with no
+mount point: a service with no route is unreachable, and the
+route-coverage tripwire (29.35) held it on the debt allowlist until this
+entry. Four routes are now mounted in src/modules/marketing/routes.tsx:
+
+| Route | Method | Permission | Roles holding it (002_rbac seed) |
+|---|---|---|---|
+| /app/marketing/content/:id/edit | GET+POST | site_content.manage | owner, admin, ops_manager, marketing |
+| /app/marketing/content/:id/publish | POST | marketing.content_publish | owner, admin, ops_manager |
+| /app/marketing/content/:id/revert/:revisionNo | POST | marketing.content_publish | owner, admin, ops_manager |
+
+The edit/publish split is the deliberate-act boundary of :1359: a role
+holding edit but not publish can save drafts forever and can never take
+the site live.
+
+**Proven through the route, not the service** (tests/integration/
+cms-routes.test.ts, 4 tests, driving the real app router with fixture
+users on exact per-user roles): unauthenticated POST refused; tokenless
+POST with a session refused 403 (CSRF); a publish-permission-less role
+refused 403 on publish while the same role saves a draft through the
+same middleware chain; a permitted role publishes and the migration-027
+shape holds end to end — the edit never touched the live title, and the
+publish moved the draft to the live row with published_by stamped.
+
+Two tripwire consequences recorded: the four new routes moved from the
+allowlist to EXERCISED (allowlist floor unchanged at 227 — the four
+entries were added to the exercised list as they were proven, so the
+debt number did not move); and the sweep gained user_sessions cleanup,
+because a crashed login test leaves a live session that blocks the
+user delete on fk_sessions_user forever — found red, fixed, re-proven.
+
+Proven by: tests/integration/cms-routes.test.ts (4 tests),
+tests/unit/route-coverage.test.ts (3 tests), full integration gate.

@@ -73,9 +73,13 @@ describe('one JSON reader in src/', () => {
     expect(offenders).toEqual([READER])
   })
 
-  it('finds exactly one call inside the reader', () => {
+  it('finds exactly two calls inside the reader — the column reader and the strict decoder — and none anywhere else', () => {
+    // Two sanctioned call sites, both inside json.ts: parseJsonColumn (the
+    // tolerant column reader) and parseJsonStrict (the throw-on-invalid
+    // decoder route handlers use for form-submitted JSON, 29.37). The first
+    // test above already proves no file outside json.ts calls JSON.parse.
     const calls = code(readFileSync(join(SRC, 'lib', 'json.ts'), 'utf8')).match(/JSON\.parse/g)
-    expect(calls).toHaveLength(1)
+    expect(calls).toHaveLength(2)
   })
 })
 

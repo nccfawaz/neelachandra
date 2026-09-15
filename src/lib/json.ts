@@ -69,6 +69,12 @@ export const JSON_COLUMNS = [
  * that was going to raise invoices against it, not by a parser that cannot know
  * which of those two situations it is in.
  */
+/** Strict parse for trusted JSON text: throws SyntaxError on invalid input.
+ * For route handlers decoding a form-submitted JSON string before validation. */
+export function parseJsonStrict(text: string): unknown {
+  return JSON.parse(text)
+}
+
 export function parseJsonColumn(raw: unknown): unknown {
   if (raw === null || raw === undefined) return null
   if (typeof raw !== 'string') return raw

@@ -62,6 +62,10 @@ export async function sweepFixtures(db: Kysely<any>): Promise<void> {
   await sql`delete i from items i join users u on i.created_by = u.id where u.full_name like ${FIXTURE_MARKER + '%'}`.execute(db)
   await sql`delete psl from package_spec_lines psl join items i on psl.item_id = i.id where i.name like ${FIXTURE_MARKER + '%'}`.execute(db)
   await sql`delete ur from user_roles ur join users u on ur.user_id = u.id where u.full_name like ${FIXTURE_MARKER + '%'}`.execute(db)
+  // Live sessions reference users with no cascade (fk_sessions_user), so a
+  // crashed login test (29.36) leaves a session that would block the user
+  // delete forever. Sessions are worthless once the user is gone.
+  await sql`delete s from user_sessions s join users u on s.user_id = u.id where u.full_name like ${FIXTURE_MARKER + '%'}`.execute(db)
   await sql`delete from users where full_name like ${FIXTURE_MARKER + '%'}`.execute(db)
   await sql`delete from accounting_periods where financial_year like ${FIXTURE_PERIOD_PREFIX + '%'}`.execute(db)
 
@@ -73,5 +77,6 @@ export async function sweepFixtures(db: Kysely<any>): Promise<void> {
   // (owner@neelachandra.com, README:25) does not match and is untouched.
   await sql`delete ur from user_roles ur join users u on ur.user_id = u.id where u.email like ${'%@example.invalid'}`.execute(db)
   await sql`delete a from audit_log a join users u on a.user_id = u.id where u.email like ${'%@example.invalid'}`.execute(db)
+  await sql`delete s from user_sessions s join users u on s.user_id = u.id where u.email like ${'%@example.invalid'}`.execute(db)
   await sql`delete from users where email like ${'%@example.invalid'}`.execute(db)
 }
