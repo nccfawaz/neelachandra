@@ -5416,3 +5416,42 @@ names a route the router no longer has.
 
 Proven by: tests/unit/route-coverage.test.ts (3 tests), full unit gate
 352/352.
+
+### 29.36 — The real login, end to end, and the 2FA interception, proven
+
+The route-coverage tripwire (29.35) exposed that no test had ever posted
+to `/login` — the defect that caused the 29.32 deadlock survived three
+sessions because of exactly that gap. This entry closes it with the real
+flow, driven through the exported app router with its full middleware
+chain against the dev database, using a fixture user created and swept by
+the shared markers (29.4).
+
+**Proven, not reasoned** (tests/integration/login-flow.test.ts, 5 tests):
+
+1. Correct credentials issue a session cookie and the redirected
+   authenticated page renders (Dashboard).
+2. Wrong credentials are refused 401 with the generic failure and no
+   session cookie.
+3. The login POST without the CSRF pair is refused 403.
+4. A second login issues a **different** session id — the fixation
+   property 29.34 reasoned about is demonstrated: a pre-given sid is
+   dead the moment real credentials are used.
+5. **The 2FA interception is real and the machinery is implemented.** A
+   require_2fa role (owner) with `totp_confirmed_at = NULL` signs in,
+   then any authenticated request is redirected to `/2fa/enrol`, and the
+   enrolment screen renders fully: heading, scannable QR as a data-URI
+   PNG, and a setup key. What is **not** yet proven anywhere is the
+   verify-and-confirm step — the enrol POST and `/2fa/verify` code
+   paths have no test, and they belong on the route-coverage debt
+   allowlist until they do.
+
+The spec is not silent here: line 218 requires TOTP "enforced for the
+roles that can move money (`owner`, `admin`, `accounts_manager`)", and
+lines 675/845–846 describe enrolment, recovery codes, and the
+half-authenticated `/2fa/verify` session. The enrolment screen working
+means the owner's own account is **not** locked out of a dev bootstrap;
+the cut-over-blocking question is whether the confirm/verify half has
+been exercised anywhere in production-like conditions — it has not, by
+the route-coverage evidence. Recorded as a build item, not an owner
+question: no business decision is needed, only tests for the mounted
+verify routes.
