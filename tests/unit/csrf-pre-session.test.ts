@@ -34,7 +34,7 @@ function build() {
   })
   app.use('*', csrfProtect())
   app.onError((err, c) => c.text(err.message, (err as { status?: number }).status ?? 403))
-  app.on(['POST', 'GET'], [PRE_SESSION_PATH, '/app/anywhere'], (c) => c.text('reached', 200))
+  app.on(['POST', 'GET'], [PRE_SESSION_PATH, '/app/anywhere', '/forgot-password', '/reset-password/x', '/reset-password/x/more'], (c) => c.text('reached', 200))
   return app
 }
 
@@ -117,12 +117,13 @@ describe('the pre-session double-submit branch of csrfProtect', () => {
   it('a pre-session cookie does NOT satisfy the session branch on any other path', async () => {
     // DECISIONS 29.34: the path set is a constant, checked before anything
     // else. A visitor (or an attacker who planted a parent-domain cookie)
-    // cannot extend double-submit semantics to any route beyond /login and
-    // /forgot-password — an anonymous POST to /app with a perfectly valid
-    // pre-session pair is still refused with the session error.
+    // cannot extend double-submit semantics to any route beyond /login,
+    // /forgot-password and /reset-password/<token> — an anonymous POST to
+    // /app with a perfectly valid pre-session pair is still refused with
+    // the session error.
     const app = build()
     const token = issueToken()
-    for (const path of ['/app/anywhere', '/app', '/2fa/verify', '/reset-password/x', '/logout']) {
+    for (const path of ['/app/anywhere', '/app', '/2fa/verify', '/logout', '/reset-password/x/more']) {
       const res = await app.request(path, {
         method: 'POST',
         headers: {

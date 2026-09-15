@@ -58,6 +58,13 @@ export const PRE_SESSION_COOKIE = 'ncc_csrf'
 /** Paths guarded by double-submit instead of the session token. */
 const PRE_SESSION_PATHS = new Set(['/login', '/forgot-password'])
 
+/** Pre-session POST paths with parameters: the reset form posts to
+ * /reset-password/<token>, so it is matched by pattern — exactly one token
+ * segment — not by prefix, which would let sub-paths through. */
+function isPreSessionPath(path: string): boolean {
+  return PRE_SESSION_PATHS.has(path) || /^\/reset-password\/[^/]+$/.test(path)
+}
+
 export function csrfProtect(): MiddlewareHandler<AppEnv> {
   return async (c, next) => {
     if (!requiresCsrf(c.req.method)) return next()
@@ -98,7 +105,7 @@ export function csrfProtect(): MiddlewareHandler<AppEnv> {
     // below can never pass. Double-submit instead: cookie value equals the
     // token the page embedded, compared timing-safely.
     const path = new URL(c.req.url).pathname
-    if (!session && PRE_SESSION_PATHS.has(path)) {
+    if (!session && isPreSessionPath(path)) {
       const expected = getCookie(c, PRE_SESSION_COOKIE)
       if (!expected) {
         throw new ForbiddenError('This form is missing its security token. Reload the page and try again.')

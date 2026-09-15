@@ -5492,3 +5492,34 @@ user delete on fk_sessions_user forever — found red, fixed, re-proven.
 
 Proven by: tests/integration/cms-routes.test.ts (4 tests),
 tests/unit/route-coverage.test.ts (3 tests), full integration gate.
+
+### 29.38 — The reset-password POST was the second instance of the login
+### 403: pre-session POST routes must be enumerated, not discovered one at
+### a time
+
+TASK 5 asked whether any other route posts before a session exists and
+would still deadlock on csrfProtect. The complete pre-session POST
+surface (from the router, not a hand list): `/login`, `/forgot-password`,
+`/reset-password/:token`. `/2fa/verify` and `/2fa/enrol` post only with a
+(half-authenticated) session; every other POST is behind requireSession.
+
+`POST /reset-password/:token` was dead — the same class as 29.32. It is
+not in PRE_SESSION_PATHS (a constant equality set, which cannot express
+the `:token` parameter), so csrfProtect threw 403 before the handler's
+own verifyPreSessionToken could run. A user with a valid email link
+could render the form (GET 200) but never submit it (POST 403). The
+fixed middleware matches `/reset-password/<one segment>` by pattern, and
+double-submit semantics on that path are unchanged: a mismatched pair is
+still refused (unit test), a valid pair reaches the handler, and the
+live probe ran the full flow against the dev database — GET 200 with the
+pair issued, POST with the pair 302 (reset completed), tokenless POST
+403. The probe was watched RED on the equality set before the fix.
+
+The lesson is recorded as the rule: any future pre-session POST route
+must extend isPreSessionPath in the same commit that mounts the route,
+and the csrf-pre-session tests pin both the covered and the refused
+sides.
+
+Proven by: tests/unit/csrf-pre-session.test.ts (7 tests, including the
+new reset-path pair), the end-to-end reset probe of this entry, and the
+full unit gate.
