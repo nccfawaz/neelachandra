@@ -5523,3 +5523,39 @@ sides.
 Proven by: tests/unit/csrf-pre-session.test.ts (7 tests, including the
 new reset-path pair), the end-to-end reset probe of this entry, and the
 full unit gate.
+
+### 29.39 — 2FA enforcement is real: the pre-enrolment session is
+### constrained to the enrolment, verification, and logout paths
+
+The question: with an un-enrolled require_2fa session in hand, what can
+the bearer reach? If anything beyond enrolment succeeds, 2FA is
+decorative for the roles that move money, and that is an authentication
+bypass, not a polish item.
+
+The spec is explicit: line 218 — TOTP "enforced for the roles that can
+move money (`owner`, `admin`, `accounts_manager`)" — and line 675: "an
+unconfirmed secret forces the enrolment screen before any other page
+renders". requireAuth (src/middleware/requireAuth.ts) implements exactly
+that on every /app/* and /api/* path, ahead of any handler.
+
+**Proven with the same session cookie** (tests/integration/
+twofa-enforcement.test.ts, 4 tests, fixture role with require_2fa = 1
+and finance permissions): GET /app → 302 /2fa/enrol; GET
+/app/finance/expenses (money route) → 302 /2fa/enrol; POST
+/api/finance/expenses/:id/approve (approval) with a valid CSRF pair →
+302 /2fa/enrol — the pair proves the stop is the 2FA gate, not CSRF, and
+the redirect fires before the handler so the approval cannot execute;
+and GET /2fa/enrol → 200, so the constraint does not lock the account
+out of the fix for its own condition.
+
+The second half of the question — a user who has enrolled but not yet
+passed the challenge in the current session — is the same gate's second
+branch (requireAuth: `session && !session.totpVerified` → /2fa/verify),
+keyed on the per-session `totp_verified` flag that confirmEnrolment and
+verifyTotp set through rotateSession. It is proven live by 29.40's flow,
+which signs in, is held at /2fa/verify, and passes the challenge.
+
+No fix was required: the constraint already existed. The deliverable is
+the proof.
+
+Proven by: tests/integration/twofa-enforcement.test.ts (4 tests).
