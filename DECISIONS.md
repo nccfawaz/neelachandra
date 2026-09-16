@@ -5610,3 +5610,46 @@ strips the stale sid before re-posting, which is the honest simulation
 of a second browser login.
 
 Proven by: tests/integration/twofa-flow.test.ts (4 tests).
+
+### 29.41 — the route-coverage debt is triaged into priority groups
+
+The flat allowlist (29.36) is a number; a number does not say which
+unexercised route means a business action silently cannot be performed —
+the failure mode that hid the login 403 (29.32) and the reset-password
+deadlock (29.38). The 227 unexercised routes are grouped by what a dead
+route costs, from the allowlist itself (not a hand-written mirror):
+
+**Group 1 — mutating routes that touch money or approvals: 30.** These
+are the routes where a defect blocks a business action outright. Every
+one listed here by method and path:
+
+- POST /api/crm/quotes/:id/accept, /approve, /reject, /revise, /send,
+  /submit (6)
+- POST /api/po/:poId/short-close, /submit, /approve (3)
+- POST /api/requisitions/:reqId/approve, /reject (2)
+- POST /api/finance/expenses/:expenseId/approve, /submit (2)
+- POST /api/finance/payments/:paymentId/allocate (1)
+- POST /api/hr/contractor-bills/:billId/approve,
+  /api/hr/contractor-bills/generate, /api/hr/attendance/approve,
+  /api/hr/contractor-attendance/approve, /api/hr/leave/:id/approve (5)
+- POST /app/crm/quotes, /app/finance/advances, /app/finance/expenses,
+  /app/finance/invoices, /app/finance/payments (5)
+- POST /app/inventory/po, /app/inventory/requisitions,
+  /app/inventory/requisitions/:reqId/submit,
+  /app/inventory/brands/:brandId/approval (4)
+- POST /app/projects/:projectId/approvals (1)
+- POST /internal/cron/budget-alerts (1)
+
+**Group 2 — other mutating routes: 78.** Create/edit/delete screens and
+API mutations outside money and approvals (reference data, admin users,
+content, uploads).
+
+**Group 3 — read-only screens: 119.** Static assets, error pages, health
+files, and the GET screens under /app. Nineteen of these are money-
+adjacent reads (finance, contractor-bills, PO and requisition screens),
+which matter less than group 1 only because a dead read is visible
+immediately, while a dead POST fails only when someone tries the action.
+
+The order of work is group 1 first, for exactly the reason the group
+exists: login and password reset were both found only because a session
+asked about them. The remaining groups are debt, not blockers.
