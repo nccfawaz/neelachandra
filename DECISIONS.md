@@ -5653,3 +5653,38 @@ immediately, while a dead POST fails only when someone tries the action.
 The order of work is group 1 first, for exactly the reason the group
 exists: login and password reset were both found only because a session
 asked about them. The remaining groups are debt, not blockers.
+
+### 29.42 — group 1, tranche 1: the finance expense submit/approve pair
+
+The first two group-1 routes come off the debt list: POST
+/api/finance/expenses/:expenseId/submit and POST
+/api/finance/expenses/:expenseId/approve, driven through the real router
+(tests/integration/money-routes.test.ts, 4 tests, all fixture-scoped).
+
+What the HTTP path proves that the service tests (finance-approval)
+never could:
+
+- **Unauthenticated** POST: csrfProtect runs before requireAuth on
+  /api/* (app.ts's stated order), so a tokenless unauthenticated POST is
+  a 403 from the CSRF guard, not a login redirect. The route exists —
+  the login-class defect would be a 404, and it is not.
+- **CSRF enforced**: a tokenless POST from a live session is 403.
+- **Permission enforced**: a role holding dashboard.view_own_kpi but not
+  finance.expense_create is refused 403 by requirePermission with the
+  JSON error naming the missing permission.
+- **A permitted role reaches the service**: the raiser (holding only
+  finance.expense_create) submits through the route — guard answers with
+  the app's real contract, a 303 flash redirect to /app/finance/expenses
+  carrying "submitted" — and the row status is pending_approval. The
+  approver (holding finance.expense_approve, a fixture approval_limits
+  row keyed to the fixture role key because the table is seeded empty per
+  open question 8.2) approves through the route: 303 "approved", row
+  status approved. Self-approval is structurally impossible at route
+  level too: the raiser's role holds no approve permission.
+
+Route-level findings recorded along the way: the /api/ POST handlers
+answer like the /app/ form handlers (303 flash redirects), not with JSON
+bodies — only the permission guard answers in JSON on this path. The
+allowlist drops 227 → 225.
+
+Proven by: tests/integration/money-routes.test.ts (4 tests).

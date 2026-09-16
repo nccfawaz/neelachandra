@@ -63,6 +63,9 @@ const EXERCISED = [
   'POST /app/marketing/content/:id/edit',
   'POST /app/marketing/content/:id/publish',
   'POST /app/marketing/content/:id/revert/:revisionNo',
+  // Finance expense submit/approve, proven through HTTP (money-routes.test.ts, 29.42).
+  'POST /api/finance/expenses/:expenseId/submit',
+  'POST /api/finance/expenses/:expenseId/approve',
   'GET /app', // nav.test.ts active-state logic
   'GET /app/hr/leave', // nav.test.ts
   'GET /app/inventory', // nav.test.ts
@@ -286,8 +289,6 @@ const ALLOWLIST: string[] = [
   'POST /api/crm/site-visits/:id/status',
   'POST /api/equipment/:equipmentId/deploy',
   'POST /api/equipment/:equipmentId/return',
-  'POST /api/finance/expenses/:expenseId/approve',
-  'POST /api/finance/expenses/:expenseId/submit',
   'POST /api/finance/payments/:paymentId/allocate',
   'POST /api/finance/periods/:periodId/close',
   'POST /api/grn/:grnId/post',
@@ -341,6 +342,6 @@ describe('the route-coverage tripwire (DECISIONS 29.35)', () => {
     // counted by the test file itself. When coverage improves, lower this
     // number in the same commit that removes the entries. It must never
     // rise.
-    expect(ALLOWLIST.length).toBe(227)
+    expect(ALLOWLIST.length).toBe(225)
   })
 })
