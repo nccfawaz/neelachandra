@@ -5559,3 +5559,54 @@ No fix was required: the constraint already existed. The deliverable is
 the proof.
 
 Proven by: tests/integration/twofa-enforcement.test.ts (4 tests).
+
+### 29.40 — the 2FA verify half, end to end: enrolment, challenge,
+### rate limiting, and recovery-code semantics
+
+The verify half of 2FA had never been driven through the real router;
+the route-coverage debt (29.36) flagged POST /2fa/enrol and
+POST /2fa/verify as unexercised. The owner's cut-over account depends on
+both being real. This entry records what the flow
+(tests/integration/twofa-flow.test.ts, 4 tests) proves, all through
+app.request against the dev database with a fixture user swept by the
+shared markers:
+
+**Secret storage.** `users.totp_secret` is AES-256-GCM ciphertext
+(src/lib/totp.ts encryptSecret); the test decrypts it with the app's own
+`decryptSecret`, gets the identical base32 secret, and otplib verifies a
+code computed from it — the round trip that hashed-at-rest storage would
+make impossible. The enrolment page exposes the secret only as a QR data
+URI and the visible setup key.
+
+**Enrolment.** POST /2fa/enrol with a correctly computed code returns
+200 with the ten recovery codes, sets `totp_confirmed_at`, rotates the
+session with `totp_verified = 1`. A wrong code is refused 422.
+
+**Rate limiting.** Eleven wrong codes in a row: the first ten are plain
+wrong-code refusals, the eleventh returns the limiter's message —
+RULES.totpByUser, 10 attempts per 15 minutes per user. Not a lockout:
+the message says how long to wait.
+
+**Challenge on next login.** A fresh sign-in is held at /2fa/verify
+(requireAuth's second branch, per-session totp_verified); a correctly
+timed code POSTs to 302 /app and the rotated cookie reaches the
+dashboard. A wrong-format code is refused before the limiter counts it.
+
+**Recovery semantics.** Recovery codes are stored as argon2 hashes
+(user_recovery_codes.code_hash), so a used code cannot be replayed by
+anyone who did not write it down — the hashes are one-way by design, and
+the service consumes a code inside the same transaction that upgrades
+the session (verifyTotp), so it cannot be spent twice by two concurrent
+requests. The plaintext codes are shown exactly once, at enrolment.
+
+**Test-infrastructure findings recorded along the way.** (1) The sweep
+now removes user_recovery_codes and the totp rate-limit bucket for
+example.invalid users: recovery codes have fk_recovery_user with no
+cascade, so one crashed 2FA test used to wedge the sweep forever — the
+same class as the 29.36 session-row wedge. (2) An old ncc_sid in the jar
+takes csrfProtect's session branch on POST /login (GET /login redirects
+a live session away first, so a browser never hits this); the flow
+strips the stale sid before re-posting, which is the honest simulation
+of a second browser login.
+
+Proven by: tests/integration/twofa-flow.test.ts (4 tests).

@@ -66,6 +66,9 @@ export async function sweepFixtures(db: Kysely<any>): Promise<void> {
   // crashed login test (29.36) leaves a session that would block the user
   // delete forever. Sessions are worthless once the user is gone.
   await sql`delete s from user_sessions s join users u on s.user_id = u.id where u.full_name like ${FIXTURE_MARKER + '%'}`.execute(db)
+  // 2FA fixtures leave recovery codes behind too (fk_recovery_user, no
+  // cascade) — swept before the user delete or the sweep itself dies.
+  await sql`delete rc from user_recovery_codes rc join users u on rc.user_id = u.id where u.full_name like ${FIXTURE_MARKER + '%'}`.execute(db)
   await sql`delete from users where full_name like ${FIXTURE_MARKER + '%'}`.execute(db)
   await sql`delete from accounting_periods where financial_year like ${FIXTURE_PERIOD_PREFIX + '%'}`.execute(db)
 
@@ -78,5 +81,9 @@ export async function sweepFixtures(db: Kysely<any>): Promise<void> {
   await sql`delete ur from user_roles ur join users u on ur.user_id = u.id where u.email like ${'%@example.invalid'}`.execute(db)
   await sql`delete a from audit_log a join users u on a.user_id = u.id where u.email like ${'%@example.invalid'}`.execute(db)
   await sql`delete s from user_sessions s join users u on s.user_id = u.id where u.email like ${'%@example.invalid'}`.execute(db)
+  // 2FA fixtures leave recovery codes (fk_recovery_user, no cascade), rate
+  // limiter buckets and hashed secret rows that would block the user delete.
+  await sql`delete rc from user_recovery_codes rc join users u on rc.user_id = u.id where u.email like ${'%@example.invalid'}`.execute(db)
+  await sql`delete from rate_limit_hits where bucket like ${'totp:user:%'}`.execute(db)
   await sql`delete from users where email like ${'%@example.invalid'}`.execute(db)
 }
