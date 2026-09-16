@@ -57,6 +57,11 @@ const EXERCISED = [
   'POST /2fa/verify',
   'GET /2fa/enrol',
   'POST /2fa/enrol',
+  'POST /api/crm/quotes/:id/submit', // quote-routes.test.ts (29.47 tranche 2)
+  'POST /api/crm/quotes/:id/approve', // quote-routes.test.ts
+  'POST /api/crm/quotes/:id/send', // quote-routes.test.ts
+  'POST /api/crm/quotes/:id/accept', // quote-routes.test.ts
+  'POST /api/crm/quotes/:id/reject', // quote-routes.test.ts
   'POST /api/csp-report', // csp-report + csp-hardening suites
   // §7 revision writer, proven through HTTP (cms-routes.test.ts, 29.37).
   'GET /app/marketing/content/:id/edit',
@@ -216,13 +221,8 @@ const ALLOWLIST: string[] = [
   'POST /api/crm/leads/:id/site-visits',
   'POST /api/crm/leads/:id/stage',
   'POST /api/crm/leads/from-enquiry/:enquiryId',
-  'POST /api/crm/quotes/:id/accept',
-  'POST /api/crm/quotes/:id/approve',
-  'POST /api/crm/quotes/:id/reject',
-  'POST /api/crm/quotes/:id/revise',
-  'POST /api/crm/quotes/:id/send',
-  'POST /api/crm/quotes/:id/submit',
-  'POST /api/po/:poId/short-close',
+        'POST /api/crm/quotes/:id/revise',
+      'POST /api/po/:poId/short-close',
   'POST /api/po/:poId/submit',
   'POST /api/requisitions/:reqId/approve',
   'POST /api/requisitions/:reqId/reject',

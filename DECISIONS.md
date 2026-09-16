@@ -5861,3 +5861,32 @@ OWNER_QUESTIONS.md.
 
 Proven by: tests/integration/recovery-codes.test.ts (4 tests) and
 tests/unit/totp-schema.test.ts (3 tests).
+### 29.47 — group-1 tranche 2: the quote lifecycle through the HTTP path
+
+Tranche 2 of the group-1 money-and-approval coverage debt (29.41): the
+five CRM quote lifecycle writers — POST /api/crm/quotes/:id/submit,
+/approve, /send, /accept, /reject — proven through app.request against
+the real router, not the service.
+
+Proven by: tests/integration/quote-routes.test.ts (7 tests). The suite
+covers, per the tranche contract: an unauthenticated tokenless POST
+refused 403 by the CSRF guard (route exists, not 404); a role without
+crm.quote_create refused 403 with the permission named; the raiser
+submitting through the route with the discount escalating to
+pending_approval per its approval_limits row; the raiser refused on
+their own quote (permission gate fires before the service's
+self-approval check) and a permitted approver approving; send
+committing status=sent with the unconfigured-SMTP "recorded as sent"
+branch; accept moving the quote to accepted and redirecting to the
+lead; reject moving a sent quote to rejected. The fixture role holds
+crm.lead_assign so requireVisibleLead (scopeOf, routes.tsx:180) can see
+the fixture-owned lead — without it the writer routes 404 before the
+service runs, which is itself the coverage the tranche exists to catch.
+
+Two sweep defects found and fixed in fixture-markers.ts while landing
+this suite: fixture-assigned leads (fk_lead_assignee, no cascade) and
+fixture notifications under the full_name marker (29.47's comment)
+blocked the user delete — the sweep now removes both before the users.
+Allowlist 222 → 217; EXERCISED 29 → 34; the arithmetic prints as
+mounted(concrete) 251 = exercised 34 ∪ allowlisted 217 (ceiling 222)
+and the 29.43 ratchet holds.

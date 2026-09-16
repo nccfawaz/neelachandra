@@ -69,6 +69,10 @@ export async function sweepFixtures(db: Kysely<any>): Promise<void> {
   // 2FA fixtures leave recovery codes behind too (fk_recovery_user, no
   // cascade) — swept before the user delete or the sweep itself dies.
   await sql`delete rc from user_recovery_codes rc join users u on rc.user_id = u.id where u.full_name like ${FIXTURE_MARKER + '%'}`.execute(db)
+  // Quote escalation and approval write notifications addressed to fixture
+  // users (fk_notif_user, no cascade) — swept before the user delete or the
+  // sweep itself dies (found by quote-routes, 29.47).
+  await sql`delete n from notifications n join users u on n.user_id = u.id where u.full_name like ${FIXTURE_MARKER + '%'}`.execute(db)
   await sql`delete from users where full_name like ${FIXTURE_MARKER + '%'}`.execute(db)
   await sql`delete from accounting_periods where financial_year like ${FIXTURE_PERIOD_PREFIX + '%'}`.execute(db)
 
@@ -84,6 +88,7 @@ export async function sweepFixtures(db: Kysely<any>): Promise<void> {
   // 2FA fixtures leave recovery codes (fk_recovery_user, no cascade), rate
   // limiter buckets and hashed secret rows that would block the user delete.
   await sql`delete rc from user_recovery_codes rc join users u on rc.user_id = u.id where u.email like ${'%@example.invalid'}`.execute(db)
+  await sql`delete n from notifications n join users u on n.user_id = u.id where u.email like ${'%@example.invalid'}`.execute(db)
   await sql`delete from rate_limit_hits where bucket like ${'totp:user:%'}`.execute(db)
   await sql`delete from users where email like ${'%@example.invalid'}`.execute(db)
 }
