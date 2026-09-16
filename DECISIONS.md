@@ -6021,3 +6021,21 @@ inventory, projects), runs toUpperCase BEFORE the refine (PAN/IFSC/GSTIN
 in hr and inventory), transforms to a number and refines isFinite (the
 money fields), or has no refine at all (admin's audit filter). The
 dash defect was an isolated slip, not a pattern.
+### 29.52 — a successful TOTP verify clears the limiter bucket
+
+The 29.45 audit found the limiter does not clear on success: nine wrong
+codes then a correct one left nine hits in the window, so ONE later
+typo locked a user who had just authenticated. verifyTotp now calls
+`clearBucket` (lib/ratelimit.ts) inside the same transaction that
+upgrades the session, after the code is accepted.
+
+Brute force is unchanged, and the distinction is structural: a wrong
+code throws before the clear is reachable, so every failed attempt
+still costs a hit; only a verified code erases the bucket. The lockout
+window also starts from the last failure, not the last success, which
+is the standard token-bucket-on-success semantic.
+
+Proven by tests/integration/twofa-limiter.test.ts (4 tests): two wrong
+codes leave the bucket at 2, the correct code for the current step
+clears it to absent (302 /app), and a subsequent session's wrong code
+still costs exactly one hit — the cap still bites after a success.

@@ -5,7 +5,7 @@ import { nowSqlDateTime, sqlDateTimeIn } from '../../lib/dates.js'
 import { UnprocessableError } from '../../lib/errors.js'
 import { inviteEmail, lockoutAlertEmail, resetEmail, send } from '../../lib/mailer.js'
 import { assertPasswordPolicy, burnVerify, hashPassword, verifyPassword } from '../../lib/password.js'
-import { RULES, hit } from '../../lib/ratelimit.js'
+import { RULES, clearBucket, hit } from '../../lib/ratelimit.js'
 import { createSession, destroyAllUserSessions, rotateSession } from '../../lib/session.js'
 import {
   consumeRecoveryCode,
@@ -483,6 +483,10 @@ export async function verifyTotp(opts: {
     if (!accepted) {
       throw new UnprocessableError('That code is not correct. Try the current code from your app.')
     }
+
+    // 29.52: success clears the bucket. Nine wrong codes then a correct one
+    // must not leave nine hits waiting to lock the next typo.
+    await clearBucket(trx as never, RULES.totpByUser(opts.userId))
 
     const rotated = await rotateSession(trx, opts.sessionId, {
       totpVerified: true,

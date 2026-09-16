@@ -152,4 +152,62 @@ describe('the TOTP limiter is not a lockout weapon (29.45)', () => {
     // 10 per 15 minutes per user (RULES.totpByUser); one wrong code = one hit.
     expect(await bucketCount()).toBe(1)
   })
+
+  it('a correct code clears the bucket — one later typo cannot lock a user who just authenticated (29.52)', async () => {
+    // Enrol a real secret so a correct code exists, then wrong ×2, correct.
+    const { generateSecret, encryptSecret, verifyCode } = await import('../../src/lib/totp.js')
+    const otplib = await import('otplib')
+    const secret = generateSecret()
+    await db.updateTable('users').set({ totp_secret: encryptSecret(secret) }).where('id', '=', userId).execute()
+
+    const ok = await login('', PASSWORD)
+    let jar = absorb('', ok)
+    const page = await app.request('/2fa/verify', { headers: { cookie: jar }, redirect: 'manual' })
+    jar = absorb(jar, page)
+    const token = await tokenOf(page)
+
+    // Two wrong codes: bucket = 2 (the enrolment test's earlier hit was in a
+    // prior window/suite run; only this run's hits matter here).
+    for (let i = 0; i < 2; i += 1) {
+      const wrong = await app.request('/2fa/verify', {
+        method: 'POST',
+        redirect: 'manual',
+        headers: { 'content-type': 'application/x-www-form-urlencoded', cookie: jar },
+        body: new URLSearchParams({ code: '000000', nc_csrf: token }),
+      })
+      await wrong.text()
+    }
+    const before = await bucketCount()
+    expect(before ?? 0).toBeGreaterThanOrEqual(2)
+
+    // The correct code for the CURRENT step.
+    const code = otplib.authenticator.generate(secret)
+    expect(verifyCode(secret, code)).toBe(true)
+    const good = await app.request('/2fa/verify', {
+      method: 'POST',
+      redirect: 'manual',
+      headers: { 'content-type': 'application/x-www-form-urlencoded', cookie: jar },
+      body: new URLSearchParams({ code, nc_csrf: token }),
+    })
+    expect(good.status).toBe(302)
+    await good.text()
+    expect(await bucketCount()).toBeNull()
+
+    // And brute force is still limited afterwards: a new session's wrong
+    // codes still cost hits against a fresh window.
+    const ok2 = await login('', PASSWORD)
+    let jar2 = absorb('', ok2)
+    const page2 = await app.request('/2fa/verify', { headers: { cookie: jar2 }, redirect: 'manual' })
+    jar2 = absorb(jar2, page2)
+    const token2 = await tokenOf(page2)
+    const wrongAgain = await app.request('/2fa/verify', {
+      method: 'POST',
+      redirect: 'manual',
+      headers: { 'content-type': 'application/x-www-form-urlencoded', cookie: jar2 },
+      body: new URLSearchParams({ code: '000000', nc_csrf: token2 }),
+    })
+    expect([200, 422]).toContain(wrongAgain.status)
+    await wrongAgain.text()
+    expect(await bucketCount()).toBe(1)
+  })
 })

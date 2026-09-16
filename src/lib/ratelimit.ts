@@ -80,6 +80,17 @@ export async function hit(
   }
 }
 
+/**
+ * Clears a bucket on success (29.52). Without this, nine wrong codes then a
+ * success left nine hits in the window and ONE later typo locked a user who
+ * had just authenticated. Only called after a verified success, so brute
+ * force is unchanged: every failed attempt still costs a hit, and a wrong
+ * code can never call this.
+ */
+export async function clearBucket(db: Queryable, rule: RateLimitRule): Promise<void> {
+  await db.deleteFrom('rate_limit_hits').where('bucket', '=', rule.bucket).execute()
+}
+
 export async function enforce(
   db: Queryable,
   rule: RateLimitRule,
