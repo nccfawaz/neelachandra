@@ -5952,3 +5952,39 @@ the debt figure (217) already counted parameterised routes.
 Proven by: tests/unit/route-coverage.test.ts (3 tests) — the overlap
 assertion (watched green against the measured 0), the exact-union
 assertions, and the 146/105 split pin.
+### 29.50 — the TOTP cipher key is its own secret (the 29.44 cut-over
+blocker, resolved)
+
+29.44 established that the AES-256-GCM key encrypting `users.totp_secret`
+was scrypt-derived from SESSION_SECRET, so the one action a leak demands
+— rotating the session secret — silently destroyed every enrolled TOTP
+secret. The key is now derived from its own environment variable,
+`TOTP_ENCRYPTION_KEY` (same 44-char floor as SESSION_SECRET, validated
+at boot by the same zod gate — a missing or short key is a named boot
+failure, proven in a spawned subprocess with a doctored environment).
+
+**Enrolled count checked first: 0.** No user has `totp_confirmed_at`
+set in the dev database, so the derivation change orphans no secret.
+The first production enrolment must happen after the new variable is
+set in hPanel.
+
+Proven by tests/integration/totp-key.test.ts (3 tests): boot fails with
+the variable absent and with a sub-floor value, and boots clean with a
+healthy one; a secret ciphertext round-trips through
+encryptSecret/decryptSecret; and the derivation source reads
+`scryptSync(env.TOTP_ENCRYPTION_KEY` and never `env.SESSION_SECRET` —
+so rotating SESSION_SECRET invalidates live sessions (its remaining
+duty) while an enrolled user still passes the challenge, and rotating
+TOTP_ENCRYPTION_KEY lands in the clean wrong-code refusal proven in
+29.44, i.e. the recovery-codes path, not a 500.
+
+Blast radius unchanged and exclusive: TOTP secrets only (the 29.44
+call-site enumeration stands — encryptToBuffer/decryptFromBuffer are
+called only from lib/totp.ts, which serves auth/service.ts). Rejected
+alternative: keying per-user with a KEK hierarchy — rejected because it
+adds a stored key-encryption key whose custody is the same problem with
+more moving parts, and a single environment-held key is already outside
+the database-dump threat model. KEY_CUSTODY in the README now lists both
+secrets separately. Rotation of TOTP_ENCRYPTION_KEY remains unbuilt by
+design (recorded in 29.44): it would need a read-old/write-new re-encrypt
+pass.

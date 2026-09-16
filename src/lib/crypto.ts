@@ -11,10 +11,12 @@ import { env } from '../env.js'
 /**
  * Symmetric crypto and hashing shared across the platform.
  *
- * The AES key is derived from SESSION_SECRET with scrypt rather than used
- * directly, so the secret can be any 44+ character string rather than
- * exactly 32 bytes, and so the same secret used for session id hashing does
- * not double as a raw cipher key.
+ * The AES key for TOTP secrets is derived from TOTP_ENCRYPTION_KEY with
+ * scrypt rather than used directly, so the secret can be any 44+ character
+ * string rather than exactly 32 bytes (29.50: the key is its own env var so
+ * rotating SESSION_SECRET after a leak no longer bricks every enrolled
+ * 2FA account — the one action an incident demands was the action that
+ * destroyed 2FA).
  *
  * The salt is a fixed application constant, not random. A random salt would
  * have to be stored alongside every ciphertext to be re-derivable, which
@@ -28,7 +30,7 @@ let cachedKey: Buffer | undefined
 
 function key(): Buffer {
   if (!cachedKey) {
-    cachedKey = scryptSync(env.SESSION_SECRET, KEY_SALT, 32)
+    cachedKey = scryptSync(env.TOTP_ENCRYPTION_KEY, KEY_SALT, 32)
   }
   return cachedKey
 }

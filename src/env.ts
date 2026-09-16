@@ -27,6 +27,12 @@ const envSchema = z.object({
   // strong. The key derivation in lib/crypto uses scrypt on this value.
   SESSION_SECRET: z.string().min(44),
 
+  // 29.50: its own secret so SESSION_SECRET can be rotated after a suspected
+  // leak without destroying every enrolled TOTP secret (29.44's cut-over
+  // blocker). Same strength floor as SESSION_SECRET; boot fails fast with a
+  // named error if absent or short.
+  TOTP_ENCRYPTION_KEY: z.string().min(44),
+
   CRON_SECRET: z.string().min(32),
 
   SMTP_HOST: z.string().min(1).default('smtp.hostinger.com'),

@@ -30,6 +30,7 @@ const TEST_ENV: Record<string, string> = {
   // 44 characters, the minimum env.ts accepts, so the scrypt derivation in
   // lib/crypto has something of the right shape to work with.
   SESSION_SECRET: 'test-session-secret-not-used-in-any-real-run!',
+  TOTP_ENCRYPTION_KEY: 'test-totp-encryption-key-not-a-real-run-44chars!',
   CRON_SECRET: 'test-cron-secret-thirty-two-chars-min',
   SMTP_HOST: 'smtp.hostinger.com',
   SMTP_PORT: '465',

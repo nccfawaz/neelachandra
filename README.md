@@ -47,14 +47,18 @@ Passwords print once to stdout (or set `NCC_TEST_LOGIN_PASSWORD` /
 `NCC_TEST_OWNER_PASSWORD`). These are test fixtures, not the §8.1 real
 staff rows; they are swept by the test cleanup like any fixture row.
 
-**KEY_CUSTODY (DECISIONS 29.44).** `SESSION_SECRET` is not just the
-session-id hash input: the AES-256-GCM key that encrypts every
-`users.totp_secret` is scrypt-derived from it. Once any account has
-enrolled in two factor authentication, `SESSION_SECRET` **must never be
-regenerated** — losing it locks every enrolled account (including the
-owner's) out of code verification, with only recovery codes as a way
-back in. Back the value up offline when the first enrolment happens;
-do not let the database backup and the key live with the same person.
+**KEY_CUSTODY (DECISIONS 29.44, resolved by 29.50).** Two secrets, each
+backed up offline when the first 2FA enrolment happens; do not let the
+database backup and either key live with the same person:
+
+- `TOTP_ENCRYPTION_KEY` — the AES-256-GCM key that encrypts every
+  `users.totp_secret` (scrypt-derived). **Must never be regenerated**
+  once any account has enrolled: losing it locks every enrolled account
+  (including the owner's) out of code verification, with only recovery
+  codes as a way back in.
+- `SESSION_SECRET` — the session-id hash input. Rotatable after a
+  suspected leak; rotating it invalidates live sessions but does **not**
+  touch TOTP secrets (that decoupling is 29.50).
 
 ## What works today
 

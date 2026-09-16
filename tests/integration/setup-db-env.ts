@@ -75,6 +75,7 @@ if (missing.length > 0) {
 // test (DECISIONS 29.2).
 const NON_DB_FORCED: Record<string, string> = {
   SESSION_SECRET: 'integration-suite-session-secret-not-real!!!!',
+  TOTP_ENCRYPTION_KEY: 'integration-suite-totp-encryption-key-not-real!!!!!!',
   CRON_SECRET: 'integration-suite-cron-secret-32-chars-min',
   SMTP_HOST: 'smtp.hostinger.com',
   SMTP_PORT: '465',
