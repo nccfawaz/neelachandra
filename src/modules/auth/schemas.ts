@@ -16,13 +16,23 @@ export const loginSchema = z.object({
 })
 
 export const totpSchema = z.object({
-  // Spaces stripped because authenticator apps display "123 456".
+  // Spaces stripped because authenticator apps display "123 456". Dashes
+  // are NOT stripped before the refine: generateRecoveryCodes emits
+  // xxxx-xxxx-xxxx-xxxx and the dashed alternative is what matches it. The
+  // old order (strip dashes, then require dashes) made every recovery-code
+  // shape fail its own schema, so a recovery code could never be entered
+  // through /2fa/verify (DECISIONS 29.46). The service normalises further
+  // (lib/totp normaliseRecovery strips non-alphanumerics) before the
+  // argon2 verify, so either form hashes to the stored value.
   code: z
     .string()
-    .transform((v) => v.replace(/[\s-]/g, ''))
-    .refine((v) => /^\d{6}$/.test(v) || /^[a-z0-9]{4}(-[a-z0-9]{4}){3}$/i.test(v), {
-      message: 'Enter the 6 digit code, or a recovery code',
-    }),
+    .transform((v) => v.replace(/\s/g, ''))
+    .refine(
+      (v) => /^\d{6}$/.test(v) || /^[a-z0-9]{4}(-[a-z0-9]{4}){3}$/i.test(v),
+      {
+        message: 'Enter the 6 digit code, or a recovery code',
+      }
+    ),
 })
 
 export const forgotSchema = z.object({

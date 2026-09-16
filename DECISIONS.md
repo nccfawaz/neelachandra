@@ -5812,3 +5812,52 @@ choice. The failed-login account lock (user.locked_until) is a separate
 mechanism with its own threshold and is equally password-gated.
 
 Proven by: tests/integration/twofa-limiter.test.ts (3 tests).
+
+### 29.46 — the recovery-code lifecycle, and a schema defect that made
+### every code unenterable
+
+**The lifecycle as shipped, proven through the real router**
+(tests/integration/recovery-codes.test.ts, 4 tests): ten codes issued at
+enrolment, rendered once on a page that says "shown once and cannot be
+shown again. Each one works a single time. Print them or put them in a
+password manager now." — and stored from that moment only as argon2
+hashes, so no route can redisplay them. A code authenticates through
+POST /2fa/verify (302 /app), the unused count drops 10 → 9, and the same
+code a second time is refused 422 with the ordinary wrong-code message.
+The account screen always shows "Unused recovery codes: N of 10", so
+running out is visible before the last spend — but nothing warns AT the
+last spend, and when the count reaches 0 the screen shows 0 of 10 with
+no action attached.
+
+**The defect: recovery codes failed their own schema.** totpSchema
+stripped dashes from the input and THEN required a dashed pattern — so
+the shipped xxxx-xxxx-xxxx-xxxx format could match neither alternative
+after stripping. Every recovery-code shape (dashed, undashed) failed
+validation with "Enter the 6 digit code, or a recovery code", and
+verifyTotp's recovery branch (service.ts looksLikeRecoveryCode) was
+unreachable from the network. A user locked out of their authenticator
+was locked out of the recovery path too. Fixed by stripping spaces only
+(schemas.ts), which lets the dashed regex match the shipped format; the
+service's normaliseRecovery already strips non-alphanumerics before the
+argon2 verify, so both typed forms hash correctly. Pinned by
+unit/totp-schema.test.ts (3 tests) and by the integration flow spending
+a real code through POST /2fa/verify.
+
+**The gap that remains: no regeneration.** There is no route anywhere in
+the app to regenerate recovery codes (the tripwire in the suite asserts
+the mounted-route list contains no /recovery path; the /2fa/recovery
+name in requireAuth's exempt set is defensive, not mounted). A user who
+burns or loses all ten codes has no self-service recovery and no
+administrator path either — combined with 29.44 (the key that decrypts
+totp secrets is SESSION_SECRET, and its loss locks every enrolled
+account), regeneration is the practical recovery story for a lost
+authenticator. Options recorded, not built: (a) a user-facing
+"generate new codes" action requiring a fresh TOTP verification (safe,
+self-service); (b) an administrator reset clearing totp_secret and the
+code hashes for a named user (needs a permission and an audit action);
+(c) email-based identity proof (weakest; the spec's reset flow already
+carries the threat model). Who may reset whose 2FA remains in
+OWNER_QUESTIONS.md.
+
+Proven by: tests/integration/recovery-codes.test.ts (4 tests) and
+tests/unit/totp-schema.test.ts (3 tests).

@@ -366,3 +366,31 @@ preview route is the only guard.
 
 *Details: DECISIONS.md §29.29 (the writer, its transaction, and the spec
 quotes at :1359, :1382, :1505, :1506, :1508).*
+
+## 18. If someone loses their authenticator, who may reset their two factor — and after proving what? (§4.5)
+
+**The question:** An enrolled user who loses their phone has ten single-use
+recovery codes (shown once at enrolment) and nothing else. When those are
+spent or lost, is there an administrator-assisted reset (an admin clears
+the user's TOTP secret and recovery codes so they can re-enrol), and if so
+who holds that power — any admin, or only the owner — and what identity
+proof does it require before a lockout can be lifted?
+
+**Why it matters:** The TOTP secret is encrypted with a key derived from
+SESSION_SECRET (DECISIONS 29.44), so if that secret is ever lost every
+enrolled account is locked out of verification at once, and the recovery
+codes are the only way back in. There is currently no reset path at all
+(DECISIONS 29.46): no user-facing regeneration and no administrator
+action. The owner's own account is in the affected set.
+
+**Today without an answer:** A user with zero unused recovery codes and a
+lost authenticator cannot sign in, and nobody can unlock them. The screen
+shows "Unused recovery codes: 0 of 10" with no action attached.
+
+**Once answered:** Build the recorded option — an administrator reset
+(action (b) in 29.46) behind a dedicated permission with an audit entry,
+or the owner-only variant, plus optionally user-facing regeneration that
+requires a fresh TOTP verification before issuing new codes.
+
+*Details: DECISIONS.md §29.44 (key custody), §29.46 (lifecycle, the
+schema defect, and the three options).*
