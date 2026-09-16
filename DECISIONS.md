@@ -6039,3 +6039,35 @@ Proven by tests/integration/twofa-limiter.test.ts (4 tests): two wrong
 codes leave the bucket at 2, the correct code for the current step
 clears it to absent (302 /app), and a subsequent session's wrong code
 still costs exactly one hit — the cap still bites after a success.
+### 29.53 — group-1 tranche 3: the PO lifecycle through the HTTP path
+
+Tranche 3 of the group-1 money-and-approval coverage debt (29.41): the
+purchase-order lifecycle writers plus the requisition gate pair, all
+through app.request against the real router:
+
+- POST /api/po/:poId/submit — inventory.po_create; the raiser submits
+  and the PO lands in pending_approval with the approval notification
+  written (the service's own transaction).
+- POST /api/po/:poId/approve — inventory.approve_po; a permitted
+  approver approves against the approval_limits row the fixture seeds,
+  and the flash message names the figure (29.42's contract).
+- POST /api/po/:poId/short-close — gated behind inventory.po_create.
+- POST /api/requisitions/:reqId/approve and /reject — proven at the
+  gate level: tokenless 403 (CSRF, route exists not 404) and a role
+  without inventory.approve_po refused 403 naming the permission; the
+  requisition service's own rules are inventory-flow's proof.
+- POST /app/inventory/requisitions/:reqId/submit — gate-level, same
+  pair.
+
+Allowlist 217 → 211; EXERCISED 34 → 40; arithmetic prints
+mounted(concrete) 251 = exercised 40 ∪ allowlisted 211 (ceiling 222)
+and the 29.43 ratchet holds.
+
+Proven by tests/integration/po-routes.test.ts (6 tests). Two fixture
+notes that cost debugging time and are recorded so the next tranche
+skips them: the session CSRF token for POSTs is harvested from the
+/2fa/enrol screen (it renders for any signed-in user pre-verification
+and prints the session token), matching money-routes' csrfPair pattern;
+and approval_limits.max_value is PAISE — a 250 rupee ceiling refuses a
+17,700 rupee PO, which the first run of the approve test hit as a 422
+with the figure named in the JSON body.

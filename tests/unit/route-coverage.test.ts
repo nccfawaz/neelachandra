@@ -62,6 +62,12 @@ export const EXERCISED = [
   'POST /api/crm/quotes/:id/send', // quote-routes.test.ts
   'POST /api/crm/quotes/:id/accept', // quote-routes.test.ts
   'POST /api/crm/quotes/:id/reject', // quote-routes.test.ts
+  'POST /api/po/:poId/submit', // po-routes.test.ts (29.53 tranche 3)
+  'POST /api/po/:poId/approve', // po-routes.test.ts
+  'POST /api/po/:poId/short-close', // po-routes.test.ts
+  'POST /api/requisitions/:reqId/approve', // po-routes.test.ts
+  'POST /api/requisitions/:reqId/reject', // po-routes.test.ts
+  'POST /app/inventory/requisitions/:reqId/submit', // po-routes.test.ts (gate-level)
   'POST /api/csp-report', // csp-report + csp-hardening suites
   // §7 revision writer, proven through HTTP (cms-routes.test.ts, 29.37).
   'GET /app/marketing/content/:id/edit',
@@ -222,11 +228,7 @@ export const ALLOWLIST: string[] = [
   'POST /api/crm/leads/:id/stage',
   'POST /api/crm/leads/from-enquiry/:enquiryId',
         'POST /api/crm/quotes/:id/revise',
-      'POST /api/po/:poId/short-close',
-  'POST /api/po/:poId/submit',
-  'POST /api/requisitions/:reqId/approve',
-  'POST /api/requisitions/:reqId/reject',
-  'POST /api/transfers/:transferId/receive',
+              'POST /api/transfers/:transferId/receive',
   'POST /app/account/password',
   'POST /app/account/sessions/revoke',
   'POST /app/admin/enquiries/:id/status',
@@ -259,8 +261,7 @@ export const ALLOWLIST: string[] = [
   'POST /app/inventory/items/:itemId/brands',
   'POST /app/inventory/po',
   'POST /app/inventory/requisitions',
-  'POST /app/inventory/requisitions/:reqId/submit',
-  'POST /app/inventory/transfers',
+    'POST /app/inventory/transfers',
   'POST /app/inventory/vendors',
   'POST /app/inventory/vendors/:vendorId',
   'POST /app/inventory/vendors/:vendorId/rates',
@@ -308,8 +309,7 @@ export const ALLOWLIST: string[] = [
   'POST /api/hr/leave/:id/withdraw',
   'POST /api/issues/:issueId/return',
   'POST /api/notifications/:id/read',
-  'POST /api/po/:poId/approve',
-  'PUT /api/crm/site-visits/:id/complete',
+    'PUT /api/crm/site-visits/:id/complete',
 ]
 
 /** Router routes that are not concrete endpoints: middleware entries and the empty root. */
