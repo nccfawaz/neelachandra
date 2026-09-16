@@ -5922,3 +5922,33 @@ the ops_manager account logs in through the real router and the
 dashboard renders; the owner account is held at /2fa/enrol (POST
 /login redirects to /app and requireAuth bounces to enrolment, which is
 the actual gate order); a wrong password is refused 401/429.
+### 29.49 — the route-coverage partition is exact, and the parameterised
+routes are inside the denominator
+
+TASK 1 of the session found that the three 29.43 figures could not both
+be true: 34 exercised + 217 allowlisted = 251 WITH a claimed overlap of
+3 is impossible — either the overlap was 0, or three mounted routes sat
+in neither set where the ratchet could not see them. Measured: the
+overlap is **0**; the union is exactly 251 = mounted(concrete). The 3
+routes named in the earlier session (GET /app/notifications,
+POST /2fa/enrol, POST /2fa/verify) were already removed from the
+allowlist in 29.47; the overlap was already gone, but nothing asserted
+it, so the same hole could reopen silently.
+
+The tripwire now asserts the partition twice: EXERCISED ∩ ALLOWLIST = []
+(fail on double-counting, which flatters the union) and the
+uncovered-[] assertion already fails on routes in neither set. The
+per-run print reports the overlap alongside the other three figures.
+
+What "concrete" excludes: nothing parameterised. The 251 includes 105
+parameterised routes (the /reset-password/:token shape — a pattern
+surface, invisible to a constant set, which is exactly why the earlier
+triage undercounted it); 146 are constant paths. The split is committed
+as NON_PARAMETRISED_MOUNTED = 146 and asserted on every run, so
+parameterised routes cannot silently drift out of the accounted set.
+No ceiling change was needed: the true denominator was already 251, and
+the debt figure (217) already counted parameterised routes.
+
+Proven by: tests/unit/route-coverage.test.ts (3 tests) — the overlap
+assertion (watched green against the measured 0), the exact-union
+assertions, and the 146/105 split pin.

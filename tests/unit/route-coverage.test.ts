@@ -45,7 +45,7 @@ function mountedRoutes(): string[] {
  * references count: the point is that a NEW route fails here until a test
  * names it.
  */
-const EXERCISED = [
+export const EXERCISED = [
   'GET /login', // csrf-pre-session.test.ts
   'POST /login', // csrf-pre-session.test.ts + the live-server proofs
   'GET /forgot-password', // csrf-pre-session.test.ts path-set bounds
@@ -92,7 +92,7 @@ const EXERCISED = [
  * conscious edit to the recorded figure — never an accident.
  */
 const ALLOWLIST_CEILING = 222
-const ALLOWLIST: string[] = [
+export const ALLOWLIST: string[] = [
   'GET /.well-known/security.txt',
   'GET /097ee841c58a4b25b8eb2c348ca67dce.txt',
   'GET /400',
@@ -315,6 +315,13 @@ const ALLOWLIST: string[] = [
 /** Router routes that are not concrete endpoints: middleware entries and the empty root. */
 const NOT_ROUTES = [/^ALL /, /^(GET|POST) \/?$/]
 
+/**
+ * 29.49: concrete mounted routes WITHOUT path parameters. The full mounted
+ * count (251) includes 105 parameterised routes; both halves are accounted
+ * (exercised ∪ allowlisted = mounted exactly), and this committed figure
+ * pins the split so the denominator cannot drift unnoticed.
+ */
+const NON_PARAMETRISED_MOUNTED = 146
 describe('the route-coverage tripwire (DECISIONS 29.35, ceiling 29.43)', () => {
   it('enumerates a non-empty route set from the app router itself', () => {
     const mounted = mountedRoutes()
@@ -323,8 +330,9 @@ describe('the route-coverage tripwire (DECISIONS 29.35, ceiling 29.43)', () => {
     // (29.43): three figures — mounted, exercised, allowlisted — must always
     // add up, and this line makes the third one visible.
     const concrete = mounted.filter((r) => !NOT_ROUTES.some((re) => re.test(r)))
+    const overlap = ALLOWLIST.filter((r) => EXERCISED.includes(r))
     console.log(
-      `[route-coverage] mounted(concrete) ${concrete.length} = exercised ${EXERCISED.length} ∪ allowlisted ${ALLOWLIST.length} (debt, ceiling ${ALLOWLIST_CEILING})`
+      `[route-coverage] mounted(concrete) ${concrete.length} = exercised ${EXERCISED.length} ∪ allowlisted ${ALLOWLIST.length} (debt, ceiling ${ALLOWLIST_CEILING}, overlap ${overlap.length})`
     )
   })
 
@@ -332,6 +340,16 @@ describe('the route-coverage tripwire (DECISIONS 29.35, ceiling 29.43)', () => {
     const mounted = mountedRoutes()
       .filter((r) => !NOT_ROUTES.some((re) => re.test(r)))
     const covered = new Set([...EXERCISED, ...ALLOWLIST])
+    // 29.49: the partition must be EXACT. 34 + 217 = 251 with a claimed
+    // overlap of 3 could not both be true — either the overlap was 0 or three
+    // mounted routes were in neither set, invisible to the ratchet. This
+    // assertion fails on both: a route in neither set (uncovered above), and
+    // an overlap (a route double-counted, flattering the union).
+    const overlap = ALLOWLIST.filter((r) => EXERCISED.includes(r))
+    expect(
+      overlap,
+      'a route is in both EXERCISED and ALLOWLIST — remove it from the allowlist'
+    ).toEqual([])
 
     const uncovered = mounted.filter((r) => !covered.has(r))
     expect(
@@ -356,5 +374,13 @@ describe('the route-coverage tripwire (DECISIONS 29.35, ceiling 29.43)', () => {
     expect(ALLOWLIST.length, 'coverage improved — lower ALLOWLIST_CEILING in the same commit').toBeGreaterThanOrEqual(
       Math.min(ALLOWLIST_CEILING, ALLOWLIST.length)
     )
+    // 29.49: the denominator must be true, not flattering. Parameterised
+    // routes (/reset-password/:token shape) are concrete mounted routes and
+    // count in the 251; this asserts the non-parameterised figure printed in
+    // DECISIONS 29.49 stays true, so parameterised routes cannot silently
+    // drift out of the accounted set.
+    const mountedAll = mountedRoutes().filter((r) => !NOT_ROUTES.some((re) => re.test(r)))
+    const parametrised = mountedAll.filter((r) => r.includes('/:')).length
+    expect(mountedAll.length - parametrised).toBe(NON_PARAMETRISED_MOUNTED)
   })
 })
