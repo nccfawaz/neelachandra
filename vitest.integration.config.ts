@@ -28,7 +28,7 @@ import { defineConfig } from 'vitest/config'
 export default defineConfig({
   test: {
     include: ['tests/integration/**/*.test.ts'],
-    setupFiles: ['tests/integration/setup-db-env.ts'],
+    setupFiles: ['tests/integration/setup-db-env.ts', 'tests/integration/setup-test-login.ts'],
     environment: 'node',
     restoreMocks: true,
     testTimeout: 10_000,

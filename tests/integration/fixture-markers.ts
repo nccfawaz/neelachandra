@@ -90,5 +90,22 @@ export async function sweepFixtures(db: Kysely<any>): Promise<void> {
   await sql`delete rc from user_recovery_codes rc join users u on rc.user_id = u.id where u.email like ${'%@example.invalid'}`.execute(db)
   await sql`delete n from notifications n join users u on n.user_id = u.id where u.email like ${'%@example.invalid'}`.execute(db)
   await sql`delete from rate_limit_hits where bucket like ${'totp:user:%'}`.execute(db)
+  // Wrong-password attempts from this suite's repeated logins would trip the
+  // loginByEmail / loginByIp lockout on the shared test account and 429 the
+  // next run (found by test-login-accounts, 29.48).
+  await sql`delete from rate_limit_hits where bucket like ${'login:email:%'}`.execute(db)
+  await sql`delete from rate_limit_hits where bucket like ${'login:ip:%'}`.execute(db)
   await sql`delete from users where email like ${'%@example.invalid'}`.execute(db)
+  // The manual-test login fixtures (scripts/seed-test-login.mjs, 29.48) carry
+  // a full_name of FIXTURE-TESTLOGIN… — swept like any other fixture row so a
+  // reseed never accumulates (sessions and recovery codes first: fk
+  // constraints with no cascade).
+  await sql`delete s from user_sessions s join users u on s.user_id = u.id where u.full_name like ${'FIXTURE-TESTLOGIN%'}`.execute(db)
+  await sql`delete rc from user_recovery_codes rc join users u on rc.user_id = u.id where u.full_name like ${'FIXTURE-TESTLOGIN%'}`.execute(db)
+  await sql`delete ur from user_roles ur join users u on ur.user_id = u.id where u.full_name like ${'FIXTURE-TESTLOGIN%'}`.execute(db)
+  // Logins and logouts write audit rows (fk_audit_user, no cascade). These
+  // are the one audit trail the sweep is allowed to erase: they belong to
+  // disposable manual-test accounts, not to any real action (29.48).
+  await sql`delete a from audit_log a join users u on a.user_id = u.id where u.full_name like ${'FIXTURE-TESTLOGIN%'}`.execute(db)
+  await sql`delete from users where full_name like ${'FIXTURE-TESTLOGIN%'}`.execute(db)
 }

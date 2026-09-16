@@ -30,6 +30,23 @@ pm2 start ecosystem.config.cjs    # listens on 3000
 `ecosystem.config.cjs` reads `.env` and passes it as real environment
 variables, which is how Hostinger's app manager supplies them too.
 
+### Dev-only manual-test logins (DECISIONS 29.48)
+
+```
+node scripts/seed-test-login.mjs --test-login
+```
+
+Seeds two throwaway login accounts in the **local dev database only**
+(refuses to run against anything but localhost:3307):
+
+- `test.login@neelachandra.dev` — ops_manager, no 2FA, reaches the dashboard
+  immediately.
+- `test.owner@neelachandra.dev` — owner, 2FA required, held at `/2fa/enrol`.
+
+Passwords print once to stdout (or set `NCC_TEST_LOGIN_PASSWORD` /
+`NCC_TEST_OWNER_PASSWORD`). These are test fixtures, not the §8.1 real
+staff rows; they are swept by the test cleanup like any fixture row.
+
 **KEY_CUSTODY (DECISIONS 29.44).** `SESSION_SECRET` is not just the
 session-id hash input: the AES-256-GCM key that encrypts every
 `users.totp_secret` is scrypt-derived from it. Once any account has

@@ -5890,3 +5890,35 @@ blocked the user delete — the sweep now removes both before the users.
 Allowlist 222 → 217; EXERCISED 29 → 34; the arithmetic prints as
 mounted(concrete) 251 = exercised 34 ∪ allowlisted 217 (ceiling 222)
 and the 29.43 ratchet holds.
+### 29.48 — two dev-only manual-test login accounts
+
+`node scripts/seed-test-login.mjs --test-login` seeds two accounts for
+hand-testing the login and 2FA paths (README, dev section):
+
+- test.login@neelachandra.dev — role ops_manager (43 permissions from the
+  live grants; require_2fa = 0), reaches /app immediately.
+- test.owner@neelachandra.dev — role owner (60 permissions;
+  require_2fa = 1), held at /2fa/enrol.
+
+Guarantees, each stated because it is a fence: idempotent by email;
+refuses with a named error unless DB_HOST is localhost/127.0.0.1/::1 and
+DB_PORT is 3307; passwords come from NCC_TEST_LOGIN_PASSWORD /
+NCC_TEST_OWNER_PASSWORD or are generated (24 chars, four classes) and
+printed once to stdout; the password is never written to any repo file
+(the only file that ever holds one, tests/integration/.test-login.env,
+is gitignored) and the script writes NO audit_log row at all — unlike
+seed-users.mjs, a test account reseeded on every run would spam the log.
+
+**These are test accounts, not the §8.1 real staff rows.** The §8.1
+staff rows stay fenced behind the cut-over; nothing here touches them.
+Both accounts carry the FIXTURE-TESTLOGIN full_name prefix so the sweep
+removes them like any fixture (their audit rows too — the one audit
+trail the sweep is allowed to erase, because they belong to disposable
+accounts). Pushing this commit is not deployment; the deploy and
+cut-over fences hold.
+
+Proven by: tests/integration/test-login-accounts.test.ts (3 tests) —
+the ops_manager account logs in through the real router and the
+dashboard renders; the owner account is held at /2fa/enrol (POST
+/login redirects to /app and requireAuth bounces to enrolment, which is
+the actual gate order); a wrong password is refused 401/429.
