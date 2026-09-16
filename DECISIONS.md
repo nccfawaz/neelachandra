@@ -5776,3 +5776,39 @@ only if the owner ever asks for it.
 Proven by: the key-mismatch router probe recorded here (this entry is
 the record; the operational requirement is enforced by custody, not by
 a test that can exist).
+
+### 29.45 — the TOTP limiter is not a lockout weapon: the password gate
+### is the fix
+
+The question: can an attacker who knows only the owner's email lock the
+owner out by consuming the totp:user:* budget?
+
+No — and the architecture proves it rather than asserting it. The limiter
+(hit, RULES.totpByUser, 10 per 15 minutes per user bucket) fires at the
+start of verifyTotp, which is reachable only through POST /2fa/verify,
+which requires a live session, which requires the correct password. An
+attacker without the password has no session, so they have no way to
+spend the victim's budget. Proven through the real router
+(tests/integration/twofa-limiter.test.ts, 3 tests):
+
+- three wrong-password logins (correct email) leave the bucket absent;
+- GET /2fa/verify with a valid session leaves the bucket absent (only
+  the POST handler calls verifyTotp);
+- one wrong code WITH a session costs exactly one hit, so brute force
+  through the real endpoint is still limited at 10 per 15 minutes.
+
+The limiter never clears on success within its window — the bucket is a
+plain windowed counter (rate_limit_hits, unique on bucket+window_start)
+and a correct code at hit 3 leaves hits 1–2 counted — but that is
+harmless: the window expires, and the only person who can spend the
+budget is the person who already knows the password.
+
+**Rejected alternative:** keying the counter per session instead of per
+user. It adds nothing here (an attacker without the password has no
+session whose budget could be poisoned) and would let an attacker who
+HAS the password but not the authenticator bypass the 10-code cap by
+re-logging in for a fresh bucket — the per-user key is the stronger
+choice. The failed-login account lock (user.locked_until) is a separate
+mechanism with its own threshold and is equally password-gated.
+
+Proven by: tests/integration/twofa-limiter.test.ts (3 tests).
