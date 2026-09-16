@@ -5988,3 +5988,36 @@ the database-dump threat model. KEY_CUSTODY in the README now lists both
 secrets separately. Rotation of TOTP_ENCRYPTION_KEY remains unbuilt by
 design (recorded in 29.44): it would need a read-old/write-new re-encrypt
 pass.
+### 29.51 — the dash defect is the third instance of the
+reachable-but-dead class
+
+totpSchema (fixed in eeecd3d, 29.46) stripped whitespace but then
+refined for a dashed pattern — every recovery code failed its own
+schema, so the ONLY self-service recovery path for a lost authenticator
+was non-functional from the day it shipped. Combined with 29.44 (the
+cipher key that could not be rotated, whose loss locked every enrolled
+account), an owner who lost their authenticator before eeecd3d had no
+route back in at all. That is the third instance of the class where a
+screen/route exists, passes its gates, and cannot do its job: login
+posting into the CSRF guard (29.32), the password-reset submission
+(29.38), and now recovery-code entry. Three for three in the
+authentication path is the argument for the route-coverage tripwire
+being about behaviour, not counts.
+
+Pinning tests: tests/unit/totp-schema.test.ts (3 — a dashed recovery
+code passes, a spaced one normalises, a malformed one is refused) and
+the integration spend test in tests/integration/recovery-codes.test.ts
+(a code authenticates through POST /2fa/verify).
+
+**Sweep: does any other schema normalise input then validate the
+un-normalised shape?** Scope: every zod chain in src/modules/*/schemas.ts
+and src/lib that combines .transform (or .trim/.toUpperCase) with a
+later .refine/.regex on the same field — 24 candidate chains found by
+pattern, each read and classified. Verdict: the totpSchema shape
+(refine assuming a shape the transform has already changed) has no
+second instance. Every chain either checks null before refining (the
+optionalDate/optionalEnum/optionalEmail family across crm, hr,
+inventory, projects), runs toUpperCase BEFORE the refine (PAN/IFSC/GSTIN
+in hr and inventory), transforms to a number and refines isFinite (the
+money fields), or has no refine at all (admin's audit filter). The
+dash defect was an isolated slip, not a pattern.
