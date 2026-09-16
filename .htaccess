@@ -41,7 +41,14 @@ RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [R=301,L,QSA]
 #    advertised. This must run before any rewrite that could expose them.
 # -----------------------------------------------------------------------------
 RewriteRule ^(?:\.git|\.github|node_modules|scripts|tests|legacy|migrations|src|public)(?:/|$) - [R=404,END]
-RewriteRule ^(?:package(?:-lock)?\.json|NCC_BUILD_SPEC\.md|README\.md|\.gitignore|\.gitattributes|ecosystem\.config\.cjs|tsconfig\.json|vite\.config\.ts|wrangler\.jsonc|\.env.*|\.dev\.vars)$ - [R=404,END]
+# (2026-09-16 leak) The next line named individual files; DECISIONS.md,
+# CLAUDE.md and OWNER_QUESTIONS.md were 200 because no rule listed them.
+# The rule below now denies the CLASSES instead of enumerating names: every
+# .md, .sql, .ts, .tsx and .json file, whatever it is called. Any future
+# internal document with one of those extensions is covered on the day it
+# lands, not the day someone notices it is readable.
+RewriteRule ^(?:package(?:-lock)?\.json|\.gitignore|\.gitattributes|ecosystem\.config\.cjs|vite\.config\.ts|wrangler\.jsonc|\.env.*|\.dev\.vars)$ - [R=404,END]
+RewriteRule .\.(md|sql|ts|tsx|json)$ - [R=404,END]
 RewriteRule (?:^|/)\.(?!well-known/) - [R=404,END]
 
 # -----------------------------------------------------------------------------
