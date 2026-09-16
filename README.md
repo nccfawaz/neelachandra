@@ -30,6 +30,15 @@ pm2 start ecosystem.config.cjs    # listens on 3000
 `ecosystem.config.cjs` reads `.env` and passes it as real environment
 variables, which is how Hostinger's app manager supplies them too.
 
+**KEY_CUSTODY (DECISIONS 29.44).** `SESSION_SECRET` is not just the
+session-id hash input: the AES-256-GCM key that encrypts every
+`users.totp_secret` is scrypt-derived from it. Once any account has
+enrolled in two factor authentication, `SESSION_SECRET` **must never be
+regenerated** — losing it locks every enrolled account (including the
+owner's) out of code verification, with only recovery codes as a way
+back in. Back the value up offline when the first enrolment happens;
+do not let the database backup and the key live with the same person.
+
 ## What works today
 
 **Public site.** All ten pages serve as frozen bytes from the repo root at

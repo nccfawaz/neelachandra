@@ -5721,3 +5721,58 @@ commit. The ceiling may only be raised by an explicit edit.
 
 Proven by: tests/unit/route-coverage.test.ts (3 tests, watched red on a
 deliberately padded list).
+
+### 29.44 — the TOTP encryption key is SESSION_SECRET: provenance,
+### blast radius, and the custody requirement
+
+**Provenance.** users.totp_secret is AES-256-GCM ciphertext whose key is
+scrypt(SESSION_SECRET, 'ncc.platform.aes256gcm.v1', 32) — derived in
+src/lib/crypto.ts `key()`, cached, with a fixed application salt (deliberate:
+a per-blob salt would have to be stored anyway and buys nothing against an
+attacker who holds both halves). The key is therefore **not a separate
+value**: it exists nowhere except as a derivation of SESSION_SECRET, which
+lives only in the environment (zod requires ≥44 chars at boot,
+env.ts:28 — an absent or short value crashes the process at import time,
+proven by the env-validation failure this session's own probes hit when
+PORT was missing; there is no silent fallback).
+
+**What a key change does to enrolled users — proven through the router.**
+An enrolled fixture user's totp_secret blob was rewritten as ciphertext
+under a different key; signing in and posting a code returns the app's
+clean 422 page with "That code is not correct. Try the current code from
+your app." — not an unhandled 500. GCM's auth tag fails the decrypt,
+verifyCode never matches, and the service throws the ordinary
+UnprocessableError (auth/service.ts:481). So the failure mode is quiet,
+not crashing — which is also the danger: **losing SESSION_SECRET locks
+every enrolled account out of 2FA verification, including the owner's**,
+with only a generic wrong-code message to explain why. Recovery codes
+survive (argon2 hashes, key-independent) and are the only way in.
+
+**Blast radius.** The same derived key protects nothing else today: the
+only encrypt/decrypt call sites outside lib/crypto.ts and lib/totp.ts are
+auth/service.ts (totp_secret encrypt at :401, decrypts at :421, :480).
+Session ids are SHA-256 hashes, not encryption. So the blast radius of a
+key change is exactly the TOTP secrets — but that is the owner's login.
+
+**Cut-over blocker, recorded.** SESSION_SECRET must be generated once,
+set in hPanel environment variables (spec §7.6 step 5 already sets it —
+but nothing says it must be *kept*), and backed up offline by the owner
+before the first require_2fa account enrols. If it is lost after
+enrolment, every enrolled user needs an administrator 2FA reset (see
+29.46 / the open owner question on who may reset whose 2FA), and if no
+reset path exists yet the account is locked out entirely.
+
+**KEY_CUSTODY note (deployment section, README:30 area).**
+SESSION_SECRET has two duties: session-id hashing and the AES-256-GCM key
+for users.totp_secret (scrypt-derived, salt 'ncc.platform.aes256gcm.v1').
+It MUST NOT be regenerated after any 2FA enrolment. Back it up offline
+(password manager or printed and locked away) at the same time the
+first enrolment happens; whoever holds the database backup must not be
+the only holder of the key, and vice versa. No key-rotation feature is
+built: rotation would require re-encrypting every totp_secret blob with
+a read-old-key/write-new-key pass, and is recorded as a design option
+only if the owner ever asks for it.
+
+Proven by: the key-mismatch router probe recorded here (this entry is
+the record; the operational requirement is enforced by custody, not by
+a test that can exist).
