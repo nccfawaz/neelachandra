@@ -6071,3 +6071,99 @@ and prints the session token), matching money-routes' csrfPair pattern;
 and approval_limits.max_value is PAISE — a 250 rupee ceiling refuses a
 17,700 rupee PO, which the first run of the approve test hit as a 422
 with the figure named in the JSON body.
+### 29.54 — the "no deploy" fence was nominal: pushing to main IS deploying
+
+**What the deploy publishes, determined from the repo's own artifacts.**
+Hostinger's git integration serves the repository root as the web root
+on bisque-porpoise-208310.hostingersite.com through Apache (hcdn edge,
+no Node). build-site.mjs's header says so explicitly: "Hostinger serves
+this repository's root directory as the web root on the staging domain"
+— pages are written to the repo ROOT (index.html, about-us.html, …)
+precisely because that root is what Apache serves. Everything else in
+the repo is therefore also in the web root: package.json, src/,
+migrations/, scripts/, and every top-level markdown file.
+
+**Why the three markdown files were 200 while package.json was 404.**
+.htaccess rule 2 (added 1f875cf, 2026-08-27) denied repository internals
+by ENUMERATED NAME: package.json, package-lock.json, NCC_BUILD_SPEC.md,
+README.md, tsconfig.json, .env*, .git*, plus the directories src/,
+tests/, scripts/, migrations/, legacy/, node_modules/. That rule named
+two markdown files and no others — so NCC_BUILD_SPEC.md and README.md
+were covered while DECISIONS.md, CLAUDE.md and OWNER_QUESTIONS.md,
+created in later sessions, matched no rule and served 200. .env.example
+returned 403 (Hostinger blocks dotfiles at the server layer before
+.htaccess runs — a stricter deny than ours). src/server.ts 404d by
+directory; migrations/001 by directory. The leak was not a missing
+mechanism, it was a name-based deny covering only what someone
+remembered.
+
+**Exposure window: 2026-08-27 (1f875cf, when the git integration went
+live) to 2026-09-16 (ab4f2c3, the class-based deny).** Readable for
+that period: DECISIONS.md (the full decision log — every architecture
+choice, every security review, every open question), CLAUDE.md (working
+notes, verification doctrine, defect classes), OWNER_QUESTIONS.md
+(business questions incl. roles, approval limits, org chart).
+Mitigating: the staging domain carries `X-Robots-Tag: noindex, nofollow`
+scoped to hostingersite.com (verified live today), and the served
+robots.txt is Hostinger's placeholder (58 bytes, `User-agent: Googlebot
+Disallow: /`), NOT the repo's 3,367-byte file — so the site and its
+internal documents have been invisible to well-behaved crawlers the
+whole time. Indexing risk is low; direct-URL disclosure risk was real.
+Rotating any credential named in those documents is not required (no
+secret values are recorded — secrets live in .env, which was never
+served), but the owner should be told the decision log was public.
+
+**The fix, belt and braces.** (1) .htaccess now denies by CLASS:
+`RewriteRule .\.(md|sql|ts|tsx|json)$ - [R=404,END]` — every future
+internal document is covered the day it lands, whatever it is called —
+plus the original name-based rules for the extensionless leftovers.
+(2) The documents stay in the repo (they are the project's record; git
+is their home) but the class deny keeps them out of the web root's
+served surface; build-site.mjs copies only golden pages, assets and
+named infra files, so no build step needed changing.
+
+**Verified live after the push (hcdn serves the new .htaccess):**
+
+| Path | Before | After |
+|---|---|---|
+| /DECISIONS.md | 200 | **404** |
+| /CLAUDE.md | 200 | **404** |
+| /OWNER_QUESTIONS.md | 200 | **404** |
+| /package.json | 404 | 404 |
+| /src/server.ts | 404 | 404 |
+| /migrations/001_core_auth.sql | 404 | 404 |
+| /NCC_BUILD_SPEC.md | 404 | 404 |
+| /.env.example | 403 | 403 |
+| /robots.txt | 200 | 200 |
+| /about-us (control) | 200 | 200 |
+
+**Gate compatibility.** `scripts/test-htaccess.mjs` against the LIVE
+domain (`--base=https://bisque-porpoise-208310.hostingersite.com`):
+**100 passed, 0 failed** — every page, redirect and denial behaves as
+written, now against real Apache rather than the unrunnable local
+assertion (no httpd on this machine, recorded in 6.4).
+`scripts/selftest-parity.mjs`: **20 passed, 0 failed** — the parity gate
+still detects mutations, so the .htaccess change has not weakened the
+TOLERANCE 0 gate.
+
+**Cut-over requirements on this host (the §7.6 pre-flight; recorded
+ahead of the domain switch, none of it executed).** Whether hPanel on
+this plan offers a Node runtime is NOT determinable from the repo — the
+spec (§2.4) assumes it (build command `npm run build`, entry
+`dist/server.js`) but this must be confirmed in hPanel before anything
+else; if the plan is static-only, the whole §7.6 sequence changes. What
+the app needs before it can serve: SESSION_SECRET (hPanel env),
+TOTP_ENCRYPTION_KEY (hPanel env, 29.50 — must be set BEFORE the first
+2FA enrolment), a MariaDB/MySQL database and credentials (DB_HOST,
+DB_PORT, DB_USER, DB_PASSWORD, DB_NAME), all 27 forward migrations
+applied against that database, CRON_SECRET, SMTP_* credentials,
+INDEXNOW_KEY (unchangeable — already published at the key file),
+APP_BASE_URL pointed at the production domain, NODE_ENV=production.
+Open question for the host: whether Apache keeps serving the static
+cache pages while Node serves /app and /api (the .htaccess already
+carries the routing), or whether Node fronts everything and the golden
+pages become build output — the parity gate's candidate URL changes
+accordingly. Per §7.6, the switch itself is the irreversible step:
+verified staging, maintenance window, final public_html archive, DNS
+TTL lowered 24h ahead, then remove-and-deploy, verify-routes against
+production, rollback to a static export of the archive on any failure.

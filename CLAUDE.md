@@ -398,3 +398,17 @@ audiences, gate the money cell inside the route with the single stronger
 permission (the canValue/canRates/canPay pattern) rather than widening the
 entry check. The sweep’s full enumeration and the pinning test are in
 DECISIONS 29.14 and tests/unit/or-audience.test.ts.
+
+## A fence that nobody verified is not a fence
+
+The "no deploy" fence was nominal (DECISIONS 29.54): pushing to main has
+published to the public Hostinger web root via git integration since the
+day it was connected (2026-08-27), while the fence assumed deployment was
+something that happened deliberately. Nothing probed the live domain, so
+three internal documents sat readable for three weeks. Rule: a fence is
+only real when its state has been probed on the thing it fences — the
+live domain, the live database, the live server — not assumed from the
+config that is supposed to enforce it. The .htaccess protection rules now
+deny CLASSES (*.md, *.sql, *.ts, *.tsx, *.json) rather than enumerating
+filenames, because a name-based deny covers only the files someone
+remembered, and the leak was three files nobody remembered.
