@@ -5688,3 +5688,36 @@ bodies — only the permission guard answers in JSON on this path. The
 allowlist drops 227 → 225.
 
 Proven by: tests/integration/money-routes.test.ts (4 tests).
+
+### 29.43 — the coverage arithmetic reconciled, and the debt ceiling
+
+Three figures had drifted apart: the 29.41 triage summed to 227, the CMS
+tranche (29.37) removed four entries, and tranche 1 (29.42) reported a
+move of 227 → 225 for four routes exercised. Reconciled from the live
+router and the tripwire file itself:
+
+- **Mounted concrete routes: 251** (raw enumeration 253, minus the ALL
+  middleware entries and the empty root).
+- **Exercised: 29. Allowlisted: 222.** 29 ∪ 222 = 251 exactly.
+- **The discrepancy was three double-listed routes**: GET
+  /app/notifications (exercised by nav.test.ts) and POST /2fa/enrol,
+  POST /2fa/verify (exercised by twofa-flow, 29.40) were in both lists —
+  exercised coverage landed but the allowlist entries were never
+  removed. Tranche 1 removed four entries but two of the four were the
+  double-listed ones, so the count fell by two while the true debt fell
+  by four. The 29.41 triage predates the CMS removal, hence its groups
+  summing to 227: its group counts describe the state at 29.36. Corrected
+  group counts against today's 222: group 1 = 28 (the two finance
+  expense routes cleared by 29.42), group 2 = 77, group 3 = 117.
+
+**The ratchet.** The tripwire now prints the arithmetic on every gate
+run — `mounted(concrete) 251 = exercised 29 ∪ allowlisted 222` — and
+asserts `ALLOWLIST.length <= ALLOWLIST_CEILING` with ALLOWLIST_CEILING =
+222 committed in the test file (tests/unit/route-coverage.test.ts, third
+test). Adding a mounted route without a test, or padding the list, fails
+the ceiling assertion (watched red with a hypothetical 223rd entry);
+covering routes lowers the count and the ceiling is lowered in the same
+commit. The ceiling may only be raised by an explicit edit.
+
+Proven by: tests/unit/route-coverage.test.ts (3 tests, watched red on a
+deliberately padded list).

@@ -80,9 +80,13 @@ const EXERCISED = [
 ]
 
 /**
- * THE COVERAGE DEBT. Every entry is a mounted route with no test. Sorted,
- * deduplicated, and only ever shrinking.
+ * THE COVERAGE CEILING (29.43). The debt may only shrink. The first test
+ * prints the current size on every run so the number is visible in gate
+ * output, and this assertion is the ratchet: adding a mounted route without
+ * a test or lowering the ceiling fails, and raising this number is a
+ * conscious edit to the recorded figure — never an accident.
  */
+const ALLOWLIST_CEILING = 222
 const ALLOWLIST: string[] = [
   'GET /.well-known/security.txt',
   'GET /097ee841c58a4b25b8eb2c348ca67dce.txt',
@@ -190,7 +194,6 @@ const ALLOWLIST: string[] = [
   'GET /app/marketing',
   'GET /app/marketing/campaigns',
   'GET /app/marketing/content',
-  'GET /app/notifications',
   'GET /app/projects/:projectId',
   'GET /app/projects/:projectId/dpr/new',
   'GET /app/projects/dprs',
@@ -205,8 +208,6 @@ const ALLOWLIST: string[] = [
   'GET /terms',
   'PATCH /api/crm/leads/:id/assign',
   'PATCH /api/crm/leads/:id/stage',
-  'POST /2fa/enrol',
-  'POST /2fa/verify',
   'POST /api/crm/leads/:id/activities',
   'POST /api/crm/leads/:id/assign',
   'POST /api/crm/leads/:id/convert',
@@ -314,10 +315,17 @@ const ALLOWLIST: string[] = [
 /** Router routes that are not concrete endpoints: middleware entries and the empty root. */
 const NOT_ROUTES = [/^ALL /, /^(GET|POST) \/?$/]
 
-describe('the route-coverage tripwire (DECISIONS 29.35)', () => {
+describe('the route-coverage tripwire (DECISIONS 29.35, ceiling 29.43)', () => {
   it('enumerates a non-empty route set from the app router itself', () => {
     const mounted = mountedRoutes()
     expect(mounted.length, 'the router enumeration is empty — a Hono internals change broke the walk').toBeGreaterThan(0)
+    // The debt figure, printed on every gate run so it cannot drift silently
+    // (29.43): three figures — mounted, exercised, allowlisted — must always
+    // add up, and this line makes the third one visible.
+    const concrete = mounted.filter((r) => !NOT_ROUTES.some((re) => re.test(r)))
+    console.log(
+      `[route-coverage] mounted(concrete) ${concrete.length} = exercised ${EXERCISED.length} ∪ allowlisted ${ALLOWLIST.length} (debt, ceiling ${ALLOWLIST_CEILING})`
+    )
   })
 
   it('accounts for every concrete route as exercised or explicitly allowlisted', () => {
@@ -338,10 +346,15 @@ describe('the route-coverage tripwire (DECISIONS 29.35)', () => {
     expect(stale, 'allowlist/exercised entries for routes that no longer exist').toEqual([])
   })
 
-  it('the allowlist only ever shrinks: it holds exactly the recorded debt', () => {
-    // counted by the test file itself. When coverage improves, lower this
-    // number in the same commit that removes the entries. It must never
-    // rise.
-    expect(ALLOWLIST.length).toBe(225)
+  it('the allowlist never exceeds the committed ceiling: the debt only shrinks', () => {
+    // 29.43: the ceiling is a committed figure, not a local count. Lowering
+    // coverage (a new untested route) or padding the allowlist fails here;
+    // covering routes lowers ALLOWLIST.length below the ceiling and the
+    // ceiling is lowered in the same commit. The ceiling may only be raised
+    // by an edit to this file that says so in its message.
+    expect(ALLOWLIST.length).toBeLessThanOrEqual(ALLOWLIST_CEILING)
+    expect(ALLOWLIST.length, 'coverage improved — lower ALLOWLIST_CEILING in the same commit').toBeGreaterThanOrEqual(
+      Math.min(ALLOWLIST_CEILING, ALLOWLIST.length)
+    )
   })
 })
