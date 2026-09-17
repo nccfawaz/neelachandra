@@ -6387,3 +6387,51 @@ Fixes, each proven:
 Class recorded in CLAUDE.md: a markup test does not prove appearance; any
 styling task must assert the SERVED stylesheet (or computed browser values),
 because a build step between source and browser makes green tests lie.
+
+### 29.61 The build artifact is committed and gated, the browser suite is honest, the group labels meet AA, and the KPI tiles are real, 2026-09-17
+
+- **Build artifact.** `public/assets/css/dashboard.css` was already tracked
+  (`git ls-files --error-unmatch` passes; `.gitignore` excludes nothing under
+  public/). Hostinger's git integration copies repo files and runs nothing and
+  the §7.6 pre-flight has no build step, so a build-on-deploy policy would ship
+  a missing stylesheet. **Committed-artifact chosen**: deployment copies what
+  CI proved. Failure mode of the alternative (untracked + build step): any
+  cut-over that forgets the step serves nothing where the CSS should be, and
+  nothing in the repo could catch it. Guarded by
+  `tests/unit/css-build-staleness.test.ts` (non-zero floor: 50+ declarations
+  must exist in the source; every declaration must survive minify into the
+  artifact, normalising the minifier's legitimate rewrites — hex shortening,
+  zero-trim `0.5rem`→`.5rem`, comma spacing, quote style). Red-proven by
+  editing the source without rebuilding: `STALE — 1 declaration(s)…
+  expected [ 'background:#abcdef' ] to deeply equal []`. Rejected alternative
+  recorded: exclude + build step in the cut-over checklist.
+- **Browser suite rule (CLAUDE.md:324, "A gate must not depend on services it
+  does not start").** `sidebar-browser.test.ts` needed no dev server — it
+  serves its own fixture — but the rule is now proven rather than argued:
+  with the dev server killed (no listener on 3000), `npm run test:e2e`
+  passes 6/6 in 2 files. Chromium remains an explicit require
+  (`chromium.launch()` fails loudly at a named point), per the rule's own
+  text; CI still does not install it, and that is documented in the e2e
+  config header.
+- **Unit count reconciled.** tests/money.test.ts had 25 `it(` blocks at
+  09771ed, 26 at 658ae00 (the ₹-pin test **rewrote** an existing assertion,
+  adding the symbol requirement — net +1), 26 now. Unit gate: 365/20 (the
+  staleness tripwire is the new file).
+- **Group labels darkened.** #8a94a3 on #f5f7fa measured **2.86:1** in
+  Chromium — below even the 3.0 large-text floor, and 10.88px/700 is not
+  large text (that needs ≥18.66px bold). Darkened to the muted token
+  #5b6472: **5.57:1**, AA for normal text. Computed values pasted in the
+  session transcript; pinned by served-css + sidebar-browser suites.
+- **The KPI tiles are real (the 29.58 fabrication closed).** New widget defs
+  active_jobs, site_reports_due, approvals_waiting, open_requisitions,
+  billed_this_month, collected_this_month, work_in_hand — each with its own
+  permission gate. Gross margin stays refused (29.26): it renders "Not wired
+  yet — labour cost is not in the model". Work in hand uses the narrowest
+  defensible definition pending owner question 19 — milestones
+  ready_to_certify — and says so in the tile hint. Proven against real
+  inserts in `tests/integration/kpi-tiles.test.ts` (11 tests): exact-sum
+  cases (billed 1,18,000.00; collected 50,000.00; work-in-hand 1,23,456.78),
+  the zero-row case (SUM over no rows → 0, not NULL), and through the HTTP
+  path a project_manager session renders work-in-hand but neither
+  Billed-this-month nor Collected-this-month (29.12: the company-P&L gate is
+  finance.view_company_pnl, which project_manager does not hold).

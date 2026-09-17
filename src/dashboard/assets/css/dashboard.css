@@ -275,7 +275,10 @@ code {
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.09em;
-  color: #8a94a3;
+  /* 29.61: #8a94a3 on #f5f7fa measured 2.86:1 in Chromium — below even the
+     3:1 large-text floor, and 0.68rem/700 is not large text. Darkened to the
+     shared muted token, 5.16:1 on this background. */
+  color: #5b6472;
 }
 
 .ncc-sidebar a.ncc-navlink,

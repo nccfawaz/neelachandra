@@ -2,7 +2,7 @@ import type { Db } from '../db/kysely.js'
 import { PERMISSIONS } from '../lib/permissions.js'
 import type { ScopeContext } from '../lib/scope.js'
 import { projectScopeFilter } from '../lib/scope.js'
-import { today, yesterday, currentFinancialYear, financialYearBounds, addDays } from '../lib/dates.js'
+import { today, yesterday, currentFinancialYear, financialYearBounds, addDays, monthBounds, periodOf, monthOf } from '../lib/dates.js'
 
 /**
  * The landing dashboard's data (spec 6.2).
@@ -18,6 +18,14 @@ import { today, yesterday, currentFinancialYear, financialYearBounds, addDays } 
  */
 
 export type WidgetKey =
+  | 'active_jobs'
+  | 'site_reports_due'
+  | 'approvals_waiting'
+  | 'open_requisitions'
+  | 'billed_this_month'
+  | 'collected_this_month'
+  | 'work_in_hand'
+  | 'gross_margin'
   | 'cash_position'
   | 'receivables_ageing'
   | 'projects_over_budget'
@@ -45,6 +53,29 @@ export interface WidgetDef {
 }
 
 export const WIDGETS: readonly WidgetDef[] = [
+  // The eight KPI tiles of the target dashboard (29.62). Money tiles are
+  // gated on finance.view_company_pnl (29.12) — a project_manager holds
+  // finance.view_project_budget, not the company figure, and must not see
+  // billed/collected in any form.
+  { key: 'active_jobs', title: 'Active jobs', perms: [PERMISSIONS.PROJECTS_VIEW] },
+  { key: 'site_reports_due', title: 'Site reports due today', perms: [PERMISSIONS.PROJECTS_VIEW] },
+  { key: 'approvals_waiting', title: 'Approvals waiting on me', perms: [PERMISSIONS.DASHBOARD_VIEW_OWN_KPI] },
+  { key: 'open_requisitions', title: 'Open material requests', perms: [PERMISSIONS.INVENTORY_VIEW] },
+  { key: 'billed_this_month', title: 'Billed this month', perms: [PERMISSIONS.FINANCE_VIEW_COMPANY_PNL] },
+  { key: 'collected_this_month', title: 'Collected this month', perms: [PERMISSIONS.FINANCE_VIEW_COMPANY_PNL] },
+  {
+    key: 'work_in_hand',
+    title: 'Work in hand',
+    // Narrowest defensible definition pending owner question 19: milestones
+    // awaiting certification, i.e. contract value earned but not yet
+    // certified. Labelled with the definition in the UI hint.
+    perms: [PERMISSIONS.FINANCE_VIEW_PROJECT_BUDGET],
+  },
+  // Refused per 29.26: no labour cost exists in the model, so a margin
+  // percentage would be overstated. The tile renders an em dash with a
+  // 'not wired yet' label (routes.tsx renders money tiles for real keys;
+  // this one is deliberately absent from loadWidget).
+  { key: 'gross_margin', title: 'Gross margin', perms: [PERMISSIONS.FINANCE_VIEW_COMPANY_PNL] },
   { key: 'pending_approvals', title: 'Waiting on you', perms: [PERMISSIONS.DASHBOARD_VIEW_OWN_KPI], wide: true },
   { key: 'cash_position', title: 'Cash position', perms: [PERMISSIONS.FINANCE_VIEW_COMPANY_PNL] },
   { key: 'month_revenue', title: 'Revenue this financial year', perms: [PERMISSIONS.FINANCE_VIEW_COMPANY_PNL] },
@@ -115,6 +146,130 @@ async function snapshot(db: Db, key: string): Promise<{ paise: number; count: nu
 
 export async function loadWidget(key: WidgetKey, ctx: Ctx): Promise<WidgetData> {
   switch (key) {
+    case 'active_jobs': {
+      const scoped = await projectScopeFilter(ctx.db, ctx.scope)
+      let q = ctx.db
+        .selectFrom('projects')
+        .select((eb) => eb.fn.countAll<number>().as('n'))
+        .where('projects.status', 'in', ['mobilising', 'in_progress', 'snagging'])
+      if (scoped) q = q.where('projects.id', 'in', scoped.length ? scoped : [0])
+      const row = await q.executeTakeFirst()
+      return { kind: 'count', count: Number(row?.n ?? 0), hint: 'Mobilising, in progress or snagging.' }
+    }
+
+    case 'site_reports_due': {
+      // One DPR per active project per day (uq_dpr_project_date). Due today
+      // = active projects with no report dated today.
+      const scoped = await projectScopeFilter(ctx.db, ctx.scope)
+      let q = ctx.db
+        .selectFrom('projects')
+        .select((eb) => eb.fn.countAll<number>().as('n'))
+        .where('projects.status', 'in', ['mobilising', 'in_progress', 'snagging'])
+        .where((eb) =>
+          eb.not(
+            eb.exists(
+              eb.selectFrom('daily_progress_reports')
+                .select('daily_progress_reports.id')
+                .whereRef('daily_progress_reports.project_id', '=', 'projects.id')
+                .where('daily_progress_reports.report_date', '=', today()),
+            ),
+          ),
+        )
+      if (scoped) q = q.where('projects.id', 'in', scoped.length ? scoped : [0])
+      const row = await q.executeTakeFirst()
+      return { kind: 'count', count: Number(row?.n ?? 0), hint: 'Active projects with no report for today.' }
+    }
+
+    case 'approvals_waiting': {
+      // Sum of the live pending_approvals widget's queues that carry the
+      // owner-like semantics: expenses and POs awaiting this user's role.
+      const rows = await Promise.all([
+        ctx.perms.has(PERMISSIONS.FINANCE_EXPENSE_APPROVE)
+          ? ctx.db
+              .selectFrom('expenses')
+              .select((eb) => eb.fn.countAll<number>().as('n'))
+              .where('status', '=', 'pending_approval')
+              .where('created_by', '!=', ctx.userId)
+              .executeTakeFirst()
+          : Promise.resolve(undefined),
+        ctx.perms.has(PERMISSIONS.INVENTORY_APPROVE_PO)
+          ? ctx.db
+              .selectFrom('purchase_orders')
+              .select((eb) => eb.fn.countAll<number>().as('n'))
+              .where('status', '=', 'pending_approval')
+              .where('created_by', '!=', ctx.userId)
+              .executeTakeFirst()
+          : Promise.resolve(undefined),
+        ctx.perms.has(PERMISSIONS.HR_ATTENDANCE_APPROVE)
+          ? ctx.db
+              .selectFrom('attendance')
+              .select((eb) => eb.fn.countAll<number>().as('n'))
+              .where('approved_by', 'is', null)
+              .executeTakeFirst()
+          : Promise.resolve(undefined),
+      ])
+      const total = rows.reduce((sum, r) => sum + Number(r?.n ?? 0), 0)
+      return { kind: 'count', count: total, hint: 'Expenses, purchase orders and attendance in your queues.' }
+    }
+
+    case 'open_requisitions': {
+      const scoped = await projectScopeFilter(ctx.db, ctx.scope)
+      let q = ctx.db
+        .selectFrom('material_requisitions')
+        .select((eb) => eb.fn.countAll<number>().as('n'))
+        .where('material_requisitions.status', 'in', ['submitted', 'approved', 'partially_ordered'])
+      if (scoped) q = q.where('material_requisitions.project_id', 'in', scoped.length ? scoped : [0])
+      const row = await q.executeTakeFirst()
+      return { kind: 'count', count: Number(row?.n ?? 0), hint: 'Submitted, approved or partially ordered.' }
+    }
+
+    case 'billed_this_month': {
+      const m = monthBounds(monthOf(today()))
+      const row = await ctx.db
+        .selectFrom('client_invoices')
+        .select((eb) => eb.fn.sum<number>('total_paise').as('total'))
+        .where('invoice_date', '>=', m.start)
+        .where('invoice_date', '<=', m.end)
+        .where('status', 'not in', ['draft', 'cancelled'])
+        .executeTakeFirst()
+      return { kind: 'money', paise: Number(row?.total ?? 0), hint: 'Client invoices dated this month, drafts excluded.' }
+    }
+
+    case 'collected_this_month': {
+      const m = monthBounds(monthOf(today()))
+      const row = await ctx.db
+        .selectFrom('payments')
+        .select((eb) => eb.fn.sum<number>('amount_paise').as('total'))
+        .where('payment_date', '>=', m.start)
+        .where('payment_date', '<=', m.end)
+        .where('direction', '=', 'incoming')
+        .where('status', '!=', 'cancelled')
+        .executeTakeFirst()
+      return { kind: 'money', paise: Number(row?.total ?? 0), hint: 'Incoming payments dated this month.' }
+    }
+
+    case 'work_in_hand': {
+      // Pending owner question 19 — the narrowest defensible definition:
+      // milestones awaiting certification (earned, not yet certified).
+      const scoped = await projectScopeFilter(ctx.db, ctx.scope)
+      let q = ctx.db
+        .selectFrom('project_milestones')
+        .select((eb) => eb.fn.sum<number>('amount_paise').as('total'))
+        .where('project_milestones.status', '=', 'ready_to_certify')
+      if (scoped) q = q.where('project_milestones.project_id', 'in', scoped.length ? scoped : [0])
+      const row = await q.executeTakeFirst()
+      return {
+        kind: 'money',
+        paise: Number(row?.total ?? 0),
+        hint: 'Milestones ready to certify (definition pending owner item 19).',
+      }
+    }
+
+    case 'gross_margin': {
+      // Never a number: without labour cost in the model (29.26) any margin
+      // would be overstated. Em dash + not-wired label, rendered by routes.
+      return { kind: 'rows', rows: [], empty: 'Not wired yet — labour cost is not in the model (see DECISIONS 29.26).' }
+    }
     case 'cash_position': {
       const snap = await snapshot(ctx.db, 'cash.balance')
       return { kind: 'money', paise: snap.paise, hint: 'Across all bank accounts, as of last night.' }
