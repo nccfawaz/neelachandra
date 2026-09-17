@@ -233,8 +233,9 @@ code {
 }
 
 .ncc-sidebar {
-  background: #1a1f27;
-  color: #d8dce2;
+  background: #f5f7fa;
+  color: #3a4353;
+  border-right: 1px solid #e2e7ee;
   padding: 0.9rem 0 2rem;
   position: sticky;
   top: 0;
@@ -245,10 +246,11 @@ code {
 
 .ncc-sidebar__brand {
   display: flex;
-  align-items: center;
-  gap: 0.55rem;
-  padding: 0.35rem 1.1rem 1.1rem;
-  color: #fff;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.25rem;
+  padding: 0.9rem 1.1rem 1.1rem;
+  color: #3a4353;
   font-weight: 700;
   letter-spacing: -0.01em;
 }
@@ -257,17 +259,12 @@ code {
   text-decoration: none;
 }
 
-.ncc-sidebar__mark {
-  width: 26px;
-  height: 26px;
-  border-radius: 6px;
-  background: var(--ncc-accent);
-  display: grid;
-  place-items: center;
-  font-size: 0.8rem;
-  font-weight: 800;
-  color: #fff;
-  flex: none;
+.ncc-sidebar__lockup {
+  display: block;
+  /* Sidebar inner width: 232px - 2 × 1.1rem padding ≈ 197px usable. The
+     asset is 1367×319, so at 190px wide the natural height is ≈ 44px. */
+  width: 190px;
+  height: auto;
 }
 
 .ncc-sidebar__group {
@@ -276,27 +273,28 @@ code {
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.09em;
-  color: #7b8492;
+  color: #8a94a3;
 }
 
-.ncc-sidebar a.ncc-navlink {
+.ncc-sidebar a.ncc-navlink,
+.ncc-sidebar span.ncc-navlink {
   display: block;
   padding: 0.44rem 1.1rem;
-  color: #d8dce2;
+  color: #3a4353;
   font-size: 0.9rem;
   border-left: 3px solid transparent;
 }
 
 .ncc-sidebar a.ncc-navlink:hover {
-  background: #232935;
-  color: #fff;
+  background: #e9edf3;
+  color: #1d2530;
   text-decoration: none;
 }
 
 .ncc-sidebar a.ncc-navlink[aria-current='page'] {
-  background: #232935;
+  background: #e9edf3;
   border-left-color: var(--ncc-accent);
-  color: #fff;
+  color: #1d2530;
   font-weight: 600;
 }
 
@@ -355,36 +353,6 @@ code {
 .ncc-topbar__search input[type='search']:focus {
   outline: 2px solid var(--ncc-accent, #f48120);
   outline-offset: 1px;
-}
-
-/* Sidebar brand lockup (29.57, corrected): CSS-only crop of the arch glyph
-   from logo.svg. The asset is 1367×319; the arch occupies the left 250px.
-   The wrapper clips; the img is scaled so the arch fills the visible box:
-   height 43px ⇒ scale 43/319 ⇒ arch width 250 × (43/319) ≈ 33.7px ⇒ box 34px. */
-.ncc-sidebar__mark-wrap {
-  display: block;
-  width: 34px;
-  height: 43px;
-  overflow: hidden;
-  flex: none;
-}
-
-.ncc-sidebar__brand img.ncc-sidebar__mark {
-  display: block;
-  /* Full asset scaled to 43px tall; the arch region lands exactly in the
-     34×43 box, the orange wordmark and green rule are clipped away. */
-  height: 43px;
-  width: auto;
-  max-width: none;
-}
-
-.ncc-sidebar__wordmark {
-  display: block;
-  font-size: 0.72rem;
-  font-weight: 700;
-  letter-spacing: 0.09em;
-  color: var(--ncc-text);
-  line-height: 1.2;
 }
 
 .ncc-sidebar__wordmark-sub {

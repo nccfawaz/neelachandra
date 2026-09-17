@@ -47,7 +47,7 @@ describe('the brand mark serves and crops', () => {
     expect(res.headers.get('content-type')).toContain('image/svg+xml')
   })
 
-  it('renders the CSS crop: clipping wrapper + full-asset src, no dead fragment', () => {
+  it('renders the full lockup: un-cropped asset, no crop wrapper, no dead fragment', () => {
     const html = renderToString(
       AppShell({
         title: 'Dashboard',
@@ -58,8 +58,12 @@ describe('the brand mark serves and crops', () => {
         children: <p>body</p>,
       } as never),
     )
-    expect(html).toContain('ncc-sidebar__mark-wrap')
+    // Full lockup (29.59): the whole asset at natural aspect — no clipping
+    // wrapper, no CSS crop — plus the small STAFF PLATFORM label beneath.
+    expect(html).toContain('ncc-sidebar__lockup')
     expect(html).toContain('src="/assets/images/header/logo.svg"')
+    expect(html).toContain('STAFF PLATFORM')
+    expect(html).not.toContain('ncc-sidebar__mark-wrap')
     // The <view id="arch"> fragment was removed from the asset; a reference
     // to it would render a broken image.
     expect(html).not.toContain('#arch')

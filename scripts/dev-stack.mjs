@@ -17,7 +17,15 @@ import { spawn } from 'node:child_process'
 import process from 'node:process'
 
 const MARIADB_PORT = 3307
-const APP_PORT = Number(process.env.PORT ?? 3000)
+// A stale machine- or user-level PORT variable poisons this: the child
+// carries --env-file=.env, but Node's --env-file does not override an
+// already-set variable, so machine PORT=0 once failed boot with "PORT: Number
+// must be greater than or equal to 1" (2026-09-17). The ?? 3000 here only
+// fires when PORT is UNSET, not when it is 0 — so the value is sanitised
+// explicitly: anything that is not a positive integer is discarded and 3000
+// is used, whatever the environment says.
+const RAW_PORT = Number(process.env.PORT)
+const APP_PORT = Number.isInteger(RAW_PORT) && RAW_PORT >= 1 ? RAW_PORT : 3000
 const MARIADB_BIN = 'C:/Users/HP/ncc-devdb/mariadb-11.4.4-winx64/bin/mysqld.exe'
 const MARIADB_CONF = 'C:/Users/HP/ncc-devdb/data/my.ini'
 

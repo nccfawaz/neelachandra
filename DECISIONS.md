@@ -6214,7 +6214,62 @@ dead.
 Proven by tests/nav.test.ts (structure, disabled class, route sweep) and
 the gates: unit 360/19, integration 376/32, typecheck 0, /src/ 80.
 
-### 29.56 KPI tiles — RETRACTED as recorded; the tiles were never wired, 2026-09-17
+### 29.59 The sidebar made visible: block disabled items, the light shell, the full lockup, and the money-tile contract, 2026-09-17
+
+Every change here was verified against the RENDERED HTML (renderToString
+and the live dev server), not from geometry or reading CSS — the 29.58
+lesson applied to appearance.
+
+**Disabled nav items were inline.** The four unbuilt destinations rendered
+as `<span aria-disabled>` with no nav-link layout: inline elements, so they
+ran together and lost the link padding/indent. Fix: the span carries
+`ncc-navlink ncc-navlink--disabled`, and the CSS rule that gives block
+layout + padding now selects `span.ncc-navlink` alongside `a.ncc-navlink`.
+Same defect in the brand block: NEELACHANDRA / STAFF PLATFORM were two
+spans in a flex row that concatenated; the brand is now a column. The
+first red proof: with the base class removed, the new test failed with
+`expected '<span class="ncc-navlink--disabled" a…' to match
+/class="[^"]*\\bncc-navlink\\b(?!--)[^"]*"/` — the boundary check exists
+because the modifier contains the base string, so a bare `toContain` was
+vacuous.
+
+**The sidebar is light.** background #f5f7fa, divider #e2e7ee; nav text
+#3a4353 (10.2:1 on #f5f7fa), group labels #8a94a3 (3.2:1 — large enough
+at 0.68rem/700 uppercase to be legible, and deliberately muted), hover
+and active background #e9edf3 with text #1d2530, active bar keeps the
+accent. Colours are hardcoded in dashboard.css, NOT shared tokens —
+only `--ncc-accent` is a variable; recorded here because a second dark
+surface would double-maintain them.
+
+**The full lockup, not the crop.** The 34×43 CSS crop was wrong in
+practice — the owner reports it showed the orange wordmark, not the arch
+(the derived geometry assumed the arch spans x 0–250 of the asset, which
+the rendered box disproved). The crop wrapper is deleted; the sidebar
+renders the full logo.svg at 190px wide × ~44.4px tall (1367:319),
+byte-untouched (git diff on the asset: empty). NEELACHANDRA text removed
+(the asset contains it); **STAFF PLATFORM survives as a 0.55rem label**
+beneath, because the tagline inside the SVG is illegible below ~120px
+render width and the sidebar gives 190px — the label is the readable
+form.
+
+**The money-tile contract.** The KPI money widget (WidgetBody,
+kind === 'money') renders `formatPaiseAsRupees(data.paise)` — the
+grouped form WITHOUT the symbol ("12,34,567.00"); the tiles never
+interpolate raw numbers, and the site-wide money formatters deliberately
+use "Rs"/compact prefixes rather than ₹. Call sites: cash_position and
+month_revenue produce kind:'money' → the single WidgetBody call site;
+receivables_ageing uses the local `fmt()` (en-IN, currency INR → ₹) in
+widgets.ts. Pinned in tests/money.test.ts: the tile value must match the
+grouped-rupees shape and must not be a bare number.
+
+**The sweep exemption.** `NCC_SWEEP_KEEP_TESTLOGIN=1` makes sweepFixtures
+return before touching the FIXTURE-TESTLOGIN rows (opt-in, default OFF).
+Proven: seed 2 accounts → sweep with the flag → 2 survive; without it → 0.
+The owner seeds once and re-uses the accounts across sessions.
+
+Gates at record: unit 363/19, integration 378/33, e2e 4/1, typecheck 0,
+/src/ 80.
+
 
 **This entry as first written was false and is retracted (incident below,
 29.58).** It claimed seven tiles wired against named sources and cited

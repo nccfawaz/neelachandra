@@ -1,8 +1,9 @@
 import { globSync, readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
+import { renderToString } from 'hono/jsx/dom/server'
+import { AppShell } from '../src/dashboard/layouts/AppShell.js'
 import { NAV, activeHref, visibleNav } from '../src/dashboard/nav.js'
 import { PERMISSIONS } from '../src/lib/permissions.js'
-
 /**
  * The sidebar's stated invariant (src/dashboard/nav.ts): a link the user can
  * see is a link that will not 403, and a route they can reach is a route they
@@ -106,6 +107,56 @@ describe('visibleNav', () => {
       for (const item of enabled) {
         expect(item.disabled).toBeUndefined()
       }
+    })
+
+    /**
+     * Block layout for disabled items (29.59): a <span> is inline, so without
+     * the nav-link class it runs together on one line and loses the padding
+     * and indent of the real links. The rendered markup must carry BOTH the
+     * ncc-navlink class (block layout + padding, per the shared CSS rule) and
+     * the --disabled modifier — a span with only the modifier is the regression.
+     */
+    it('renders each disabled item as a block-level nav item with the link padding class', () => {
+      const html = renderToString(
+        AppShell({
+          title: 'Dashboard',
+          user: { id: 1, email: 'a@b.c', fullName: 'A', roleId: 2 } as never,
+          perms: new Set(Object.values(PERMISSIONS)),
+          csrfToken: 't',
+          path: '/app',
+          children: <p>body</p>,
+        } as never),
+      )
+      expect(disabled.length).toBeGreaterThan(0)
+      for (const item of disabled) {
+        const marker = `>${item.label}</span>`
+        expect(html).toContain(marker)
+        const idx = html.indexOf(marker)
+        const tagStart = html.lastIndexOf('<span', idx)
+        const tag = html.slice(tagStart, idx + marker.length)
+        expect(tag).toContain('ncc-navlink--disabled')
+        // Boundary-checked: the modifier string contains 'ncc-navlink' as a
+        // substring, so a bare contains() would pass with the base class gone
+        // and the block layout lost with it.
+        expect(tag).toMatch(/class="[^"]*\bncc-navlink\b(?!--)[^"]*"/)
+        expect(tag).toContain('aria-disabled="true"')
+      }
+    })
+
+    it('renders the brand as stacked blocks: lockup then label, each display:block via class', () => {
+      const html = renderToString(
+        AppShell({
+          title: 'Dashboard',
+          user: { id: 1, email: 'a@b.c', fullName: 'A', roleId: 2 } as never,
+          perms: new Set(Object.values(PERMISSIONS)),
+          csrfToken: 't',
+          path: '/app',
+          children: <p>body</p>,
+        } as never),
+      )
+      // The two brand lines are separate block elements, not concatenated
+      // inline text inside one span.
+      expect(html).toMatch(/ncc-sidebar__lockup[\s\S]*?ncc-sidebar__wordmark-sub[^<]*>STAFF PLATFORM</)
     })
   })
 

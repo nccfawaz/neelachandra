@@ -100,6 +100,15 @@ export async function sweepFixtures(db: Kysely<any>): Promise<void> {
   // a full_name of FIXTURE-TESTLOGIN… — swept like any other fixture row so a
   // reseed never accumulates (sessions and recovery codes first: fk
   // constraints with no cascade).
+  //
+  // EXEMPTION (29.59): with NCC_SWEEP_KEEP_TESTLOGIN=1 in the environment the
+  // sweep leaves these accounts in place, so the owner does not have to
+  // re-seed before every manual session. Opt-in and default OFF: the gates
+  // themselves still clean up, and the exemption applies only to the two
+  // FIXTURE-TESTLOGIN rows — nothing else.
+  if (process.env.NCC_SWEEP_KEEP_TESTLOGIN === '1') {
+    return
+  }
   await sql`delete s from user_sessions s join users u on s.user_id = u.id where u.full_name like ${'FIXTURE-TESTLOGIN%'}`.execute(db)
   await sql`delete rc from user_recovery_codes rc join users u on rc.user_id = u.id where u.full_name like ${'FIXTURE-TESTLOGIN%'}`.execute(db)
   await sql`delete ur from user_roles ur join users u on ur.user_id = u.id where u.full_name like ${'FIXTURE-TESTLOGIN%'}`.execute(db)

@@ -90,6 +90,22 @@ describe('formatting', () => {
     expect(formatPaiseAsRupeesCompact(-1_240_000_000)).toBe('-Rs 1.24 Cr')
   })
 
+  /**
+   * The KPI money tile (dashboard WidgetBody, kind === 'money') renders
+   * formatPaiseAsRupees output directly into .ncc-kpi__value. The bare-number
+   * form carries no rupee mark at all, so a regression that interpolated the
+   * raw number instead of the formatter would read "0.00" or "1234" — a
+   * figure with no currency on a money tile. This pins the rendered value to
+   * the Indian-grouped form; the ₹ tile contract is that every money figure
+   * passes through THIS formatter (DECISIONS 29.59: the compact/WithRs
+   * variants add their own prefix, the tile uses the plain grouped one).
+   */
+  it('renders a money tile value in grouped rupees, never a bare number', () => {
+    expect(formatPaiseAsRupees(123456700)).toMatch(/^\d{1,2}(,\d{2,3})*\.\d{2}$/)
+    expect(formatPaiseAsRupees(123456700)).not.toBe('1234567')
+    expect(formatPaiseAsRupees(123456700)).not.toBe('1234567.00')
+  })
+
   it('speaks crore and lakh on KPI cards', () => {
     expect(formatPaiseAsRupeesCompact(1_240_000_000)).toBe('Rs 1.24 Cr')
     expect(formatPaiseAsRupeesCompact(123_450_000)).toBe('Rs 12.35 L')

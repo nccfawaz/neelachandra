@@ -92,27 +92,19 @@ export function AppShell(props: AppShellProps) {
         <div class="ncc-shell">
           <nav class="ncc-sidebar" aria-label="Main">
             <a class="ncc-sidebar__brand" href="/app">
-              {/* CSS-only crop of the arch glyph (29.57, corrected): the full
-                  logo.svg in a fixed box that clips everything but the left
-                  250×319 arch region. No <view> fragment, no edit to the
-                  asset — the file stays byte-identical to its committed
-                  state. */}
-              {/* CSS-only crop of the arch glyph (29.57, corrected): the full
-                  logo.svg in a fixed box that clips everything but the left
-                  250×319 arch region. No <view> fragment, no edit to the
-                  asset — the file stays byte-identical to its committed
-                  state. */}
-              <span class="ncc-sidebar__mark-wrap" aria-hidden="true">
-                <img
-                  class="ncc-sidebar__mark"
-                  src="/assets/images/header/logo.svg"
-                  alt=""
-                />
-              </span>
-              <span>
-                <span class="ncc-sidebar__wordmark">NEELACHANDRA</span>
-                <span class="ncc-sidebar__wordmark-sub">STAFF PLATFORM</span>
-              </span>
+              {/* Full lockup (29.57, corrected): the un-cropped logo.svg —
+                  arch, wordmark and rule together — at its natural aspect,
+                  sized to the sidebar width. The asset stays byte-untouched:
+                  no <view>, no fragment. The separate NEELACHANDRA text is
+                  gone; the asset already contains it. STAFF PLATFORM survives
+                  as a small label beneath, since the asset's own tagline is
+                  illegible at this size (DECISIONS 29.59). */}
+              <img
+                class="ncc-sidebar__lockup"
+                src="/assets/images/header/logo.svg"
+                alt="Neelachandra"
+              />
+              <span class="ncc-sidebar__wordmark-sub">STAFF PLATFORM</span>
             </a>
             {groups.map((group) => (
               <div>
