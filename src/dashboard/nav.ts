@@ -29,6 +29,13 @@ export interface NavItem {
    * "hidden" is the fail-closed default an item left half-edited should get.
    */
   anyUser?: true
+
+  /**
+   * The destination route is not built yet, so the item renders visibly
+   * disabled (muted, non-interactive) rather than as a link to a 404. The
+   * tests/nav.test.ts route-existence sweep skips disabled items by design.
+   */
+  disabled?: true
 }
 
 export interface NavGroup {
@@ -40,29 +47,42 @@ export const NAV: NavGroup[] = [
   {
     label: 'Overview',
     items: [
-      { label: 'Dashboard', href: '/app', perms: [PERMISSIONS.DASHBOARD_VIEW_OWN_KPI] },
-      { label: 'Notifications', href: '/app/notifications', perms: [PERMISSIONS.DASHBOARD_VIEW_OWN_KPI] },
+      { label: 'My dashboard', href: '/app', perms: [PERMISSIONS.DASHBOARD_VIEW_OWN_KPI] },
+      { label: 'Alerts and reminders', href: '/app/notifications', perms: [PERMISSIONS.DASHBOARD_VIEW_OWN_KPI] },
     ],
   },
   {
     label: 'Projects',
     items: [
-      { label: 'Projects', href: '/app/projects', perms: [PERMISSIONS.PROJECTS_VIEW] },
-      { label: 'Daily reports', href: '/app/projects/dprs', perms: [PERMISSIONS.PROJECTS_DPR_SUBMIT, PERMISSIONS.PROJECTS_VIEW] },
-      { label: 'Snags', href: '/app/projects/snags', perms: [PERMISSIONS.PROJECTS_SNAG_MANAGE, PERMISSIONS.PROJECTS_VIEW] },
+      { label: 'All projects', href: '/app/projects', perms: [PERMISSIONS.PROJECTS_VIEW] },
+      // Project workspace: per-project screens exist (/app/projects/:id) but
+      // the workspace landing page does not; disabled until it does.
+      { label: 'Project workspace', href: '/app/projects/workspace', perms: [PERMISSIONS.PROJECTS_VIEW], disabled: true },
+      { label: 'Daily site report', href: '/app/projects/dprs', perms: [PERMISSIONS.PROJECTS_DPR_SUBMIT, PERMISSIONS.PROJECTS_VIEW] },
+      // Quality checks: quality_checks table exists (004), screen not built.
+      { label: 'Quality checks', href: '/app/projects/quality', perms: [PERMISSIONS.PROJECTS_VIEW], disabled: true },
+      // Payment milestones: the milestones_due widget links per-project
+      // milestone screens today; no cross-project list page exists yet.
+      { label: 'Payment milestones', href: '/app/projects/milestones', perms: [PERMISSIONS.PROJECTS_VIEW], disabled: true },
+      { label: 'Snag list', href: '/app/projects/snags', perms: [PERMISSIONS.PROJECTS_SNAG_MANAGE, PERMISSIONS.PROJECTS_VIEW] },
+      // Team on the job: assignment screen not built; site_supervisor scope
+      // will decide its permission when it is.
+      { label: 'Team on the job', href: '/app/projects/team', perms: [PERMISSIONS.PROJECTS_VIEW], disabled: true },
     ],
   },
   {
     label: 'Inventory',
     items: [
-      { label: 'Stock', href: '/app/inventory', perms: [PERMISSIONS.INVENTORY_VIEW] },
-      { label: 'Items', href: '/app/inventory/items', perms: [PERMISSIONS.INVENTORY_VIEW] },
-      { label: 'Requisitions', href: '/app/inventory/requisitions', perms: [PERMISSIONS.INVENTORY_VIEW] },
-      { label: 'Goods receipt', href: '/app/inventory/grn', perms: [PERMISSIONS.INVENTORY_GRN_CREATE] },
-      { label: 'Issues', href: '/app/inventory/issues', perms: [PERMISSIONS.INVENTORY_ISSUE] },
-      { label: 'Transfers', href: '/app/inventory/transfers', perms: [PERMISSIONS.INVENTORY_TRANSFER] },
-      { label: 'Adjustments', href: '/app/inventory/adjustments', perms: [PERMISSIONS.INVENTORY_VIEW] },
+      { label: 'Stock on hand', href: '/app/inventory', perms: [PERMISSIONS.INVENTORY_VIEW] },
+      { label: 'Material requests', href: '/app/inventory/requisitions', perms: [PERMISSIONS.INVENTORY_VIEW] },
+      { label: 'Goods received at the gate', href: '/app/inventory/grn', perms: [PERMISSIONS.INVENTORY_GRN_CREATE] },
+      { label: 'Material issued to work', href: '/app/inventory/issues', perms: [PERMISSIONS.INVENTORY_ISSUE] },
+      { label: 'Transfers between sites', href: '/app/inventory/transfers', perms: [PERMISSIONS.INVENTORY_TRANSFER] },
+      { label: 'Stock adjustment', href: '/app/inventory/adjustments', perms: [PERMISSIONS.INVENTORY_VIEW] },
       { label: 'Purchase orders', href: '/app/inventory/po', perms: [PERMISSIONS.INVENTORY_PO_CREATE, PERMISSIONS.INVENTORY_APPROVE_PO] },
+      // Items catalogue: real route, dropped from the target structure's
+      // eleven-item list; reached from Stock on hand today.
+      { label: 'Items', href: '/app/inventory/items', perms: [PERMISSIONS.INVENTORY_VIEW] },
       { label: 'Vendors', href: '/app/inventory/vendors', perms: [PERMISSIONS.INVENTORY_VENDOR_MANAGE] },
       { label: 'Equipment', href: '/app/inventory/equipment', perms: [PERMISSIONS.INVENTORY_VIEW] },
       // The list pages of all three read with inventory.view and gate their own

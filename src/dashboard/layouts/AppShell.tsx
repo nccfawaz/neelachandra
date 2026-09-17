@@ -39,6 +39,12 @@ export interface AppShellProps {
    * scripts beside them.
    */
   clients?: ClientComponent[]
+  /**
+   * Top-bar global search (29.55). Renders the field only; the /app/search
+   * handler is not built yet, so submitting is a no-op that re-renders the
+   * dashboard rather than a 404.
+   */
+  searchPlaceholder?: string
   children?: Child
 }
 
@@ -86,23 +92,40 @@ export function AppShell(props: AppShellProps) {
         <div class="ncc-shell">
           <nav class="ncc-sidebar" aria-label="Main">
             <a class="ncc-sidebar__brand" href="/app">
-              <span class="ncc-sidebar__mark" aria-hidden="true">
-                N
+              <img
+                class="ncc-sidebar__mark"
+                src="/assets/images/header/logo.svg#arch"
+                alt=""
+                width="34"
+                height="43"
+              />
+              <span>
+                <span class="ncc-sidebar__wordmark">NEELACHANDRA</span>
+                <span class="ncc-sidebar__wordmark-sub">STAFF PLATFORM</span>
               </span>
-              <span>Neelachandra</span>
             </a>
             {groups.map((group) => (
               <div>
                 <div class="ncc-sidebar__group">{group.label}</div>
-                {group.items.map((item) => (
-                  <a
-                    class="ncc-navlink"
-                    href={item.href}
-                    aria-current={item.href === active ? 'page' : undefined}
-                  >
-                    {item.label}
-                  </a>
-                ))}
+                {group.items.map((item) =>
+                  item.disabled === true ? (
+                    <span
+                      class="ncc-navlink ncc-navlink--disabled"
+                      aria-disabled="true"
+                      title="Not built yet"
+                    >
+                      {item.label}
+                    </span>
+                  ) : (
+                    <a
+                      class="ncc-navlink"
+                      href={item.href}
+                      aria-current={item.href === active ? 'page' : undefined}
+                    >
+                      {item.label}
+                    </a>
+                  )
+                )}
               </div>
             ))}
           </nav>
@@ -110,6 +133,14 @@ export function AppShell(props: AppShellProps) {
           <div class="ncc-main">
             <header class="ncc-topbar">
               <h1 class="ncc-topbar__title">{props.title}</h1>
+              <form class="ncc-topbar__search" action="/app" method="get" role="search">
+                <input
+                  type="search"
+                  name="q"
+                  placeholder={props.searchPlaceholder ?? 'Search projects, vendors, invoices…'}
+                  aria-label="Search"
+                />
+              </form>
               <div class="ncc-topbar__right">
                 <a href="/app/account/sessions">{props.user.fullName}</a>
                 <form method="post" action="/logout">

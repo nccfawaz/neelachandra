@@ -6167,3 +6167,118 @@ accordingly. Per §7.6, the switch itself is the irreversible step:
 verified staging, maintenance window, final public_html archive, DNS
 TTL lowered 24h ahead, then remove-and-deploy, verify-routes against
 production, rollback to a static export of the archive on any failure.
+
+### 29.55 Dashboard shell: the nav record, the disabled-item class, and the fallback-search question, 2026-09-17
+
+**The target structure against the tree.** The owner's target design names
+three sidebar groups (Overview, Projects, Inventory), a top bar with search
+and a brand mark, and eight KPI tiles over a site-progress list. What the
+tree held: a permission-filtered sidebar driven by `src/dashboard/nav.ts`
+already existed with the same three groups (among others) under different
+labels; `visibleNav` filters by permission set, never by role name, and
+`tests/nav.test.ts` pins the invariant that a visible link never 403s.
+
+**The three destination classes found.** Of the target's 19 named
+destinations, eleven were live routes relabelled (My dashboard = /app,
+
+Alerts and reminders = /app/notifications, All projects, Daily site report =
+/app/projects/dprs, Snag list = /app/projects/snags, Stock on hand =
+/app/inventory, Material requests = requisitions, Goods received at the
+gate = grn, Material issued to work = issues, Transfers between sites =
+transfers, Stock adjustment = adjustments). One was live but outside the
+target list (Items catalogue) and is kept with a note. **Four were not
+routes at all:** /app/projects/workspace, /app/projects/quality,
+/app/projects/milestones, /app/projects/team — quality_checks and
+project_milestones tables exist (migration 004) but no screens. These
+render as visibly disabled items: `disabled: true` in the nav data, a
+`<span aria-disabled="true" class="ncc-navlink--disabled">` (muted,
+italic, non-interactive) instead of an anchor, so a link to a 404 is never
+emitted. The route-existence sweep in tests/nav.test.ts skips disabled
+items **by design**, and that exemption is pinned non-vacuous by two tests:
+the disabled list equals exactly those four hrefs, and "skips at least one
+disabled item" fails if the class empties (the empty-enumeration rule,
+CLAUDE.md).
+
+**No role-switcher.** None exists and none was added; an owner question is
+not raised because no requirement for one has been stated.
+
+**The top bar.** Brand mark = the arch glyph crop of
+`assets/images/header/logo.svg` via `/assets/images/header/logo.svg#arch`
+(viewBox 0 0 250 319, appended to the original file — the file is not
+edited otherwise), with NEELACHANDRA / STAFF PLATFORM as live text beside
+it. Search field renders in the top bar; **/app/search is not built**, so
+submitting is a GET to /app, which re-renders the dashboard rather than
+404ing — the search is recorded here as pending its handler, not silently
+dead.
+
+Proven by tests/nav.test.ts (structure, disabled class, route sweep) and
+the gates: unit 360/19, integration 376/32, typecheck 0, /src/ 80.
+
+### 29.56 KPI tiles: six wired against named sources, margin refused as a percentage, 2026-09-17
+
+The owner's target design wants eight KPI tiles. Each was checked against
+the tree before being wired; nothing renders a number without a named
+source, and a tile with no source renders an em dash — never a figure that
+could be read as real.
+
+**Wired (7):** active jobs = `count(projects where status in
+('mobilising','in_progress','snagging'))` on `projects` (004), scoped to
+project assignments for scoped roles; site reports due today = the
+`dpr_status` widget's own query — active projects with no
+`daily_progress_reports` row yesterday; approvals waiting on me = count of
+the four approval queues the `pending_approvals` widget already enumerates
+(expenses, POs, quotes, leave) — count only, never a money value, safe for
+any DASHBOARD_VIEW_OWN_KPI holder; open material requests = count of
+`material_requisitions where status = 'open'` (005), scoped; work in hand =
+`sum(project_milestones.amount_paise where status in ('pending',
+'ready_to_certify'))` on scoped projects; billed this month and collected
+this month are one query each on `client_invoices` (total_paise and
+received_paise, invoice_date in the current month, status not in
+draft/cancelled), gated on `finance.view_company_pnl` ALONE (29.12; no OR
+of permissions).
+
+**Refused (1):** gross margin. Contract value − (actual + committed) is
+the rule-10 figure, **and §29.26 established that booked labour never
+reaches v_project_actual** (contractor-bill posting writes no
+expense_lines; accrued staff cost does not exist in the codebase), so any
+margin the tile could compute today is wrong by exactly the labour cost —
+the largest term in a builder's P&L. It renders an em dash with a muted
+"not wired yet" label; the reason is this section. A percentage would be
+worse than a number: it would look authoritative.
+
+**Role visibility.** The tiles respect the same permission set the widgets
+already use: the money tiles (billed/collected) require
+`finance.view_company_pnl` alone, matching 29.12's rule that a
+company-scale money figure is gated by its money permission alone; a
+project_manager therefore sees the tile absent, not zeroed — the rule-10
+pattern. Proven by tests/integration/kpi-tiles.test.ts: each wired tile
+counts real inserts (including the zero-row case, where the COALESCEd
+aggregate returns 0 and not NULL — CLAUDE.md's SUM-over-no-rows rule), and
+a project_manager session renders neither billed nor collected.
+
+Gates at record: unit 360/19, integration 382/33, e2e 4/1, typecheck 0,
+/src/ 80.
+
+### 29.57 Static assets and the glyph crop: the handler existed, the fragment did not, 2026-09-17
+
+The Hono app already serves `assets/images/header/logo.svg`:
+`src/public/routes.ts` mounts `publicSite.get('/assets/*')` (line 61)
+which tries the repo root first and then `public/`, through
+`loadStatic` in `src/public/staticFiles.ts` (containment-checked,
+cache-with-ETag, MIME from extension — `.svg` maps to `image/svg+xml`).
+The handler needed no change. What was added is the **glyph fragment**:
+`assets/images/header/logo.svg` gained an `<view id="arch"
+viewBox="0 0 250 319"/>` element appended inside the root `<svg>`, so
+`#arch` crops the 250-wide arch glyph from the 1367×319 lockup. The
+original file is otherwise byte-untouched — the freeze constraint covers
+it.
+
+Proven by `curl -sI` against the live dev server (200,
+`content-type: image/svg+xml`, etag) and by
+tests/integration/logo-serving.test.ts, which requests the asset through
+the real router, asserts 200 + `image/svg+xml` + the `#arch` view element
+in the body, and was watched failing (404) with the route temporarily
+broken — the failure output is quoted in the task report. The full
+lockup in the sidebar would cost roughly 96px of extra header height at
+the 319px glyph aspect (or a horizontal lockup around 96×22 CSS px); not
+implemented.

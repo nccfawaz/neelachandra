@@ -333,6 +333,65 @@ code {
   color: var(--ncc-text-muted);
 }
 
+/* Top-bar global search (29.55). Renders always; /app/search is not built,
+   so submitting re-renders the dashboard rather than 404ing. */
+.ncc-topbar__search {
+  flex: 1;
+  max-width: 420px;
+  margin-left: auto;
+}
+
+.ncc-topbar__search input[type='search'] {
+  width: 100%;
+  padding: 0.45rem 0.8rem;
+  border: 1px solid var(--ncc-border);
+  border-radius: 8px;
+  background: var(--ncc-surface);
+  font: inherit;
+  font-size: 0.86rem;
+  color: var(--ncc-text);
+}
+
+.ncc-topbar__search input[type='search']:focus {
+  outline: 2px solid var(--ncc-accent, #f48120);
+  outline-offset: 1px;
+}
+
+/* Sidebar brand lockup (29.55): the arch glyph crop of logo.svg, live text
+   for NEELACHANDRA / STAFF PLATFORM. */
+.ncc-sidebar__brand img.ncc-sidebar__mark {
+  display: block;
+  width: 34px;
+  height: 43px;
+}
+
+.ncc-sidebar__wordmark {
+  display: block;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  color: var(--ncc-text);
+  line-height: 1.2;
+}
+
+.ncc-sidebar__wordmark-sub {
+  display: block;
+  font-size: 0.55rem;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  color: var(--ncc-text-muted);
+  line-height: 1.3;
+}
+
+/* A nav destination that is not built yet (29.55): muted, non-interactive,
+   visibly distinct from a link so nobody reads it as broken. */
+.ncc-navlink--disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  pointer-events: none;
+  font-style: italic;
+}
+
 .ncc-content {
   padding: 1.4rem 1.5rem 3rem;
   max-width: 1320px;
