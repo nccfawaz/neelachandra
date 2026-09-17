@@ -412,3 +412,14 @@ config that is supposed to enforce it. The .htaccess protection rules now
 deny CLASSES (*.md, *.sql, *.ts, *.tsx, *.json) rather than enumerating
 filenames, because a name-based deny covers only the files someone
 remembered, and the leak was three files nobody remembered.
+
+## A markup test does not prove appearance (29.60)
+
+The /app stylesheet is vite's minified build of `src/dashboard/assets/css/` into
+`public/assets/css/` — a build step sits between the edited source and what the
+browser downloads. Three committed visual fixes passed every test while the
+served stylesheet stayed years old. Rule: any styling task must assert the
+**served** stylesheet (fetch it through the router — `served-css.test.ts`) or
+computed browser values (`sidebar-browser.test.ts`), never only renderToString
+markup. `dev-stack.mjs` runs `vite build` on every start; if you edit the CSS
+outside that script, rebuild before believing anything you see.

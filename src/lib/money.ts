@@ -45,6 +45,19 @@ export function formatPaiseAsRupees(paise: number | null | undefined): string {
   return inrFormatter.format(paiseToRupees(Number(paise)))
 }
 
+/** "₹12,34,567.00" — the rupee-symbol form used by the dashboard KPI tiles. */
+const inrSymbolFormatter = new Intl.NumberFormat('en-IN', {
+  style: 'currency',
+  currency: 'INR',
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+})
+
+export function formatPaiseAsRupeesSymbol(paise: number | null | undefined): string {
+  if (paise === null || paise === undefined) return ''
+  return inrSymbolFormatter.format(paiseToRupees(Number(paise)))
+}
+
 /** "Rs 12,34,567.00", the form used in tables and on printed documents. */
 export function formatPaiseAsRupeesWithRs(paise: number | null | undefined): string {
   if (paise === null || paise === undefined) return ''

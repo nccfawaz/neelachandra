@@ -260,10 +260,12 @@ code {
 }
 
 .ncc-sidebar__lockup {
+  /* Sized by container, never a derived pixel width (DECISIONS 29.60): the
+     earlier fixed 190px assumed a ~197px rail. width:100% inside the padded
+     brand block makes overflow impossible at any rail width. */
   display: block;
-  /* Sidebar inner width: 232px - 2 × 1.1rem padding ≈ 197px usable. The
-     asset is 1367×319, so at 190px wide the natural height is ≈ 44px. */
-  width: 190px;
+  width: 100%;
+  max-width: 100%;
   height: auto;
 }
 

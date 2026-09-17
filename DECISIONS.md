@@ -6350,3 +6350,40 @@ the discipline that the test lands **before** the entry, in the same
 commit, and the gate counts in the entry are copied from the terminal,
 not from memory. The observed counts at 9cb777e were unit 360/19 and
 integration 376/32 — the "382/33" figure was never produced by any run.
+
+### 29.60 The stylesheet was never served: three visual fixes invisible in a live browser, 2026-09-17
+
+The light sidebar, the logo sizing and the disabled-item block layout from 29.59
+passed every test and were invisible in a live browser. Cause, proven not
+reasoned: the /app layout links `/assets/css/dashboard.css`, which the static
+handler serves from **public/assets/css/dashboard.css** — vite's minified BUILD
+of src/dashboard/assets/css/dashboard.css (vite.config.ts, `npm run
+build:client`, `emptyOutDir: false`). The build had not run since commit
+4660717, so the served file was the old dark-navy stylesheet while every
+session edited the source. The served copy lacked `#f5f7fa`,
+`.ncc-sidebar__lockup` and `span.ncc-navlink` entirely (grep count 0 vs 3 in
+the source). The markup changes were visible because JSX is served directly by
+tsx; only the stylesheet had a build step between edit and browser.
+
+Fixes, each proven:
+- `dev-stack.mjs` now runs `vite build` on every start, so an edited source
+  stylesheet can never serve stale again (the earlier `EFTYPE` spawn failure
+  of `node_modules/vite/bin/vite.js` is why it goes through `process.execPath`).
+- The served-CSS tripwire `tests/integration/served-css.test.ts` fetches every
+  local stylesheet the layout references through the real router, asserts 200 +
+  `text/css` + the three required declarations, with a non-zero floor on links
+  found. Red proof: reverting `#f5f7fa` → `#1a1f27` fails with
+  `served CSS must contain sidebar background #f5f7fa`; restored, green (2/2).
+- The logo is sized by container (`width:100%; max-width:100%; height:auto`)
+  after the browser measured the rail at 232px and the fixed 190px assumption
+  produced a 190×22.5 collapsed render when the image URL 404ed. Computed
+  values in Chromium (tests/e2e/sidebar-browser.test.ts): sidebar
+  `rgb(245,247,250)`, width 232px, logo 195.8×45.7 (exact 1367:319 aspect),
+  disabled items `display:block` padding 7.04px 17.6px.
+- The KPI money tile now renders `formatPaiseAsRupeesSymbol` — `₹12,34,567.00`
+  (Intl en-IN currency INR). The pinning test requires the ₹ symbol; a bare
+  grouped number fails. Tables keep the `Rs`/compact forms.
+
+Class recorded in CLAUDE.md: a markup test does not prove appearance; any
+styling task must assert the SERVED stylesheet (or computed browser values),
+because a build step between source and browser makes green tests lie.

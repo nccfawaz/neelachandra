@@ -13,8 +13,11 @@
 // it when nothing is listening on 3307.
 
 import net from 'node:net'
-import { spawn } from 'node:child_process'
-import process from 'node:process'
+import { spawn, execFile } from 'node:child_process'
+import { promisify } from 'node:util'
+import { stat } from 'node:fs/promises'
+
+const exec = promisify(execFile)
 
 const MARIADB_PORT = 3307
 // A stale machine- or user-level PORT variable poisons this: the child
@@ -79,6 +82,17 @@ async function main() {
   // otherwise win over .env (run doc). Inherit stdio so tsx watch's output
   // and the app's logs are visible. Ctrl-C stops the server; MariaDB, started
   // detached, stays up.
+  //
+  // The stylesheet is MINIFIED FROM src/dashboard/assets/css by vite into
+  // public/assets/css (vite.config.ts; `npm run build:client`). A session that
+  // edits the source CSS without rebuilding serves a stale stylesheet forever,
+  // which is exactly what happened across three sessions of sidebar work
+  // (DECISIONS 29.60) — so the build runs here, before the server, on every
+  // start. It takes about a second and makes staleness impossible.
+  await exec(process.execPath, ['node_modules/vite/bin/vite.js', 'build'], {
+    stdio: 'inherit',
+  })
+
   const child = spawn(
     process.execPath,
     ['node_modules/tsx/dist/cli.mjs', 'watch', '--env-file=.env', 'src/server.ts'],
