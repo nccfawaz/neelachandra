@@ -92,13 +92,23 @@ export function AppShell(props: AppShellProps) {
         <div class="ncc-shell">
           <nav class="ncc-sidebar" aria-label="Main">
             <a class="ncc-sidebar__brand" href="/app">
-              <img
-                class="ncc-sidebar__mark"
-                src="/assets/images/header/logo.svg#arch"
-                alt=""
-                width="34"
-                height="43"
-              />
+              {/* CSS-only crop of the arch glyph (29.57, corrected): the full
+                  logo.svg in a fixed box that clips everything but the left
+                  250×319 arch region. No <view> fragment, no edit to the
+                  asset — the file stays byte-identical to its committed
+                  state. */}
+              {/* CSS-only crop of the arch glyph (29.57, corrected): the full
+                  logo.svg in a fixed box that clips everything but the left
+                  250×319 arch region. No <view> fragment, no edit to the
+                  asset — the file stays byte-identical to its committed
+                  state. */}
+              <span class="ncc-sidebar__mark-wrap" aria-hidden="true">
+                <img
+                  class="ncc-sidebar__mark"
+                  src="/assets/images/header/logo.svg"
+                  alt=""
+                />
+              </span>
               <span>
                 <span class="ncc-sidebar__wordmark">NEELACHANDRA</span>
                 <span class="ncc-sidebar__wordmark-sub">STAFF PLATFORM</span>

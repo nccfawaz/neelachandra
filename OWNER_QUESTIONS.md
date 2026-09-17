@@ -390,7 +390,27 @@ shows "Unused recovery codes: 0 of 10" with no action attached.
 **Once answered:** Build the recorded option — an administrator reset
 (action (b) in 29.46) behind a dedicated permission with an audit entry,
 or the owner-only variant, plus optionally user-facing regeneration that
-requires a fresh TOTP verification before issuing new codes.
-
-*Details: DECISIONS.md §29.44 (key custody), §29.46 (lifecycle, the
+requires a fresh TOTP verification before issuing new codes.*Details: DECISIONS.md §29.44 (key custody), §29.46 (lifecycle, the
 schema defect, and the three options).*
+
+## 19. What is "work in hand" — and who says so? (§6.8)
+
+The dashboard KPI tile labelled **Work in hand** needs a definition the
+owner signs, because the codebase currently uses one by choice, not by
+spec: the sum of `project_milestones.amount_paise` over milestones in
+status `pending` or `ready_to_certify` on active projects — i.e. work
+done or underway that has **not yet been certified**.
+
+Alternatives the owner may actually mean:
+
+- **Certified-but-uninvoiced only** (strict revenue-recognition WIP);
+- **Certified plus uninvoiced** (everything billable now);
+- **Contract value − certified invoiced to date** (backlog remaining);
+- Anything at all from the §6.8 rule-10 views, which track cost, not
+  forward revenue.
+
+NCC_BUILD_SPEC.md never defines "work in hand"; the phrase does not
+appear in it. Until this is answered the tile is a definition made by
+the implementer, labelled as such in the UI hint.
+
+

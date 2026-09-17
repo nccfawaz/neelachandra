@@ -357,12 +357,25 @@ code {
   outline-offset: 1px;
 }
 
-/* Sidebar brand lockup (29.55): the arch glyph crop of logo.svg, live text
-   for NEELACHANDRA / STAFF PLATFORM. */
-.ncc-sidebar__brand img.ncc-sidebar__mark {
+/* Sidebar brand lockup (29.57, corrected): CSS-only crop of the arch glyph
+   from logo.svg. The asset is 1367×319; the arch occupies the left 250px.
+   The wrapper clips; the img is scaled so the arch fills the visible box:
+   height 43px ⇒ scale 43/319 ⇒ arch width 250 × (43/319) ≈ 33.7px ⇒ box 34px. */
+.ncc-sidebar__mark-wrap {
   display: block;
   width: 34px;
   height: 43px;
+  overflow: hidden;
+  flex: none;
+}
+
+.ncc-sidebar__brand img.ncc-sidebar__mark {
+  display: block;
+  /* Full asset scaled to 43px tall; the arch region lands exactly in the
+     34×43 box, the orange wordmark and green rule are clipped away. */
+  height: 43px;
+  width: auto;
+  max-width: none;
 }
 
 .ncc-sidebar__wordmark {
