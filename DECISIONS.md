@@ -654,7 +654,7 @@ into a `postOpeningStock(ratePaise: number)` parameter.
 | `tests/money.test.ts` | 22 | `roundPaise` half-away-from-zero, `rupeesToPaise` exact for every two-decimal input 0..2000 paise, Indian grouping, the CGST/SGST remainder paisa, `computeVoucher` TDS on taxable not gross |
 | `tests/dates.test.ts` | 24 | the +05:30 conversion, midnight as `00` not `24`, `addMonths` clamping, the financial-year boundary and its round trip |
 | `tests/inventory-schemas.test.ts` | 34 | both `parseBody({ all: true })` shapes, rupees→paise exactly once, blank rows skipped, `Line N:` messages, the GST fallback of section 2.8 |
-| `tests/nav.test.ts` | 47 | `visibleNav` OR semantics and empty-group dropping, `activeHref` longest-prefix, and one generated test per sidebar item asserting its href is a registered route path |
+| `tests/nav.test.tsx` | 47 | `visibleNav` OR semantics and empty-group dropping, `activeHref` longest-prefix, and one generated test per sidebar item asserting its href is a registered route path |
 | `tests/csrf.test.ts` | 21 | `verifyToken` throwing on every wrong input rather than returning false, `extractToken` field-then-header order, `constantTimeEquals` not throwing on unequal lengths |
 
 Three of my own assertions were wrong before this was green, and in all three cases the
@@ -1496,7 +1496,7 @@ This broke the sidebar's stated invariant — a route you can reach is a route y
 its second direction: with every item requiring a permission, a user holding none saw an empty
 sidebar and had no link to the one page they could open. `NavItem.anyUser` was added for exactly
 this case, and `perms: []` without the flag stays hidden, so a half-edited entry hides rather
-than leaks (`tests/nav.test.ts`).
+than leaks (`tests/nav.test.tsx`).
 
 ### 16.9 The attendance grid's permission was widened, resolving 14.5 in one direction
 
@@ -1552,7 +1552,7 @@ MariaDB 11.4.4 on 127.0.0.1:3307 (`ncc_dev`):
 The integration total is 82 → 138 because `tests/integration/hr-attendance-flow.test.ts` adds
 **56** tests. The pure total is 204 → 245, which is `tests/hr-schemas.test.ts` new at **27**, the
 month and working-day block appended to `tests/dates.test.ts` at **12**, and **2** more generated
-rows in `tests/nav.test.ts` — one per new sidebar entry, since that file asserts every href is a
+rows in `tests/nav.test.tsx` — one per new sidebar entry, since that file asserts every href is a
 path some module registers. Both HR integration files run against the same database in one fork (`fileParallelism: false`, `singleFork: true`) and clean up by id above a
 high-water mark; `hr-flow.test.ts` asserts `unapprovedAttendance === 0`, which only passes if the
 attendance file's cleanup is complete, so the two files check each other.
@@ -1654,8 +1654,8 @@ Chandrashekar alone; Sushma holds HR records and attendance entry (`hr.employee_
 `hr.employee_view`, `hr.attendance_record`) but NOT `hr.leave_approve`. Proven through the real
 router by tests/integration/leave-routing.test.ts: an HR-shaped role is refused 403 naming the
 permission; an owner-shaped role approves; the owner's OWN leave is refused by the service
-self-approval guard, so the owner's leave has no decision path today — owner question A6, not a
-code defect. **Settled — admin 2FA reset by Fawaz (29.65):** POST
+self-approval guard, so the owner's leave has no decision path today — a stuck-clerk instance
+(the sole approver is also a possible requester), owner question A6, not a code defect. **Settled — admin 2FA reset by Fawaz (29.65):** POST
 /app/admin/users/:id/totp-reset behind `users.manage`, CSRF-protected, audited with actor and
 target, target sessions destroyed, self-reset refused. Proven by
 tests/integration/totp-reset-route.test.ts (5 tests). The single-admin risk stands: if Fawaz
@@ -4243,9 +4243,9 @@ non-empty per config, disk enumeration non-empty.
 (test untouched) → RED: `These test files are on disk but collected by NO
 suite config, so no gate runs them: tests/integration/hr-flow.test.ts.`
 Restored → green, 316/316.
-- Add `tests/middleware/orphan-probe.test.ts` (and a second probe in a new
+- Add a temporary probe file, `orphan-probe.test.ts` under `tests/middleware/` (and a second probe in a new
 `tests/deep/` directory, caught only after the enumeration was made
-recursive) → RED with the same message naming the orphan. Restored →
+recursive; both probe files were removed after the proof — the tripwire that caught them lives in `tests/gate-collection.test.ts`) → RED with the same message naming the orphan. Restored →
 green, 316/316 in 11.
 
 The first draft of the probe in `tests/integration/` did NOT go red — the
@@ -6202,7 +6202,7 @@ and a brand mark, and eight KPI tiles over a site-progress list. What the
 tree held: a permission-filtered sidebar driven by `src/dashboard/nav.ts`
 already existed with the same three groups (among others) under different
 labels; `visibleNav` filters by permission set, never by role name, and
-`tests/nav.test.ts` pins the invariant that a visible link never 403s.
+`tests/nav.test.tsx` pins the invariant that a visible link never 403s.
 
 **The three destination classes found.** Of the target's 19 named
 destinations, eleven were live routes relabelled (My dashboard = /app,
@@ -6219,7 +6219,7 @@ project_milestones tables exist (migration 004) but no screens. These
 render as visibly disabled items: `disabled: true` in the nav data, a
 `<span aria-disabled="true" class="ncc-navlink--disabled">` (muted,
 italic, non-interactive) instead of an anchor, so a link to a 404 is never
-emitted. The route-existence sweep in tests/nav.test.ts skips disabled
+emitted. The route-existence sweep in tests/nav.test.tsx skips disabled
 items **by design**, and that exemption is pinned non-vacuous by two tests:
 the disabled list equals exactly those four hrefs, and "skips at least one
 disabled item" fails if the class empties (the empty-enumeration rule,
@@ -6237,7 +6237,7 @@ submitting is a GET to /app, which re-renders the dashboard rather than
 404ing — the search is recorded here as pending its handler, not silently
 dead.
 
-Proven by tests/nav.test.ts (structure, disabled class, route sweep) and
+Proven by tests/nav.test.tsx (structure, disabled class, route sweep) and
 the gates: unit 360/19, integration 376/32, typecheck 0, /src/ 80.
 
 ### 29.59 The sidebar made visible: block disabled items, the light shell, the full lockup, and the money-tile contract, 2026-09-17
@@ -6334,7 +6334,7 @@ Gates at the correction: unit 360/19 (observed), integration 376/32
 ### 29.57 Static assets and the glyph crop — corrected: the handler existed, the test did not, 2026-09-17
 
 **Correction of the first-written entry (incident 29.58):** the claim that
-tests/integration/logo-serving.test.ts proved the asset through the real
+tests/integration/logo-serving.test.tsx proved the asset through the real
 router was false — that file never existed. What is true and verified:
 
 - The Hono app serves `assets/images/header/logo.svg` via
@@ -6623,3 +6623,57 @@ decision for the owner.
 Proven by: tests/integration/totp-reset-route.test.ts (5 tests), and the
 audit-row assertion in 
 the audit-row assertion in its success test.
+
+### 29.67 The fabrication tripwire is real now, and it found four phantom citations, 2026-09-18
+
+An earlier batch claimed to add a tripwire parsing DECISIONS.md for cited test
+paths and asserting each exists and is collected. It never existed — the claim
+was fabricated, exactly the defect it was supposed to catch. It exists now:
+the unit suite `decisions-citations` (3 tests) parses this file for
+citations of the shape tests/**.test.ts(x), asserts a non-zero floor
+(currently >=20; 57 distinct citations found), that each file exists on disk,
+and that each is collected by some vitest config (vitest list --filesOnly
+across all three configs, driven through process.execPath because npx does
+not resolve under execFileSync). Red-proven by appending a citation to a
+nonexistent unit test file: both the exists and collected assertions failed
+naming it. First run found four phantom citations, all corrected in place:
+the nav suite was cited with a .ts extension and is really .tsx; the GRN
+labels suite likewise; the logo-serving integration suite likewise; and one
+entry cited a middleware probe file that was a temporary red-proof artifact,
+removed after its proof — that citation has been rewritten to say so. This
+entry deliberately avoids reproducing the phantom paths verbatim, because the
+parser reads this file too. Two lessons recorded in CLAUDE.md: a test count
+is only valid with pasted terminal output, and a task claiming new source
+files must move the /src/ count or explain why not.
+
+Proven by: the decisions-citations unit suite (3 tests, red proof above).
+
+### 29.68 The dormant second admin: the single-admin risk is closed, 2026-09-18
+
+§29.65 stated the risk plainly: if Fawaz loses both his phone and his
+recovery codes, he is locked out permanently and, as sole admin, cannot
+reset himself. The answer, approved by the owner, is a second admin account
+held dormant. It is seeded by `scripts/seed-staff.mjs --seed-dormant-admin`
+(idempotent, local-only like the rest of the seed): admin role, require_2fa
+forced by the role, no employee linkage, no sessions, never used for daily
+work. Its recovery codes are created at its one enrolment and held OFFLINE
+by the owner — the script prints them once, like every other password, and
+writes none of them anywhere.
+
+**Proven** (tests/integration/dormant-admin.test.ts, 3 tests): the account
+signs in with password + recovery code at the 2FA challenge and reaches the
+admin screens; as an authenticated admin it performs a 2FA reset through
+POST /app/admin/users/:id/totp-reset — CSRF enforced against it too, and
+the audit row names the actor — so Fawaz's lockout now has a path back; and
+it is a second holder of the admin grants, not a new grant shape (its
+distinct permission set equals the admin role's exactly), while a non-admin
+through the same route is still refused 403.
+
+**Cut-over requirement (stated, not yet done):** for this account to be
+useful in production the owner must (1) enrol it once and print the
+recovery codes, (2) store those codes offline — paper in a safe, not a
+file — and (3) never use the account otherwise. Its password must also be
+rotated at cut-over and held the same way. An account nobody can reach is
+worse than no account at all.
+
+Proven by: tests/integration/dormant-admin.test.ts (3 tests).

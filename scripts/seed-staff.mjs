@@ -17,10 +17,15 @@
 //   - approval_limits is NOT touched (§8.2): seeding a person grants nothing
 //     about money authority.
 //
-// Usage: node scripts/seed-staff.mjs [--reset-passwords]
+// Usage: node scripts/seed-staff.mjs [--reset-passwords] [--seed-dormant-admin]
 //   --reset-passwords  regenerate every password and print the new values to
 //     THIS terminal (use it if an earlier output was ever shared). Runs on the
 //     operator's own machine so the values never pass through any chat or log.
+//   --seed-dormant-admin  also seed the dormant second admin (DECISIONS
+//     29.68): the break-glass account that can reset Fawaz's 2FA if he loses
+//     both phone and recovery codes. Its recovery codes print ONCE to this
+//     terminal and are held offline by the owner; they are never written to
+//     any tracked file. The account is otherwise unused.
 
 import fs from 'node:fs'
 import crypto from 'node:crypto'
@@ -77,6 +82,7 @@ const PEOPLE = [
 ]
 
 const RESET_PASSWORDS = process.argv.includes('--reset-passwords')
+const DORMANT_ADMIN = process.argv.includes('--seed-dormant-admin')
 
 const conn = await mysql.createConnection({
   host,
@@ -150,6 +156,50 @@ try {
 
       // No audit_log row: the seed writes bootstrap state, not a user action,
       // and a re-run must not spam the log (same policy as seed-test-login).
+      await conn.commit()
+    } catch (err) {
+      await conn.rollback().catch(() => {})
+      throw err
+    }
+  }
+
+  // --- The dormant second admin (DECISIONS 29.68, only with the flag) ---
+  if (DORMANT_ADMIN) {
+    const DORMANT_EMAIL = 'dormant.admin@neelachandra.dev'
+    const [[adminRole]] = await conn.query('SELECT id FROM roles WHERE `key` = ?', ['admin'])
+    if (!adminRole) {
+      console.error("No 'admin' role found. Run the migrations first.")
+      process.exit(1)
+    }
+    await conn.beginTransaction()
+    try {
+      const [[existing]] = await conn.query('SELECT id FROM users WHERE email = ?', [DORMANT_EMAIL])
+      let dormantId
+      const password = process.env.NCC_DORMANT_PASSWORD || generatePassword()
+      const hash = await argonHash(password)
+      if (existing) {
+        dormantId = existing.id
+        await conn.execute(
+          `UPDATE users SET full_name = ?, password_algo = 'argon2id', status = 'active',
+             must_change_password = 1, failed_login_count = 0, locked_until = NULL,
+             password_hash = COALESCE(CASE WHEN ? THEN ? END, password_hash)
+           WHERE id = ?`,
+          ['Dormant Admin (break-glass)', RESET_PASSWORDS ? 1 : 1, hash, dormantId]
+        )
+      } else {
+        const [res] = await conn.execute(
+          `INSERT INTO users (email, full_name, password_hash, password_algo,
+             must_change_password, password_changed_at, status)
+           VALUES (?, 'Dormant Admin (break-glass)', ?, 'argon2id', 1, NOW(), 'active')`,
+          [DORMANT_EMAIL, hash]
+        )
+        dormantId = res.insertId
+      }
+      await conn.execute('DELETE FROM user_roles WHERE user_id = ?', [dormantId])
+      await conn.execute('INSERT INTO user_roles (user_id, role_id) VALUES (?, ?)', [dormantId, adminRole.id])
+      // require_2fa = 1 on the admin role already forces enrolment at first
+      // sign-in; nothing else is configured. No sessions exist for it.
+      console.log(`${DORMANT_EMAIL}  role=admin (dormant, break-glass)  password=${password}`)
       await conn.commit()
     } catch (err) {
       await conn.rollback().catch(() => {})

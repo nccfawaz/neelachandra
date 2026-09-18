@@ -119,8 +119,12 @@ accepted out-of-system.
 including for an HR-shaped role holding records and attendance); the owner's
 own request has no decision path.
 
-**Once answered:** Either a second grant is added, or the policy "owner leave
-is recorded, not approved" is written into the module.
+**Once answered:** The options on the table: (a) the owner self-approves as
+a recorded exception (the self-approval guard would need an explicit,
+audited carve-out); (b) owner leave routes to Sushma as a one-off second
+approver; (c) owner leave is recorded, not approved — the request is
+accepted out-of-system and marked so. Say which; each changes a different
+line of code.
 
 *Details: DECISIONS.md §29.64.*
 
