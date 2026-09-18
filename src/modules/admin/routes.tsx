@@ -254,6 +254,16 @@ admin.get('/app/admin/users/:id', requirePermission(PERMISSIONS.USERS_MANAGE), a
           <p class="ncc-hint">
             Suspending signs the person out everywhere immediately. It does not delete anything they created.
           </p>
+          {target.totp_confirmed_at ? (
+            <form method="post" action={`/app/admin/users/${id}/totp-reset`} class="ncc-toolbar">
+              <input type="hidden" name="nc_csrf" value={session.csrfToken} />
+              <button class="ncc-btn" type="submit">
+                Reset two factor
+              </button>
+            </form>
+          ) : (
+            <p class="ncc-hint">Two factor is not enrolled on this account.</p>
+          )}
         </Panel>
 
         <Panel title="Roles">
@@ -361,6 +371,25 @@ admin.get('/app/admin/users/:id', requirePermission(PERMISSIONS.USERS_MANAGE), a
         </Panel>
       ) : null}
     </AppShell>
+  )
+})
+
+/**
+ * Admin two-factor reset (DECISIONS 29.65). Gated to users.manage (the admin
+ * account permission), CSRF-protected by the global form guard, audited with
+ * actor and target, and the target's sessions all die. See resetTotp.
+ */
+admin.post('/app/admin/users/:id/totp-reset', requirePermission(PERMISSIONS.USERS_MANAGE), async (c) => {
+  const id = Number(c.req.param('id'))
+  if (!Number.isInteger(id)) throw new NotFoundError('No such user.')
+  await readBody(c)
+
+  const result = await svc.resetTotp(c.get('db'), actorOf(c), id)
+  return c.redirect(
+    `/app/admin/users/${id}?ok=${encodeURIComponent(
+      `Two factor reset for ${result.email}. They must enrol again at next sign-in; all their sessions were signed out.`
+    )}`,
+    303
   )
 })
 

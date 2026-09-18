@@ -73,6 +73,62 @@ export async function createUser(
   return { userId, inviteLink }
 }
 
+/**
+ * Admin two-factor reset (DECISIONS 29.65, spec 4.5).
+ *
+ * This is a privilege-escalation path by design: it exists so that a lost
+ * authenticator is a recoverable incident rather than a permanent lockout.
+ * Every use is audited with both actor and target, and every live session of
+ * the target dies in the same transaction, so a stolen phone cannot browse on
+ * through a session opened before the reset.
+ *
+ * There is deliberately no self-reset: an administrator who resets their own
+ * 2FA has bypassed the challenge entirely. A second admin must do it.
+ */
+export async function resetTotp(
+  db: Db,
+  actor: Actor,
+  targetUserIdOrEmail: number | string
+): Promise<{ email: string }> {
+  const target =
+    typeof targetUserIdOrEmail === 'number'
+      ? await db
+          .selectFrom('users')
+          .select(['id', 'email', 'totp_confirmed_at'])
+          .where('id', '=', targetUserIdOrEmail)
+          .executeTakeFirst()
+      : await userByEmail(db, targetUserIdOrEmail)
+  if (!target) throw new NotFoundError('No such user.')
+  const targetId = Number(target.id)
+  if (targetId === actor.userId) {
+    throw new BadRequestError(
+      'You cannot reset your own two factor. Ask another administrator — resetting your own would skip the challenge it exists to enforce.'
+    )
+  }
+  if (!('totp_confirmed_at' in target) || target.totp_confirmed_at === null) {
+    throw new ConflictError('That account is not enrolled in two factor, so there is nothing to reset.')
+  }
+
+  await db.transaction().execute(async (trx) => {
+    await trx
+      .updateTable('users')
+      .set({ totp_secret: null, totp_confirmed_at: null })
+      .where('id', '=', targetId)
+      .execute()
+    await destroyAllUserSessions(trx, targetId)
+    await writeAudit(trx, {
+      userId: actor.userId,
+      action: 'user.totp_reset',
+      entityType: 'user',
+      entityId: targetId,
+      before: { enrolled: true },
+      after: { enrolled: false },
+      ip: actor.ip,
+    })
+  })
+  return { email: target.email }
+}
+
 export async function setUserStatus(
   db: Db,
   actor: Actor,

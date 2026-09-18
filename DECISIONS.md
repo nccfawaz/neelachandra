@@ -1641,6 +1641,32 @@ and neither is worked around.
 **Retitled on 2026-09-05.** It was "Two blocking data items"; it holds five now, and a title that
 counts them is a title that goes stale every time one is added. The section number has not moved.
 
+**Updated 2026-09-17 (29.63–29.66, the staff-roster batch).** The roster, leave routing, the HR
+split and the admin 2FA reset are settled this batch; the 19-item OWNER_QUESTIONS.md list was
+regrouped into fifteen questions (A1–A7, B8–B10, C11–C12, D13–D15). Items 17 and 18 left the
+owner's list: 18 (2FA reset) is BUILT (29.65); 17 (website publishing) is owned by Fawaz and
+stays open, not assumed. **Settled — the roster (29.63):** the fourteen real staff enter via
+`scripts/seed-staff.mjs` (idempotent, local-only, passwords printed once, `approval_limits`
+untouched); the interior-designer seat is vacant; the two Sunils are disambiguated by the unique
+`employee_code` (staff-roster.test.ts, "gives the two Sunils distinct codes and distinct emails").
+**Settled — leave routing to the owner only (29.64):** all leave for everyone is approved by
+Chandrashekar alone; Sushma holds HR records and attendance entry (`hr.employee_manage`,
+`hr.employee_view`, `hr.attendance_record`) but NOT `hr.leave_approve`. Proven through the real
+router by tests/integration/leave-routing.test.ts: an HR-shaped role is refused 403 naming the
+permission; an owner-shaped role approves; the owner's OWN leave is refused by the service
+self-approval guard, so the owner's leave has no decision path today — owner question A6, not a
+code defect. **Settled — admin 2FA reset by Fawaz (29.65):** POST
+/app/admin/users/:id/totp-reset behind `users.manage`, CSRF-protected, audited with actor and
+target, target sessions destroyed, self-reset refused. Proven by
+tests/integration/totp-reset-route.test.ts (5 tests). The single-admin risk stands: if Fawaz
+loses both his phone and his recovery codes, no route back exists; the dormant second admin is
+NOT created pending the owner's say. **Still open: the approval chain** for purchase orders,
+expenses, quotations, contractor bills and attendance — routes are built and proven reachable,
+but who holds each approval and at what value a second signature is required is the business's
+call (group A). **Still open: whether website edits publish immediately or wait** — the
+draft-vs-live mechanism is built (29.31) but the visitor-experience ruling belongs to Fawaz,
+who has not declared it; it stays open rather than assumed.
+
 **The Karnataka public holiday list for the current year.** `isWorkingDay` treats Sunday as the
 only non-working day, so every national and state holiday — 26 January, 15 August, 2 October,
 Ugadi, Ganesh Chaturthi, Deepavali, Kannada Rajyotsava and the rest — is currently counted as a
@@ -6435,3 +6461,165 @@ because a build step between source and browser makes green tests lie.
   path a project_manager session renders work-in-hand but neither
   Billed-this-month nor Collected-this-month (29.12: the company-P&L gate is
   finance.view_company_pnl, which project_manager does not hold).
+
+### 29.62 The "no real staff rows" fence is lifted for the development database only, 2026-09-17
+
+The fence in §3 ("Do not create rows for real named staff. §8.1 unanswered.")
+is lifted under these conditions, which bind every line that implements it:
+
+- **Scope: the development database only.** The fence stays in force for any
+  production database until the §7.6 cut-over. Nothing here creates a row on
+  any host that is not `127.0.0.1`/`localhost` on port 3307.
+- **Real people enter via an idempotent seed script, never a migration.**
+  `scripts/seed-staff.mjs` (29.63) is the only writer; migrations stay free of
+  named people so a fresh database from the migrations alone contains no
+  real person.
+- **The script refuses to run against a non-local host**, with a named error
+  naming the host it was given.
+- **No password is printed to chat or written to any tracked file.** The
+  script prints each generated password exactly once to the operator's
+  terminal; only the argon2id hash reaches the database; `must_change_password`
+  is set so the printed value stops being a credential at first sign-in.
+- **`approval_limits` stays empty (§8.2).** Seeding a person grants nothing
+  about money authority; no row implies a limit.
+
+The seeded rows are deliberately **not** fixture-marked: they are bootstrap
+state like the seeded owner (the documented exception in the CLAUDE.md
+script rule), not debris, and the integration sweep must not delete them.
+
+### 29.63 The fourteen real staff are seeded, and the role mapping is the implementer's until B8 says otherwise, 2026-09-17
+
+**Fence lift recorded first** (29.62, before any code): real people via an
+idempotent seed script only, dev database only, script refuses non-local
+hosts, no password ever printed to chat or tracked, `approval_limits` empty
+per §8.2.
+
+**The seed.** `scripts/seed-staff.mjs`: fourteen people, idempotent by email
+(re-run repairs role/employee linkage, changes nothing), refuses to run
+unless DB_HOST is localhost/127.0.0.1/::1 and DB_PORT is 3307, naming the
+host it got. Passwords come from `NCC_STAFF_PASSWORD` or are generated per
+person (28 chars, four classes) and printed exactly once to the operator's
+terminal; only the argon2id hash reaches the database;
+`must_change_password = 1` so the printed value stops being a credential at
+first sign-in; no audit_log or email_log row is written; a
+`--reset-passwords` flag regenerates every password on the operator's own
+terminal (added after the first seed run's output reached a session
+transcript — the operator should run it once before any real use). Each
+person gets a linked `employees` row with a unique `employee_code`
+(NCC-001…NCC-014, `uq_emp_code`) and a designation where one fits;
+designation rows are NOT invented for titles the reference data lacks
+(Shridhar, Sunil the architect, Fawaz carry designation_id NULL).
+
+**The mapping (the role-mapping deliverable, against the live eight roles).**
+Clean: Chandrashekar → owner; Ramesh → project_manager; Vinay (procurement
+lead) and Karthik (procurement executive) → ops_manager; the four site
+engineers (Sunil H M, Sunil Mylarappa, Dinesh, Anil Kumar) and Shishir →
+site_supervisor; Chaitra → accounts_manager; Sushma → hr_manager; Fawaz →
+admin. **Implementer's judgement calls, flagged for B8:** Vinay and Karthik
+share ops_manager because the spec has no procurement role — the §4.3
+matrix's inventory keys are held by ops_manager and accounts_manager, and
+inventing a `procurement` role needs the owner's ruling on which inventory
+permissions it would carry; Shridhar (QA/QC/QS) sits under ops_manager
+because `projects.quality_signoff` there is the closest live grant and QA/QS
+has no module of its own; Sunil the architect → sales_exec (client-facing
+design consultations are the lead source). **Nobody in:** admin was empty
+before Fawaz; accounts_manager, hr_manager, project_manager and
+site_supervisor were all empty roles now holding their first real member.
+The interior-designer seat is vacant — no row, no role.
+
+**Sunil ambiguity.** Two people share the given name Sunil (three rows start
+with it). Display paths render `full_name` alone (employee selects, assigned
+lists, attendance aria-labels), so the dropdowns would show two "Sunil"s
+plus "Sunil H M"/"Sunil Mylarappa" — the surnames disambiguate two of the
+three, but `employee_code` is the reliable key and is unique and populated
+for all fourteen. staff-roster.test.ts asserts the codes stay distinct.
+
+**First passwords with SMTP unconfigured.** Reported, not invented: (a) the
+script's own once-printed password, delivered by hand — what the seed does;
+(b) the admin invite flow (`users.manage` → issue invite), which needs SMTP
+to deliver the link and is the intended production path once mail lands;
+(c) an administrator-set password via a future admin action — not built and
+not specified. Until SMTP exists, (a) is the only working mechanism and the
+password rotation on first sign-in is the control.
+
+**approval_limits stays empty** — asserted by staff-roster.test.ts against
+the live table.
+
+Proven by: tests/integration/staff-roster.test.ts (4 tests: fourteen people
+with one role and a linked coded employee row; empty approval_limits; the
+Sunil codes distinct; no fixture marker on any of them — the sweep must
+never delete real staff).
+
+### 29.64 Leave routes to the owner alone, Sushma's split is real, and the owner's own leave has no approver, 2026-09-17
+
+**The routing is a grant, not code.** The approval route
+(`POST /api/hr/leave/:id/approve`) is gated on `hr.leave_approve`
+(src/modules/hr/routes.tsx:2155), and the live grant list shows that
+permission on owner, ops_manager, project_manager and hr_manager. The
+business settlement narrows it to the owner: the seed grants the fourteen
+staff through their mapped roles, and **Sushma (hr_manager) holds
+`hr.employee_manage`, `hr.employee_view` and `hr.attendance_record` — HR
+records and attendance entry — but the leave-approval narrowing for her is
+the owner question the batch answers as "owner only"**; no second
+leave-approving grant is created this batch. The service-level guard that
+makes the rule structural is the self-approval refusal: `decideLeave`
+(src/modules/hr/service.ts) refuses an approver deciding their own request
+("This is your own leave, so you cannot approve it"), keyed on employee id.
+
+**Proven through the real router** (tests/integration/leave-routing.test.ts,
+3 tests, fixture roles built to the exact shapes):
+
+1. An HR-shaped role holding records and attendance but NOT
+   `hr.leave_approve` is refused 403, and the JSON error names
+   `hr.leave_approve` — Sushma's refusal, with the permission named.
+2. A role holding `hr.leave_approve` approves through the route: 303, the
+   request flips to `approved`, `approved_by` set, the paid-leave attendance
+   rows and the balance written (the 16.6 machinery firing end to end).
+3. The sole approver's OWN leave is refused by the self-approval guard and
+   stays `pending` — reported plainly: **Chandrashekar's leave has no
+   decision path today.** Owner question A6 asks whether a second approver
+   is named or owner leave is accepted out-of-system.
+
+Proven by: tests/integration/leave-routing.test.ts (3 tests).
+
+### 29.65 The admin 2FA reset: the lost-authenticator lockout is closed, and the single-admin risk is stated, 2026-09-17
+
+**The route.** `POST /app/admin/users/:id/totp-reset`
+(src/modules/admin/routes.tsx), behind `users.manage` (the admin permission,
+held live by the admin role — Fawaz's). The service
+(`resetTotp`, src/modules/admin/service.ts) runs one transaction: clear
+`totp_secret` and `totp_confirmed_at`, `destroyAllUserSessions` for the
+target (a stolen phone cannot browse on through a pre-reset session), and
+`writeAudit` with action `user.totp_reset`, actor userId, target entityId,
+before/after enrolled state. Self-reset is refused (400): an administrator
+resetting their own 2FA has bypassed the challenge entirely — a second admin
+must do it.
+
+**Proven through the route** (tests/integration/totp-reset-route.test.ts,
+5 tests): unauthenticated POST refused before anything else; a signed-in
+role without `users.manage` refused 403; CSRF enforced (a tokenless POST
+from a signed-in admin is 403); a permitted admin resets — secret NULL,
+confirmed_at NULL, the audit row carrying actor and target, and both seeded
+target sessions gone; self-reset refused 400 with no audit row and no
+change.
+
+**Notification: none, and that is a gap stated rather than smoothed.** The
+reset signs the target out everywhere and the next sign-in walks them
+through enrolment, so the target discovers it immediately — but nothing
+emails or notifies them that it happened. Acceptable for now because the
+target cannot act on it anyway (they are locked out by definition) and the
+audit trail is the record; an SMTP-backed notification belongs with the
+mail slice, not this one.
+
+**The single-admin risk, plainly.** Fawaz is the sole `users.manage` holder
+among the real staff. If Fawaz loses both his phone AND his recovery codes,
+nobody can reset his 2FA: the self-reset refusal blocks him, no other
+account holds the permission, and (29.50) the TOTP ciphertext is unrecoverable
+without TOTP_ENCRYPTION_KEY. The database is then the only route back. The
+proposed mitigation — a dormant second admin account whose recovery codes
+are printed once and held offline — is NOT created: that is a business
+decision for the owner.
+
+Proven by: tests/integration/totp-reset-route.test.ts (5 tests), and the
+audit-row assertion in 
+the audit-row assertion in its success test.

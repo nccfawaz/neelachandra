@@ -1,34 +1,25 @@
 # Questions for the owner
 
-One page, plain language. Each item says: the question, why it blocks work,
-what the system does today without an answer, and what changes once it is
-answered. Each links to the section of `DECISIONS.md` that records the current
-behaviour in detail — file an answer against that section.
+Fifteen questions, in four groups. Group A is the approval chain — who signs
+what — because that is the set whose absence blocks daily work first. Each
+item says: the question, why it blocks work, what the system does today
+without an answer, and what changes once it is answered. Each links to the
+section of `DECISIONS.md` that records the current behaviour in detail — file
+an answer against that section.
+
+**Where old items went (2026-09-17 rewrite, DECISIONS §29.66):** the previous
+19-item list is regrouped here. Items 17 (website publishing) and 18 (2FA
+reset) now belong to Fawaz (website administrator) and come off this list —
+18 is built (admin reset, DECISIONS §29.65); 17 stays open but is Fawaz's to
+declare, recorded in §17.3, not assumed. Old 1+12 merged into B8; old 5+6
+into B10; old 3+15 into A7; old 7+8 into A4; old 9 folded into B9; old 14
+folded into D14.
 
 ---
 
-## 1. Who actually works here, and what can each of them do? (§8.1)
+## Group A — the approval chain (A1–A7)
 
-**Question:** Please give us the real organisation chart: the list of roles the
-company actually has, who holds each one, and what each role should and should
-not be able to do in the system.
-
-**Why it blocks:** Every permission in the system is seeded from an assumed
-list. Until the real list arrives, no real staff record can be created and no
-login can be issued — the standing rule is that no real staff rows exist while
-§8.1 is unanswered.
-
-**Today:** The system runs on 8 provisional roles with 204 permission grants,
-checked internally for consistency but never against reality. Everyone in the
-fixtures is invented.
-
-**Once answered:** Roles are renamed or added to match the real chart, the two
-permissions that need a specific ruling are settled, and the first real staff
-accounts can be created.
-
-*Details: DECISIONS.md §2.5 and §9.1.*
-
-## 2. Who can approve what, and up to how much money? (§8.2)
+## A1. Who can approve what, and up to how much money? (§8.2)
 
 **Question:** What spending amount can each person approve on their own, and
 above what amount does a second signature become required?
@@ -37,380 +28,252 @@ above what amount does a second signature become required?
 limits exist. Today approving an expense fails the limit check by default, so
 the normal path for getting work paid is blocked.
 
-**Today:** The approval-limits table is empty. A missing limit is read as
-"refuse", which is the safe direction but means nothing can be approved.
+**Today:** The approval-limits table is empty (and stays empty by design —
+DECISIONS §29.63: seeding the fourteen staff grants no money authority). A
+missing limit is read as "refuse", which is safe but means nothing can be
+approved.
 
 **Once answered:** Limits are loaded, normal approvals start working, and the
 second-signature threshold takes effect exactly where you set it.
 
 *Details: DECISIONS.md §27.2.*
 
-## 3. What are the standard build stages and payment milestones? (§8.3)
+## A2. Who approves purchase orders, and at what value does it escalate? (§6.5)
 
-**Question:** For each package you sell, what are the stages of work and the
-payment milestones attached to them? (For example: foundation 20%, structure
-40%, finishing 30%, handover 10%.)
+**Question:** Name the approver (or approvers) of a purchase order, and the
+value above which a second signature is needed.
 
-**Why it blocks:** Quotations, milestone billing and progress tracking all read
-from these templates. The billing flow cannot be used on a real project until
-the real templates exist.
+**Why it blocks:** The PO route is gated on `inventory.approve_po`, but which
+ROLES should hold it — and whether the creator may never approve their own —
+is a business chain, not a code decision. Today ops_manager holds it; the
+creator-may-not-approve rule is enforced in code but the chain above them is
+not declared.
 
-**Today:** One example template from the spec is seeded, clearly labelled as
-placeholder.
+**Today:** A PO is raised by `inventory.po_create`, approved by whoever holds
+`inventory.approve_po` (owner, ops_manager), with no value bands.
 
-**Once answered:** Real templates replace the example, and new projects can be
-set up with correct payment schedules.
+**Once answered:** The grant set and any value bands are recorded and the
+grants tripwire updated.
 
-*Details: DECISIONS.md §9 table, row §8.3.*
+*Details: DECISIONS.md §29.43 (PO route proofs).*
 
-## 4. How many leave days does each type give per year? (§8.6)
+## A3. Who approves quotations — and who may discount, by how much? (§5.4)
 
-**Question:** For each leave type — earned, casual, sick, unpaid,
-compensatory, maternity, paternity — how many days per year, and how much can
-be carried into the next year? Also: are you registered under EPF and ESI, and
-does the leave year run April-to-March or January-to-December?
+**Question:** Who signs a quotation before it goes to the client, and what
+discount can each level give without escalation?
 
-**Why it blocks:** The leave-checking rule is already written but is dormant:
-with no quota numbers, nothing is refused. It switches on the moment numbers
-are entered — no code change needed.
+**Why it blocks:** `crm.quote_approve` and `crm.quote_discount_override`
+exist and are gated, but which roles should hold them beyond owner and
+accounts_manager is undeclared.
 
-**Today:** Leave balances are tracked but never refused, so a request can
-exceed any entitlement.
+**Today:** The raiser escalates their own quote; owner and ops_manager
+approve; the discount override is owner-only.
 
-**Once answered:** Over-quota leave starts being refused automatically. Note:
-the first tests that used a zero quota will need fixture data, not a looser
-rule.
+*Details: DECISIONS.md §29.42 (quote route proofs).*
 
-*Details: DECISIONS.md §17.1 and §17.3.*
+## A4. Contractor bills: who approves, which rate wins, and how is a wrong day fixed? (§6.6)
 
-## 5. What is the Karnataka public holiday list for this year? (§8.6)
+**Question:** Three answers in one conversation, all about contractor money:
+(a) who approves a contractor bill for payment; (b) when more than one rate
+applies to the same work, which one wins (spec line 1644); (c) when a clerk
+records the wrong KIND of contractor day, what is the correction procedure?
 
-**Question:** The dated list of gazetted holidays — general and restricted —
-for the current financial year.
+**Why it blocks:** The bills are generated from approved attendance
+(`NCC_BUILD_SPEC.md:1743`), so (b) and (c) decide what the bill is built
+from, and (a) decides who releases the money.
 
-**Why it blocks:** Salary and leave calculations count every day except Sunday
-as a working day. A wrong or invented holiday list silently mis-costs payroll,
-so none has been guessed.
+**Today:** Bills generate from approved attendance only; a day recorded under
+the wrong rate type is corrected by re-entry, and where several rates apply
+the system does not silently choose — it needs a ruling.
 
-**Today:** Holidays are counted as ordinary working days; the muster roll shows
-them as unmarked days; leave taken over a holiday is over-deducted.
+*Details: DECISIONS.md §17.1, §17.2, and the §6.6 contractor sections.*
 
-**Once answered:** A small holiday table is loaded, one rule branch is switched
-on, and working-day counts become correct everywhere they are used.
+## A5. Who approves attendance — site level, HR level, or both? (§6.6)
 
-*Details: DECISIONS.md §17.3, first item.*
+**Question:** Attendance rows are marked by a supervisor and approved by
+someone else. Name the approver at each level, and whether the approval is
+per month, per week, or per site.
 
-## 6. If someone on approved leave turns up and works, what should happen? (§8.6)
+**Why it blocks:** `hr.attendance_approve` is held today by owner, ops_manager
+and project_manager without a declared chain, and contractor bills inherit
+whatever attendance was approved.
 
-**Question:** Is that (a) both a leave day and a worked day, (b) the leave day
-cancelled, or (c) an error the clerk must fix before either record exists?
+**Today:** The approval action exists and is gated; the business chain is not
+declared.
 
-**Why it blocks:** This is a payroll-accuracy question no test can answer
-alone. A wrong rule produces no error anywhere — the salary figure just comes
-out wrong and nobody can reconstruct why.
+## A6. Leave: confirm owner-only approval — and who approves the owner's leave? (§6.6)
 
-**Today:** Both records are allowed to coexist; leave stays approved and
-attendance says present.
+**Question:** Confirm that ALL leave, for everyone, is approved by
+Chandrashekar alone (recorded as settled in §17.3). If confirmed, then: who
+approves the owner's OWN leave? The sole approver cannot approve himself —
+the service refuses self-approval, so the owner's leave request sits pending
+forever.
 
-**Once answered:** The rule is enforced, whichever of the three you choose.
+**Why it blocks:** This is not hypothetical. It is proven:
+`tests/integration/leave-routing.test.ts` ("refuses the sole approver
+approving his OWN leave") shows the refusal firing and the request staying
+pending. Either a second leave approver must be named, or owner leave is
+accepted out-of-system.
 
-*Details: DECISIONS.md §17.3, "Does attendance override approved leave?".*
+**Today:** Non-owners are refused with `hr.leave_approve` named (proven,
+including for an HR-shaped role holding records and attendance); the owner's
+own request has no decision path.
 
-## 7. When a contractor has more than one rate that applies, which one wins? (from spec line 1644)
+**Once answered:** Either a second grant is added, or the policy "owner leave
+is recorded, not approved" is written into the module.
 
-**Question:** Rate cards can overlap — a company-wide rate, a project-specific
-rate, a mason rate, a general labourer rate. Which should be used? The system
-currently picks in this order: project-specific first, then skill-specific,
-then the most recent start date, then the higher row number (that last case is
-flagged as ambiguous on screen). Is that right? An alternative some firms use
-is simply the highest applicable rate.
+*Details: DECISIONS.md §29.64.*
 
-**Why it blocks:** The chosen rate is snapshotted onto the day's record and
-becomes permanent. A wrong rule pays the wrong amount and nothing in the
-system flags it as wrong — the bill reconciles with itself.
+## A7. Milestones: the stage templates, who certifies, and which month a cost belongs to (§8.3, §6.8 rule 7)
 
-**Today:** The four-step order above, stated here so you can confirm or
-correct it rather than having to read code.
+**Question:** Three linked answers: (a) the standard build stages and payment
+milestones per package (§8.3) — only one labelled placeholder template is
+seeded; (b) who certifies a milestone (`projects.milestone_certify` is held
+by owner, accounts_manager and project_manager today — is that the chain?);
+(c) when a bill for last month is approved this month, which month does the
+cost belong to?
 
-**Once answered:** The order is confirmed in writing or changed, and
-overlapping rate cards either gain a supersession rule or a refusal.
+**Why it blocks:** Quotations, milestone billing and progress tracking all
+read the templates; the cost-month rule decides what every monthly report
+means.
 
-*Details: DECISIONS.md §17.3, "Which rate wins…".*
+**Today:** One example template, clearly labelled placeholder; cost lands in
+the month of approval; a closed period refuses late bills rather than
+reopening.
 
-## 8. A clerk records the wrong kind of contractor day — how do they fix it? (§17.3)
+*Details: DECISIONS.md §27.1 (templates), §6.8 rule 7 records.*
 
-**Question:** May a supervisor withdraw a contractor attendance entry that has
-not been approved yet? And what about one that is approved but not yet billed?
+---
 
-**Why it blocks:** There is no correction path in the system. Since a schema
-change made day-entries and measured-entries mutually exclusive, a mistake can
-no longer be overwritten — the only fix today is someone with direct database
-access.
+## Group B — people (B8–B10)
 
-**Today:** Deliberate refusal with no way out. The refusal itself is
-considered correct; what is missing is the answer for what the person who hit
-it should do.
+## B8. Confirm the role chart — and who sees the company's profit? (§8.1, §6.8 rule 10)
 
-**Once answered:** A void or reversal route is built to exactly the rule you
-give — before approval, after approval, or as a finance adjustment only.
+**Question:** The fourteen real staff are now seeded against eight existing
+roles (DECISIONS §29.63). Confirm the mapping — especially Shridhar and
+Vinay both under operations, the four site engineers under
+`site_supervisor`, and Fawaz as sole administrator — and answer rule 10's
+visibility question: should ops_manager keep `projects.view_cost`, and
+should anyone beyond owner hold `finance.view_company_pnl`?
 
-*Details: DECISIONS.md §17.3, "A clerk who mis-enters…".*
+**Why it blocks:** The role mapping is the implementer's, made from
+designations and the spec's role list, not from a signed chart. The grants
+tripwire (rule10-grants.test.ts) holds the current grants frozen until an
+answer is filed.
 
-## 9. Does an unpaid site advance stop an employee from leaving? (§6.8 rule 6)
+**Today:** Mapping and grants as seeded; the tripwire fails on any grant
+change.
 
-**Question:** When someone exits with an open cash advance, is that a blocker
-(the exit stops until it is settled) or a finance matter (recovered from the
-final payment)?
+**Once answered:** Roles are adjusted (or confirmed), and the tripwire is
+re-seeded to the answered state.
 
-**Why it blocks:** The spec's cross-reference for this turned out to point at
-the wrong rule, so the behaviour is genuinely undecided rather than
-implemented.
+*Details: DECISIONS.md §29.63 (the mapping table), §29.12 (rule 10).*
 
-**Today:** An employee holding an open advance can exit with no warning raised
-about it.
+## B9. Leave quotas, statutory registrations, accrual year — and does an unpaid advance block exit? (§8.6, §6.8 rule 6)
 
-**Once answered:** Either an exit blocker is added or the recovery route is
-documented as the intended one.
+**Question:** (a) `annual_quota` for each of EL, CL, SL, LWP, COMP, MAT and
+PAT; (b) is the company registered under EPF and ESI — which decides whether
+`uan`, `pf_number` and `esi_number` are required or optional; (c) does leave
+accrue on the April financial year (assumed, matching `document_numbering`)
+or the calendar year; (d) does an unpaid site advance stop an employee from
+leaving, the way an unsettled store issue does?
 
-*Details: DECISIONS.md §17.3, "do open site advances also block employee exit?",
-and §26.5.*
+**Why it blocks:** The leave balance screen computes against NULL quotas
+today, which reads as "no limit" — generous in the wrong direction — and
+payroll fields cannot be made mandatory without (b).
 
-## 10. Are all your clients inside Karnataka? (§6.8 rule 5)
+*Details: DECISIONS.md §17.3, §21.1, §6.8 rule 6 records.*
 
-**Question:** For GST, is every client you invoice registered in Karnataka?
-The system stores a place of supply on every invoice and currently always
-writes "KA".
+## B10. The Karnataka holiday list — and does work on an approved leave day override it? (§8.6)
 
-**Why it blocks:** Karnataka means the tax is split CGST + SGST; any other
-state means IGST. If a client is actually registered elsewhere, every invoice
-is split the wrong way.
+**Question:** (a) The dated gazetted Karnataka holiday list for this
+financial year (general vs restricted matters; a wrong date silently
+mis-costs payroll). (b) If someone on approved leave turns up and works, is
+that an attendance row plus a leave day (paid twice), a cancellation of the
+leave day, or an error the clerk must resolve first?
 
-**Today:** Every invoice is recorded as intra-Karnataka, explicitly, because
-someone has to choose — the system refuses to guess it from the project or
-client record.
+**Why it blocks:** Today Sunday is the only non-working day, so holidays are
+counted as worked; and the attendance-over-leave case is permitted only
+because no refusal was ever written — the failure mode is silent, which is
+why it sits on the blocking list (§17.3).
 
-**Once answered:** Either the current behaviour is confirmed as correct, or
-invoices for out-of-state clients carry that client's state code and the tax
-splits accordingly.
+**Today:** `isWorkingDay` treats only Sunday as off; marking attendance over
+an approved leave succeeds and both rows stand.
 
-*Details: DECISIONS.md §17.3 (last added item) and §27.4.*
+*Details: DECISIONS.md §16.3, §17.3, and the §8.6 records.*
 
-## 11. Does the money held back (retention) ever differ between milestones? (§6.8 rule 5)
+---
 
-**Question:** When we deduct retention from an invoice, is the percentage
-always the one on the project (say 5%), or can a specific milestone carry its
-own percentage — a higher hold on the first milestone, nothing on the final
-one, for example?
+## Group C — tax (C11–C12)
 
-**Why it blocks:** The system reads the retention percentage from the project
-and applies it to every milestone invoice. If a milestone is meant to carry a
-different percentage, invoices will hold back the wrong amount.
+## C11. Where does the odd paisa of GST go? (§6.8 rule 5)
 
-**Today:** Every invoice deducts the project's percentage, reached through
-the milestone being invoiced. No per-milestone override exists.
+**Question:** When a tax amount lands on half a paisa, where should the odd
+paisa go — and is tax computed per line or per invoice?
 
-**Once answered:** Either the current behaviour is confirmed and recorded, or
-a per-milestone percentage is added and the invoice calculation uses it.
+**Today:** Total tax rounds half-up (`roundPaise`), the single odd paisa of
+the CGST/SGST split goes to CGST, and tax is computed once per invoice.
 
-*Details: DECISIONS.md §26.4 and §29.5.*
+**Once answered:** The rounding helper and the split are adjusted to the
+ruling, with the GST half-pair tests re-pinned.
 
-## 12. Who should be able to see the company’s overall profit, and each project’s contract value? (§6.8 rule 10)
+*Details: DECISIONS.md §25.2 (rounding), §29 (the half-pair entries).*
 
-**Question:** Today only the Owner and the Accounts Manager can see the
-company’s cash position, yearly revenue and receivables. Four roles (Owner,
-Accounts Manager, Operations Manager, Project Manager) can see a project’s
-contract value and budget. Should it stay that way?
+## C12. Are all your clients inside Karnataka? (§6.8 rule 5)
 
-**Why it blocks:** These two lists are enforced by permission checks and
-pinned by a test that fails the suite if anyone changes them — so the
-current split is treated as a decision, not an accident, and it needs your
-confirmation.
+**Question:** If every client's place of supply is Karnataka, IGST can never
+arise and the invoice form can say so plainly. If an outside client exists,
+the IGST path must be exercised and tested against a real case.
 
-**Today without an answer:** The split above is exactly what the system
-enforces. A Project Manager can see project money but not company-wide
-figures; a Site Supervisor sees neither.
+**Today:** The IGST column exists and is wired (migration 024); nothing
+forces it to zero because the answer is not yet filed.
 
-**Once answered:** If a role should gain or lose visibility, that is one
-tripwire update plus the grant change, recorded against this item.
+*Details: DECISIONS.md §29.24 (IGST slice).*
 
-*Details: DECISIONS.md §29.12 and §17.3.*
+---
 
-## 13. When a tax amount lands on half a paisa, where should the odd paisa go? (§6.8 rule 5)
+## Group D — cost truth (D13–D15)
 
-**Question:** GST is calculated to the paisa, but percentages often produce
-fractions of a paisa (18% of Rs 124.75 is Rs 22.455 — half a paisa). Which
-way should it round, and should tax be worked out on each invoice line or
-once on the invoice total?
+## D13. Does the money held back (retention) ever differ between milestones? (§6.8 rule 5)
 
-**Why it blocks:** The books must add up to the paisa, and the tax
-authority’s expectation on rounding is a compliance detail, not a
-programmer’s choice.
+**Question:** Is retention a single percentage for every milestone, or can
+the hold-back differ (e.g. 10% on running-account bills, 5% on the final)?
 
-**Today without an answer:** The system rounds the total tax half-up
-(the .5 paisa goes up), and on an intra-state split the extra paisa goes
-to CGST. Tax is computed once per invoice, not per line.
+**Today:** One retention rate per milestone, set at certification; no
+cross-milestone default.
 
-**Once answered:** If the owner (or an accountant) says per-line, or a
-different rounding, that is one function change plus its tests.
+*Details: DECISIONS.md §6.8 rule 5 records.*
 
-*Details: DECISIONS.md §29.16 and the splitGst tests.*
+## D14. Does the budget ceiling include labour — and how is a month reopened? (§6.8 rules 4 and 10, rule 1)
 
+**Question:** (a) Does the project budget ceiling that gates new spending
+include labour (contractor bills and payroll), or only materials and
+subcontract packages? This decides whether the §29.26 labour gap makes the
+ceiling figure wrong. (b) If a month is closed by mistake, what is the
+sanctioned way to fix it? Today a closed period refuses late postings and
+nothing reopens it — safe, but a mistake has no remedy.
 
-## 14. If a month is closed by mistake, how do we fix it? (§6.8 rule 1)
+*Details: DECISIONS.md §29.26 (the labour gap), §21 (period lock).*
 
-**Question:** An accounting period can be closed but never reopened. If a
-month is closed with a document still missing, what is the correction — a
-reversing entry in the current month, or something else?
+## D15. What is "work in hand" — and who says so? (§6.8)
 
-**Why it blocks:** A wrongly closed month currently has no undo. Any
-correction is manual and outside the system, so the books and the system
-can quietly disagree.
+**Question:** The dashboard KPI tile labelled **Work in hand** uses a
+definition made by the implementer, not the owner: the sum of
+`project_milestones.amount_paise` over milestones in status `pending` or
+`ready_to_certify` on active projects — work done or underway that has not
+yet been certified. The tile is labelled with this definition in the UI
+until you sign one.
 
-**Today without an answer:** Reopening is refused (the spec is silent on
-it, so the system refuses rather than guesses). The recorded alternative
-is a reversing entry posted in the current open period, and the refusal
-message says so.
-
-**Once answered:** If the owner permits reopening, that is a role check
-plus an audited status change; if reversing entries are confirmed, the
-manual path stays and the message is final.
-
-*Details: DECISIONS.md §29.11 (reopen refused) and §17.3 stuck-clerk list.*
-
-
-## 15. When a bill for last month is approved this month, which month does the cost belong to? (§6.8 rule 7)
-
-**Question:** A contractor's bill covers work done in August, but it is
-approved in September (that is normal — bills arrive late). Should the cost
-appear in August's books or September's?
-
-**Why it blocks:** The month-close lock only stops entries dated inside a
-closed month. Today the posted cost is dated the day of approval, so a bill
-for a closed month sails through into the current month. If the owner wants
-costs to land in the month the work happened, the lock can actually do that
-— but it changes which month every report shows.
-
-**Today without an answer:** The posted expense carries the approval date
-and the approval month's period. A closed source month never blocks an
-approval.
-
-**Once answered:** If work-month is confirmed, one line changes in the
-approval code (the bill's coverage end becomes the expense date) and the
-tests flip.
-
-**The same answer decides a second thing: the MSME 45-day clock on
-contractor payables.** The ageing report runs every contractor-bill
-expense as unageable today (no bill date exists on the source —
-DECISIONS §29.21), so MSME exposure on contractor payables is currently
-invisible in the report. The date the clock should run from — the
-coverage period's end, the bill-generation date, or none at all — is the
-same work-month-versus-approval-month question, so one answer settles
-both.
-
-*Details: DECISIONS.md §29.18 (bypass proven, not fixed — spec silent) and
-§29.21 (the test proving every contractor-bill expense is unageable).*
-
-
-## 16. Does the budget ceiling include labour? (§6.8 rules 4 and 10)
-
-**Question:** A project's budget says how much each cost head may spend.
-The system's labour cost reaches it in two different ways: contractor bills
-are approved as expenses but the budget check cannot see them, and staff
-cost is worked out from attendance and salaries without ever becoming an
-expense. Should the budget check count both, or only the expenses it sees
-today?
-
-**Why it blocks:** Today a project can blow its labour budget four times
-over and keep approving material expenses, because the check that should
-refuse them sees none of the labour. Whether that is a hole or the
-intended design decides how the whole check is rebuilt.
-
-**Today without an answer:** The budget check counts only expenses with
-itemised lines. Contractor labour (booked but line-less) and staff cost
-(derived from attendance) are invisible to it, while the margin report is
-supposed to count both.
-
-**Once answered:** If labour belongs in the ceiling, the check gains a
-second derived figure (or contractor postings gain lines) — one rebuild,
-with tests that already pin today's shape. If it does not, the gap is
-documented as intended.
-
-*Details: DECISIONS.md §29.26 (both spec quotes and the proof tests).*
-
-## 17. When marketing edits a published page, what do visitors see in the meantime? (§7)
-
-**Question:** The spec says the block editor "Saves to `draft`, never to live"
-and that publishing is deliberate. But a page's draft and its published copy
-live in the same database columns, so saving an edit to a page that is already
-published changes what visitors see immediately — before anyone previews or
-publishes. Should editing a published page leave the public site untouched
-until the next publish, or is immediate visibility acceptable?
-
-**Why it blocks:** The public site is the one surface customers and Google
-see; a half-finished edit that goes live the moment it is saved is the failure
-the preview route exists to prevent. The revert route also needs the answer:
-it restores "as a new draft", and whether that takes the page off the public
-site until re-publication follows from the same ruling.
-
-**Today without an answer:** Every edit snapshots the replaced state first (so
-nothing is lost and any state is restorable), then writes the new values
-toward the row the public site reads. A revert sets the page back to 'draft'
-and clears `published_at`, which takes a published page off the live site
-until someone publishes again.
-
-**Once answered:** If the live copy must not move until publish, the page
-gains a draft column (or a draft row) and the publish route copies it across
-— one schema change with the revision writer already in place. If immediate
-visibility is acceptable, the current writer is correct as built and the
-preview route is the only guard.
-
-*Details: DECISIONS.md §29.29 (the writer, its transaction, and the spec
-quotes at :1359, :1382, :1505, :1506, :1508).*
-
-## 18. If someone loses their authenticator, who may reset their two factor — and after proving what? (§4.5)
-
-**The question:** An enrolled user who loses their phone has ten single-use
-recovery codes (shown once at enrolment) and nothing else. When those are
-spent or lost, is there an administrator-assisted reset (an admin clears
-the user's TOTP secret and recovery codes so they can re-enrol), and if so
-who holds that power — any admin, or only the owner — and what identity
-proof does it require before a lockout can be lifted?
-
-**Why it matters:** The TOTP secret is encrypted with a key derived from
-SESSION_SECRET (DECISIONS 29.44), so if that secret is ever lost every
-enrolled account is locked out of verification at once, and the recovery
-codes are the only way back in. There is currently no reset path at all
-(DECISIONS 29.46): no user-facing regeneration and no administrator
-action. The owner's own account is in the affected set.
-
-**Today without an answer:** A user with zero unused recovery codes and a
-lost authenticator cannot sign in, and nobody can unlock them. The screen
-shows "Unused recovery codes: 0 of 10" with no action attached.
-
-**Once answered:** Build the recorded option — an administrator reset
-(action (b) in 29.46) behind a dedicated permission with an audit entry,
-or the owner-only variant, plus optionally user-facing regeneration that
-requires a fresh TOTP verification before issuing new codes.*Details: DECISIONS.md §29.44 (key custody), §29.46 (lifecycle, the
-schema defect, and the three options).*
-
-## 19. What is "work in hand" — and who says so? (§6.8)
-
-The dashboard KPI tile labelled **Work in hand** needs a definition the
-owner signs, because the codebase currently uses one by choice, not by
-spec: the sum of `project_milestones.amount_paise` over milestones in
-status `pending` or `ready_to_certify` on active projects — i.e. work
-done or underway that has **not yet been certified**.
-
-Alternatives the owner may actually mean:
+**Alternatives you may actually mean:**
 
 - **Certified-but-uninvoiced only** (strict revenue-recognition WIP);
 - **Certified plus uninvoiced** (everything billable now);
 - **Contract value − certified invoiced to date** (backlog remaining);
-- Anything at all from the §6.8 rule-10 views, which track cost, not
-  forward revenue.
+- Something else entirely — the §6.8 rule-10 views track cost, not forward
+  revenue.
 
-NCC_BUILD_SPEC.md never defines "work in hand"; the phrase does not
-appear in it. Until this is answered the tile is a definition made by
-the implementer, labelled as such in the UI hint.
+NCC_BUILD_SPEC.md never defines "work in hand"; the phrase does not appear
+in it.
 
-
+*Details: DECISIONS.md §29.62-era tile records and the widget source
+(`src/dashboard/widgets.ts`).*

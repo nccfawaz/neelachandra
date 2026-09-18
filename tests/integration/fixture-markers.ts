@@ -73,6 +73,18 @@ export async function sweepFixtures(db: Kysely<any>): Promise<void> {
   // users (fk_notif_user, no cascade) — swept before the user delete or the
   // sweep itself dies (found by quote-routes, 29.47).
   await sql`delete n from notifications n join users u on n.user_id = u.id where u.full_name like ${FIXTURE_MARKER + '%'}`.execute(db)
+  // Leave fixtures write attendance and balance rows against the fixture
+  // employee, which references the user (fk_emp_user, no cascade) — swept
+  // before the user delete or the sweep itself dies (found by
+  // leave-routing, 29.64).
+  await sql`delete att from attendance att join employees e on att.employee_id = e.id join users u on e.user_id = u.id where u.full_name like ${FIXTURE_MARKER + '%'}`.execute(db)
+  await sql`delete lb from leave_balances lb join employees e on lb.employee_id = e.id join users u on e.user_id = u.id where u.full_name like ${FIXTURE_MARKER + '%'}`.execute(db)
+  await sql`delete lr from leave_requests lr join employees e on lr.employee_id = e.id join users u on e.user_id = u.id where u.full_name like ${FIXTURE_MARKER + '%'}`.execute(db)
+  // users.employee_id -> employees (fk_users_employee) and employees.user_id
+  // -> users (fk_emp_user) reference each other: null the user pointer first,
+  // then the employee rows, then the users.
+  await sql`update users u join employees e on e.user_id = u.id set u.employee_id = null where u.full_name like ${FIXTURE_MARKER + '%'}`.execute(db)
+  await sql`delete e from employees e join users u on e.user_id = u.id where u.full_name like ${FIXTURE_MARKER + '%'}`.execute(db)
   await sql`delete from users where full_name like ${FIXTURE_MARKER + '%'}`.execute(db)
   await sql`delete from accounting_periods where financial_year like ${FIXTURE_PERIOD_PREFIX + '%'}`.execute(db)
 

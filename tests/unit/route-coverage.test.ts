@@ -50,6 +50,7 @@ export const EXERCISED = [
   'POST /login', // csrf-pre-session.test.ts + the live-server proofs
   'GET /forgot-password', // csrf-pre-session.test.ts path-set bounds
   'POST /forgot-password',
+  'POST /app/admin/users/:id/totp-reset', // totp-reset-route.test.ts (29.65)
   'GET /reset-password/:token',
   'POST /reset-password/:token',
   'POST /logout',
@@ -239,6 +240,7 @@ export const ALLOWLIST: string[] = [
   'POST /app/admin/users/:id/overrides',
   'POST /app/admin/users/:id/roles',
   'POST /app/admin/users/:id/status',
+  // (POST /app/admin/users/:id/totp-reset exercised by totp-reset-route.test.ts, 29.65)
   'POST /app/crm/leads',
   'POST /app/crm/leads/:id/edit',
   'POST /app/crm/quotes',
