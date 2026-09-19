@@ -6677,3 +6677,38 @@ rotated at cut-over and held the same way. An account nobody can reach is
 worse than no account at all.
 
 Proven by: tests/integration/dormant-admin.test.ts (3 tests).
+
+### 29.69 Tracked-vs-collected tripwire; artifact and e2e independence re-verified; tile work confirmed real (2026-09-19)
+
+- **Tracked-vs-collected (proven by `tests/gate-collection.test.ts` "every collected test file is
+  tracked by git (29.69)").** The prior report's "37 tracked vs 39 collected" is reconciled: today
+  `git ls-files tests/integration` names 39 test files and the integration config collects exactly
+  the same 39 — the difference was the earlier session's *untracked* files, now committed. The
+  tripwire gained an assertion that the collected union is a subset of `git ls-files tests` (with a
+  non-zero floor on the tracked set, per the empty-green rule), so a test that exists only on one
+  machine can no longer pass the gates here and vanish elsewhere. Also fixed the collector regex to
+  accept `.test.tsx` (it silently dropped `.tsx` files from the collected set).
+- **CSS artifact (proven by `tests/unit/css-build-staleness.test.ts`).** Settled as recorded in
+  §29.60: `public/assets/css/dashboard.css` is the vite build of `src/dashboard/assets/css/`,
+  COMMITTED, because the production host (Hostinger git integration) copies files and runs nothing —
+  an uncommitted artifact would deploy stale or missing styles. The staleness tripwire rebuilds the
+  artifact into a temp dir and byte-compares. The rejected alternative (exclude `public/` + add a
+  build step to the §7.6 checklist) is recorded: its failure mode is a cut-over that serves no
+  stylesheet if the single build command is forgotten. `public/` appears in `.gitignore` only in a
+  comment stating it is deliberately not ignored.
+- **e2e independence (rule: "a gate must not depend on services it does not start" — CLAUDE.md,
+  gate-must-not-depend-on-unstarted-services).** `tests/e2e/sidebar-browser.test.ts` starts its own
+  throwaway HTTP server (fixture AppShell HTML + built CSS) and launches its own Chromium; it needs
+  no dev server and no MariaDB. Proven: with no listener on :3000, `npm run test:e2e` →
+  `6 passed (6)`.
+- **KPI tiles confirmed real, not fabricated (proven by `tests/integration/kpi-tiles.test.ts`,
+  11 tests, green against live MariaDB).** The dashboard no longer renders the old widget grid as
+  its primary surface: the seven tiles (active jobs, site reports due today, approvals waiting on
+  me, open material requests, billed, collected, work in hand) are wired in
+  `src/dashboard/widgets.ts` with real queries and render via `formatPaiseAsRupeesSymbol`
+  (`₹` + Indian grouping) in `src/dashboard/routes.tsx:41`. Gross margin remains refused per
+  §29.26. "Work in hand" uses the narrowest definition pending owner item 19, labelled in the tile
+  hint: "Milestones ready to certify (definition pending owner item 19)". Role visibility is proven
+  through the HTTP path: a project_manager session renders work-in-hand but neither billed nor
+  collected (absent, not zeroed). `/src/` count unchanged at 80 — all wiring lives in files that
+  already existed (widgets.ts, routes.tsx, components); no new module.

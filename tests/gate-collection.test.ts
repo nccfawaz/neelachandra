@@ -113,7 +113,7 @@ async function collectedFiles(config: string): Promise<Set<string>> {
   for (const line of stdout.split('\n')) {        // Anchored to the start of the line: the lister also echoes file
         // names mid-line in error paths, and a mid-line match would
         // "collect" a file the config never ran.
-        const match = line.match(/^(tests\/[^\s>]+\.test\.ts)/)
+        const match = line.match(/^(tests\/[^\s>]+\.test\.tsx?)/)
     if (match) files.add(match[1]!)
   }
   return files
@@ -183,6 +183,46 @@ describe('the gate collects every test file it claims', () => {
       })
       expect(ownership.length).toBe(onDisk.length)
       expect(ownership.every((line) => !line.endsWith('NOTHING')), `unowned files present: ${ownership.filter((l) => l.endsWith('NOTHING')).join('; ')}`).toBe(true)
+    }
+  )
+
+  it(
+    'every collected test file is tracked by git (29.69)',
+    { timeout: 120_000 },
+    async () => {
+      // A test that exists only on this machine — never committed — passes
+      // every gate HERE and vanishes for anyone else. The last report's
+      // "37 tracked vs 39 collected" was exactly this shape: two collected
+      // files that git does not carry. This asserts the collected union is a
+      // subset of `git ls-files`, so an uncollected-and-untracked file is
+      // caught by the test above, and a COLLECTED-AND-UNTRACKED one is caught
+      // here. Non-zero floor: an empty tracked set means git ls-files failed
+      // (empty-green rule) rather than nothing being tracked.
+      const { stdout } = await run('git', ['ls-files', 'tests'], {
+        cwd: process.cwd(),
+        maxBuffer: 16 * 1024 * 1024,
+        shell: process.platform === 'win32',
+      })
+      const tracked = new Set(
+        stdout
+          .split(/\r?\n/)
+          .map((l) => l.trim())
+          .filter((l) => /\.test\.tsx?$/.test(l))
+      )
+      expect(tracked.size, 'git ls-files returned no test files — the enumeration failed').toBeGreaterThan(0)
+
+      const collected = new Set<string>()
+      for (const name of CONFIG_NAMES) {
+        for (const f of await collectedFiles(name)) collected.add(f)
+      }
+      expect(collected.size, 'no test files collected across all configs — vitest list failed').toBeGreaterThan(0)
+
+      const untracked = [...collected].filter((f) => !tracked.has(f))
+      expect(
+        untracked,
+        `These test files are collected by a gate but NOT tracked by git — they exist only on this ` +
+          `machine and every other checkout runs without them. Commit them or delete them: ${untracked.join(', ')}.`
+      ).toEqual([])
     }
   )
 })
