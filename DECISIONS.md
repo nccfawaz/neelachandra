@@ -6267,6 +6267,11 @@ accent. Colours are hardcoded in dashboard.css, NOT shared tokens —
 only `--ncc-accent` is a variable; recorded here because a second dark
 surface would double-maintain them.
 
+**Corrected by 29.61:** the group-label colour above was darkened to
+#5b6472 (5.57:1) — the #8a94a3 figure and its large-text claim were
+wrong, as the 29.61 entry records. This paragraph is superseded, kept
+for the record of what shipped first.
+
 **The full lockup, not the crop.** The 34×43 CSS crop was wrong in
 practice — the owner reports it showed the orange wordmark, not the arch
 (the derived geometry assumed the arch spans x 0–250 of the asset, which
