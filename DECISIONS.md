@@ -6717,3 +6717,97 @@ Proven by: tests/integration/dormant-admin.test.ts (3 tests).
   through the HTTP path: a project_manager session renders work-in-hand but neither billed nor
   collected (absent, not zeroed). `/src/` count unchanged at 80 — all wiring lives in files that
   already existed (widgets.ts, routes.tsx, components); no new module.
+
+### 29.70 Cut-over preparation: the server artifact, preflight, .htaccess and the runbook (2026-09-21)
+
+This is preparation only; the no-deploy fence holds. Every finding here is
+about what happens when §7.6 executes, not about executing it.
+
+**The server build artifact.** `package.json` builds with `tsc` to `dist/`
+(`"start": "node dist/server.js"`), and `.gitignore:11` excludes `dist/` —
+so a fresh clone of this repo **cannot start** on a host that runs nothing.
+Hostinger's git integration copies files and runs no build, so the same
+failure mode the CSS artifact had (§29.69) applies to the whole compiled
+app. Two options:
+
+- *Commit `dist/` with a staleness tripwire* — the app always starts, but
+  a stale artifact silently serves old code if someone edits src/ without
+  rebuilding. Mitigated by the tripwire, exactly as the CSS artifact is.
+- *Require a build command on the host* — the artifact is always fresh,
+  but if the build step is forgotten or fails at cut-over the site serves
+  nothing, and hPanel's Node app support on this plan is unverified.
+
+**Chosen: commit `dist/`, with `tests/unit/dist-staleness.test.ts` as the
+tripwire** (build to a temp dir, compare entry-point and asset bytes with
+the committed tree; fails naming the stale files). The rejected
+alternative is recorded here and belongs in the §7.6 checklist only if the
+build-committing approach is reversed. The host entry point is
+**`dist/server.js`**. The tripwire is proven red by editing a source file
+without rebuilding (the same proof shape as the CSS staleness test).
+
+**Preflight.** `scripts/preflight.mjs` checks, against the database it is
+pointed at: required env vars present and long enough, DB reachable, all
+27 migrations applied, `approval_limits` row count (§8.2 — empty until the
+approval chain lands), fixture/test rows (it refuses to pass if any
+`@example.invalid` or test-login account exists), and whether
+`TOTP_ENCRYPTION_KEY` differs from the development value. Proven against
+the local database: it correctly **fails** with the two test-login
+accounts named — that is the expected local result and shows the checks
+fire.
+
+**The .htaccess conflict.** The repo `.htaccess` (214 lines, 33 rewrite
+directives) exists to make Apache serve the frozen static site at
+extensionless URLs and to deny repository files (the exposure fixed in
+§29.71's predecessor). Under a Node deployment Node serves the app and the
+frozen pages; the Apache rewrite rules become dead weight, and Hostinger
+regenerating the file would silently drop them. **What must be preserved
+regardless of who serves:** the deny rules for `*.md`, `*.sql`, `*.ts`,
+`*.json`, `migrations/`, `src/`, `tests/`, `scripts/` and dotfiles — keep
+them in the file so a partially-Node deployment cannot re-expose the
+repository. The TOLERANCE-0 parity gate (`scripts/selftest-parity.mjs`,
+run green after the rebuild this session) asserts against deployed bytes
+and is unaffected by .htaccess; `npm run test:htaccess` needs a live
+Apache target and cannot run pre-cut-over — it moves to the runbook as a
+post-switch verification, not a gate.
+
+**Cut-over runbook (§7.6 execution, in order; each step names its
+verification):**
+
+1. Create the production MariaDB database and user in hPanel; record
+   credentials in the production `.env` only.
+   Verify: `node scripts/preflight.mjs --env .env.prod` reports the DB
+   reachable and migrations pending count = 27.
+2. Set `SESSION_SECRET` and `TOTP_ENCRYPTION_KEY` (both fresh, 32+ bytes,
+   from `openssl rand -hex 32`); back both offline per KEY_CUSTODY.
+   Verify: preflight passes the env section; `TOTP_ENCRYPTION_KEY`
+   differs from dev.
+3. Commit `dist/` (done in this batch) and confirm the staleness tripwire
+   is green at the cut-over commit. Verify: `npm test` locally at that
+   commit.
+4. Point Hostinger's git integration at the cut-over commit; ensure the
+   Node app entry is `dist/server.js` and the start command runs it.
+   Verify: `curl -sI https://<temp-domain>/` returns 200 from Node, not
+   Apache's static listing.
+5. Run migrations against the production DB:
+   `node scripts/migrate.mjs` with the production env.
+   Verify: preflight reports 27 applied, 0 pending.
+6. Seed the roster with `node scripts/seed-staff.mjs` (it refuses
+   non-local hosts — run it on the host or via an SSH tunnel, per §29.62).
+   Verify: preflight's staff-row check passes; no fixture rows reported.
+7. Owner enrols in 2FA and prints recovery codes; codes held offline.
+   Verify: login as owner redirects to `/2fa/enrol`; recovery code
+   authenticates once.
+8. Switch DNS / primary domain from the temporary domain.
+   Verify: `curl -sI https://neelachandra.com/` 200; the eight repository
+   paths from the exposure fix all 403/404; `npm run test:htaccess`
+   against the live host passes.
+
+**Rollback.** If the app will not start on the temporary domain: the
+previous static deployment is intact as long as the domain switch has not
+happened — revert the Hostinger app target to the static web root (or
+redeploy the last known-good commit, `git revert` the cut-over commit and
+push, which Hostinger re-publishes). Do not touch DNS until the Node app
+answers 200 on the temporary domain; the temporary domain is the canary.
+If the database was migrated and the app then fails, forward-only
+migrations mean the DB stays ahead — the static site still works and no
+rollback of the schema is attempted; record the state and stop.
