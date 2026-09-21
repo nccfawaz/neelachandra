@@ -8,7 +8,7 @@ node_modules/
 .dev.vars
 
 # build output
-dist/
+
 .wrangler/
 
 # parity gate output. Regenerated on every run; the GOLDEN masters under
