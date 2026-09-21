@@ -1,0 +1,991 @@
+import { z } from 'zod';
+import { monthBounds } from '../../lib/dates.js';
+/**
+ * HR input contracts (spec 6.6).
+ *
+ * Zod at every route boundary, as spec 2.6 requires. Two rules from 6.6 are
+ * enforced here rather than in the service because they are properties of the
+ * input itself:
+ *
+ *   Rule 6, full Aadhaar is not stored. The column is `aadhaar_last4 CHAR(4)`
+ *   and this schema refuses anything that is not exactly four digits. A
+ *   twelve-digit paste is rejected, not truncated: truncating would accept a
+ *   full Aadhaar into the request body and from there into whatever logs the
+ *   request, which is the thing the Aadhaar Act restricts. The scanned
+ *   document goes to `files` behind an access-checked route instead.
+ *
+ *   Rupees in the form, paise in the column. The conversion happens at this
+ *   boundary so nothing downstream ever holds a rupee float (spec 2.4).
+ */
+/** An empty text input arrives as '', which is not the same as absent. */
+const optionalText = (max) => z
+    .string()
+    .trim()
+    .max(max)
+    .optional()
+    .transform((v) => (v === '' || v === undefined ? null : v));
+export const optionalDate = z
+    .string()
+    .trim()
+    .optional()
+    .transform((v) => (v === '' || v === undefined ? null : v))
+    .refine((v) => v === null || /^\d{4}-\d{2}-\d{2}$/.test(v), 'Enter a date as YYYY-MM-DD.');
+export const requiredDate = z
+    .string()
+    .trim()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, 'Enter a date as YYYY-MM-DD.');
+/** Rupees in, paise stored. Required variant: a CTC of nothing is not a CTC. */
+const rupeesToPaiseRequired = z
+    .string()
+    .trim()
+    .min(1, 'Enter the annual CTC.')
+    .transform((v) => {
+    const n = Number(v.replace(/,/g, ''));
+    return Number.isFinite(n) ? Math.round(n * 100) : Number.NaN;
+})
+    .refine((n) => Number.isFinite(n) && n > 0, 'Enter the annual CTC in rupees.');
+const rupeesToPaiseOptional = z
+    .string()
+    .trim()
+    .optional()
+    .transform((v) => {
+    if (v === '' || v === undefined)
+        return null;
+    const n = Number(v.replace(/,/g, ''));
+    return Number.isFinite(n) ? Math.round(n * 100) : null;
+});
+const optionalId = z
+    .string()
+    .optional()
+    .transform((v) => {
+    const n = Number.parseInt(v ?? '', 10);
+    return Number.isInteger(n) && n > 0 ? n : null;
+});
+export const EMPLOYMENT_TYPES = ['permanent', 'probation', 'contract', 'intern', 'consultant'];
+export const EMPLOYEE_STATUSES = ['active', 'on_notice', 'on_leave', 'suspended', 'exited'];
+export const EXIT_TYPES = ['resigned', 'terminated', 'retired', 'contract_ended', 'absconded'];
+export const GENDERS = ['male', 'female', 'other'];
+export const DOC_TYPES = [
+    'aadhaar',
+    'pan',
+    'passport',
+    'driving_licence',
+    'educational',
+    'experience',
+    'offer_letter',
+    'appointment_letter',
+    'police_verification',
+    'medical_fitness',
+    'safety_training',
+    'trade_certificate',
+    'other',
+];
+/**
+ * Exactly the last four digits, or nothing (6.6 rule 6).
+ *
+ * The refusal message says what the field is for, because a user who typed
+ * twelve digits was not being careless -- the label on every other form in
+ * India asks for the whole number.
+ */
+const aadhaarLast4 = z
+    .string()
+    .trim()
+    .optional()
+    .transform((v) => (v === '' || v === undefined ? null : v))
+    .refine((v) => v === null || /^\d{4}$/.test(v), 'Enter only the last four digits of the Aadhaar number. The full number is deliberately not stored; attach the scanned document instead.');
+const pan = z
+    .string()
+    .trim()
+    .toUpperCase()
+    .optional()
+    .transform((v) => (v === '' || v === undefined ? null : v))
+    .refine((v) => v === null || /^[A-Z]{5}\d{4}[A-Z]$/.test(v), 'A PAN looks like ABCDE1234F.');
+const ifsc = z
+    .string()
+    .trim()
+    .toUpperCase()
+    .optional()
+    .transform((v) => (v === '' || v === undefined ? null : v))
+    .refine((v) => v === null || /^[A-Z]{4}0[A-Z0-9]{6}$/.test(v), 'An IFSC looks like HDFC0001234.');
+const phone = (message) => z
+    .string()
+    .trim()
+    .optional()
+    .transform((v) => (v === '' || v === undefined ? null : v))
+    .refine((v) => v === null || /^[0-9+\-\s()]{6,20}$/.test(v), message);
+export const employeeSchema = z
+    .object({
+    fullName: z.string().trim().min(3, 'Enter the full name.').max(140),
+    fatherOrSpouseName: optionalText(140),
+    dateOfBirth: optionalDate,
+    gender: z
+        .string()
+        .optional()
+        .transform((v) => (v === '' || v === undefined ? null : v))
+        .refine((v) => v === null || GENDERS.includes(v), 'Choose a valid entry for gender.'),
+    bloodGroup: optionalText(5),
+    personalPhone: phone('Enter a valid phone number.'),
+    personalEmail: z
+        .string()
+        .trim()
+        .optional()
+        .transform((v) => (v === '' || v === undefined ? null : v))
+        .refine((v) => v === null || z.string().email().safeParse(v).success, 'Enter a valid email address.'),
+    emergencyContactName: optionalText(120),
+    emergencyContactPhone: phone('Enter a valid emergency contact number.'),
+    permanentAddress: optionalText(2000),
+    currentAddress: optionalText(2000),
+    departmentId: optionalId,
+    designationId: optionalId,
+    reportingToEmployeeId: optionalId,
+    employmentType: z.enum(EMPLOYMENT_TYPES),
+    dateOfJoining: requiredDate,
+    probationUntil: optionalDate,
+    baseLocationId: optionalId,
+    pan,
+    aadhaarLast4: aadhaarLast4,
+    uan: optionalText(12),
+    pfNumber: optionalText(30),
+    esiNumber: optionalText(20),
+    bankAccountName: optionalText(140),
+    bankAccountNo: optionalText(30),
+    bankIfsc: ifsc,
+})
+    .refine((v) => v.probationUntil === null || v.probationUntil >= v.dateOfJoining, { message: 'Probation cannot end before the date of joining.', path: ['probationUntil'] })
+    .refine((v) => v.dateOfBirth === null || v.dateOfBirth < v.dateOfJoining, { message: 'The date of birth must fall before the date of joining.', path: ['dateOfBirth'] });
+/**
+ * A compensation revision (6.6 rule 5).
+ *
+ * effective_from is required and the service closes the previous row the day
+ * before it, so the history is a continuous set of non-overlapping periods
+ * rather than a set of rows a reader has to guess the order of.
+ */
+export const compensationSchema = z
+    .object({
+    effectiveFrom: requiredDate,
+    ctcAnnualPaise: rupeesToPaiseRequired,
+    basicPaise: rupeesToPaiseOptional,
+    hraPaise: rupeesToPaiseOptional,
+    conveyancePaise: rupeesToPaiseOptional,
+    specialAllowancePaise: rupeesToPaiseOptional,
+    siteAllowancePaise: rupeesToPaiseOptional,
+    employerPfPaise: rupeesToPaiseOptional,
+    employerEsiPaise: rupeesToPaiseOptional,
+    revisionReason: optionalText(160),
+})
+    .refine((v) => {
+    const parts = [
+        v.basicPaise,
+        v.hraPaise,
+        v.conveyancePaise,
+        v.specialAllowancePaise,
+        v.siteAllowancePaise,
+    ].filter((n) => n !== null);
+    if (parts.length === 0)
+        return true;
+    // Monthly components against an annual CTC: the components are a monthly
+    // gross, so twelve of them cannot exceed the annual figure. Caught here
+    // because a CTC that disagrees with its own breakdown is a payroll
+    // dispute later, and nothing downstream re-checks it.
+    return parts.reduce((a, b) => a + b, 0) * 12 <= v.ctcAnnualPaise;
+}, { message: 'The monthly components multiplied by twelve exceed the annual CTC.', path: ['ctcAnnualPaise'] });
+/**
+ * A document row.
+ *
+ * The Aadhaar refine closes a hole rule 6 leaves open: `document_no` is
+ * VARCHAR(60), so the column that refuses a full Aadhaar on the employee row
+ * accepts one here, on a document row for the same person. Rule 6 is about the
+ * number not being in the database, not about which table it is in.
+ */
+export const documentSchema = z
+    .object({
+    docType: z.enum(DOC_TYPES),
+    documentNo: optionalText(60),
+    issuedOn: optionalDate,
+    expiresOn: optionalDate,
+    fileId: z.coerce.number().int().positive('Attach the scanned document.'),
+})
+    .refine((v) => v.docType !== 'aadhaar' || v.documentNo === null || /^\d{4}$/.test(v.documentNo), {
+    message: 'For an Aadhaar document record only the last four digits, or leave the number blank. The full number is deliberately not stored.',
+    path: ['documentNo'],
+})
+    .refine((v) => v.expiresOn === null || v.issuedOn === null || v.expiresOn >= v.issuedOn, {
+    message: 'A document cannot expire before it was issued.',
+    path: ['expiresOn'],
+});
+/**
+ * The exit checklist (6.6 rule 7).
+ *
+ * `override` carries the reason a blocked exit was completed anyway. It is not
+ * a boolean: an exit forced through with keys outstanding is exactly the case
+ * somebody needs to read six months later.
+ */
+export const exitSchema = z.object({
+    dateOfExit: requiredDate,
+    exitType: z.enum(EXIT_TYPES),
+    exitReason: optionalText(255),
+    override: optionalText(500),
+});
+/** Turns the first Zod issue into one sentence for the banner. */
+export function firstError(err) {
+    const issue = err.issues[0];
+    return issue ? issue.message : 'That submission was not valid.';
+}
+/* Attendance (6.6 rules 1 and 4) ----------------------------------------- */
+export const ATTENDANCE_STATUSES = [
+    'present',
+    'absent',
+    'half_day',
+    'weekly_off',
+    'holiday',
+    'paid_leave',
+    'unpaid_leave',
+    'on_duty_travel',
+    'comp_off',
+];
+export const LEAVE_REQUEST_STATUSES = ['pending', 'approved', 'rejected', 'cancelled', 'withdrawn'];
+/**
+ * The statuses a day already covered by approved leave may be marked as.
+ *
+ * `approveLeave` writes the leave days itself and adds them to
+ * `leave_balances.availed`, so marking one of those days `present` would leave
+ * the balance saying a day was taken and the attendance saying it was worked.
+ * These three agree with the balance; everything else is refused, and the
+ * refusal names the request so it can be withdrawn instead.
+ *
+ * Declared here rather than in the service because it has two readers now: the
+ * service refuses by it and the month matrix renders exactly it on a
+ * leave-covered cell. A matrix offering a status the service then refuses is the
+ * defect one list prevents.
+ */
+export const LEAVE_DAY_STATUSES = ['paid_leave', 'unpaid_leave', 'half_day'];
+/**
+ * One keystroke per attendance status, for the month matrix (spec 1761: "single
+ * letter to set status").
+ *
+ * DERIVED rather than authored. The rule: the key for a status is the first
+ * letter of its own name that no earlier status has taken, scanning the name
+ * left to right and the statuses in declaration order. For 006's nine that
+ * gives p a h w o i u n c -- `holiday` yields 'o' because `half_day` took 'h',
+ * and `paid_leave` yields 'i' because 'p' and 'a' are gone.
+ *
+ * Authored, this table would be a business rule living in two places: a tenth
+ * status added to the enum above would silently collide with one of the nine and
+ * two cells would answer to one key. Derived, a tenth status either finds a free
+ * letter or gets NO key -- which is why the type is Partial and the matrix must
+ * render the status in its dropdown whether or not a key came back. The failure
+ * mode is a status without a shortcut, not a shortcut with two statuses.
+ *
+ * The keys are shipped to the browser as one JSON attribute on the matrix and
+ * the client script does nothing but look them up, so this is the only place
+ * they exist. Asserted in tests/hr-schemas.test.ts.
+ */
+export const STATUS_KEYS = (() => {
+    const keys = {};
+    const taken = new Set();
+    for (const status of ATTENDANCE_STATUSES) {
+        const free = [...status].find((ch) => ch >= 'a' && ch <= 'z' && !taken.has(ch));
+        if (free === undefined)
+            continue;
+        taken.add(free);
+        keys[status] = free;
+    }
+    return keys;
+})();
+export const monthInput = z
+    .string()
+    .trim()
+    .regex(/^\d{4}-(0[1-9]|1[0-2])$/, 'Choose a month as YYYY-MM.');
+/**
+ * A repeated form field, normalised.
+ *
+ * `parseBody({ all: true })` hands back a string when a field appears once and
+ * an array when it appears more than once, so a grid submitted for a single
+ * employee has a different shape from the same grid submitted for two. Every
+ * row field goes through this so the zip below does not have to care.
+ */
+const repeated = z.preprocess((v) => (v === undefined || v === null ? [] : Array.isArray(v) ? v.map(String) : [String(v)]), z.array(z.string()));
+/** 'HH:MM' from a time input, widened to the TIME column's 'HH:MM:SS'. */
+function toSqlTime(v) {
+    const t = v.trim();
+    if (t === '')
+        return null;
+    return /^\d{2}:\d{2}$/.test(t) ? `${t}:00` : /^\d{2}:\d{2}:\d{2}$/.test(t) ? t : null;
+}
+/**
+ * One post for a whole day across a project (spec 6.6, the bulk row).
+ *
+ * The grid renders every employee on the books and posts them all, so a blank
+ * status means "not marked today" and is dropped here rather than refused --
+ * otherwise marking four of ten people requires deleting six rows from the
+ * form. A row with a status but a junk employee id is a different thing and
+ * fails.
+ *
+ * `overtime_hours` is DECIMAL(4,1): 999.9 is the column's ceiling, and 24 is
+ * the day's, so the refusal is at 24.
+ */
+export const attendanceBulkSchema = z
+    .object({
+    attendanceDate: requiredDate,
+    projectId: optionalId,
+    employeeId: repeated,
+    status: repeated,
+    inTime: repeated,
+    outTime: repeated,
+    overtimeHours: repeated,
+    remarks: repeated,
+})
+    .transform((v, ctx) => {
+    const rows = [];
+    for (let i = 0; i < v.employeeId.length; i += 1) {
+        const status = (v.status[i] ?? '').trim();
+        if (status === '')
+            continue;
+        const employeeId = Number.parseInt(v.employeeId[i] ?? '', 10);
+        if (!Number.isInteger(employeeId) || employeeId < 1) {
+            ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'That attendance grid posted an unreadable employee.' });
+            return z.NEVER;
+        }
+        if (!ATTENDANCE_STATUSES.includes(status)) {
+            ctx.addIssue({ code: z.ZodIssueCode.custom, message: `'${status}' is not an attendance status.` });
+            return z.NEVER;
+        }
+        const otRaw = (v.overtimeHours[i] ?? '').trim();
+        const overtimeHours = otRaw === '' ? 0 : Number(otRaw);
+        if (!Number.isFinite(overtimeHours) || overtimeHours < 0 || overtimeHours > 24) {
+            ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Overtime is a number of hours between 0 and 24.' });
+            return z.NEVER;
+        }
+        const inTime = toSqlTime(v.inTime[i] ?? '');
+        const outTime = toSqlTime(v.outTime[i] ?? '');
+        if ((v.inTime[i] ?? '').trim() !== '' && inTime === null) {
+            ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Enter a time as HH:MM.' });
+            return z.NEVER;
+        }
+        if ((v.outTime[i] ?? '').trim() !== '' && outTime === null) {
+            ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Enter a time as HH:MM.' });
+            return z.NEVER;
+        }
+        if (inTime !== null && outTime !== null && outTime <= inTime) {
+            ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'The out time has to fall after the in time.' });
+            return z.NEVER;
+        }
+        const remarks = (v.remarks[i] ?? '').trim();
+        rows.push({
+            employeeId,
+            status: status,
+            inTime,
+            outTime,
+            overtimeHours: Math.round(overtimeHours * 10) / 10,
+            remarks: remarks === '' ? null : remarks.slice(0, 255),
+        });
+    }
+    if (rows.length === 0) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Nothing was marked. Set a status on at least one person.' });
+        return z.NEVER;
+    }
+    const seen = new Set();
+    for (const row of rows) {
+        if (seen.has(row.employeeId)) {
+            ctx.addIssue({
+                code: z.ZodIssueCode.custom,
+                message: 'That grid marks the same employee twice for one day.',
+            });
+            return z.NEVER;
+        }
+        seen.add(row.employeeId);
+    }
+    return { attendanceDate: v.attendanceDate, projectId: v.projectId, rows };
+});
+/**
+ * The month matrix: one post for a whole month (spec 1761).
+ *
+ * THE WIRE SHAPE IS THE DECISION HERE, and it is deliberately not the bulk
+ * form's. `attendanceBulkSchema` above zips six parallel arrays, which is safe
+ * only while every row contributes exactly one entry to each of the six -- the
+ * reason `AttendanceEntry` omits a whole row rather than disabling one control
+ * in it. A matrix has 31 columns of controls and the temptation to post only the
+ * changed ones is overwhelming, so parallel arrays would be one clever
+ * optimisation away from writing row 5's status against row 12's employee.
+ *
+ * So every cell posts ONE self-identifying string, `employeeId|day|status`. A
+ * cell that is missing from the post is simply absent; nothing shifts to take
+ * its place. There is no arrangement of the fields that can misattribute a
+ * status, which is what makes it safe for the client to send any subset -- or,
+ * as it happens, all of them.
+ *
+ * THE DAY IS A DAY, NOT A DATE, and that is a containment property rather than
+ * a saving. `month` is posted once and is the month whose lock the service
+ * checks; each cell names a day inside it. A tampered post therefore cannot
+ * write into December while claiming September was the month being unlocked,
+ * because it has no field in which to say December. The alternative -- a full
+ * date per cell, checked against the posted month -- gets the same answer from a
+ * validation that someone can later delete.
+ *
+ * A blank status is DROPPED, as in the bulk form: the matrix renders every
+ * editable cell and a month with four days marked posts hundreds of blanks. What
+ * is NOT dropped is a cell whose status equals what is already stored -- the
+ * service compares and counts it as unchanged, so a no-JavaScript post of the
+ * whole grid and a keyboard post of three cells leave the database in the same
+ * state. That comparison is what keeps authority over an attendance value on the
+ * server, and it is why nothing here tries to work out what changed.
+ */
+export const attendanceGridSchema = z
+    .object({
+    month: monthInput,
+    projectId: optionalId,
+    cell: repeated,
+})
+    .transform((v, ctx) => {
+    const refuse = (message) => {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message });
+        return z.NEVER;
+    };
+    const lastDay = Number(monthBounds(v.month).end.slice(8));
+    const cells = [];
+    const seen = new Set();
+    for (const raw of v.cell) {
+        const parts = raw.split('|');
+        if (parts.length !== 3)
+            return refuse('That attendance matrix posted an unreadable cell.');
+        const employeeId = Number.parseInt(parts[0] ?? '', 10);
+        if (!Number.isInteger(employeeId) || employeeId < 1) {
+            return refuse('That attendance matrix posted an unreadable employee.');
+        }
+        const day = Number.parseInt(parts[1] ?? '', 10);
+        if (!Number.isInteger(day) || day < 1 || day > lastDay) {
+            return refuse(`That attendance matrix posted a day that is not in ${v.month}.`);
+        }
+        // Registered before the blank is dropped, so two controls for one cell are
+        // refused whichever of them carries a status.
+        const key = `${employeeId}|${day}`;
+        if (seen.has(key))
+            return refuse('That attendance matrix sets the same day twice for one person.');
+        seen.add(key);
+        const status = (parts[2] ?? '').trim();
+        if (status === '')
+            continue;
+        if (!ATTENDANCE_STATUSES.includes(status)) {
+            return refuse(`'${status}' is not an attendance status.`);
+        }
+        cells.push({
+            employeeId,
+            date: `${v.month}-${String(day).padStart(2, '0')}`,
+            status: status,
+        });
+    }
+    if (cells.length === 0) {
+        return refuse('Nothing was marked. Set a status on at least one cell.');
+    }
+    return { month: v.month, projectId: v.projectId, cells };
+});
+/**
+ * Closing a month (6.6 rule 4).
+ *
+ * The month is the whole unit and there is no project scope, because a lock
+ * that covered one project's rows and not another's would leave the same month
+ * both closed and open, and rule 4 speaks of "`attendance` rows for that
+ * period".
+ */
+export const attendanceApproveSchema = z.object({
+    month: monthInput,
+});
+/* Leave (spec 6.6 route table, and 561 for self-approval) ----------------- */
+/** An unchecked checkbox is absent from the body, not 'off'. */
+const checkbox = z
+    .string()
+    .optional()
+    .transform((v) => v === 'on' || v === '1' || v === 'true');
+/**
+ * A leave request.
+ *
+ * `employeeId` is optional and defaults to the requester's own employee record.
+ * When it is present and different, the service demands `hr.leave_approve`:
+ * "any employee with a login raises their own" leaves no route for the site
+ * staff who have no login at all, and HR entering it for them is the only way
+ * those days reach `attendance` and therefore 6.8's staff cost.
+ *
+ * `halfDay` is restricted to a single date. Half of a five-day range is not a
+ * thing the `days DECIMAL(4,1)` column can express usefully, and the two-way
+ * split people actually take is a half day on one date.
+ */
+export const leaveRequestSchema = z
+    .object({
+    employeeId: optionalId,
+    leaveTypeId: z.coerce.number().int().positive('Choose a leave type.'),
+    fromDate: requiredDate,
+    toDate: requiredDate,
+    halfDay: checkbox,
+    reason: optionalText(255),
+    handoverToEmployeeId: optionalId,
+    fileId: optionalId,
+})
+    .refine((v) => v.toDate >= v.fromDate, {
+    message: 'The last day cannot fall before the first.',
+    path: ['toDate'],
+})
+    .refine((v) => !v.halfDay || v.fromDate === v.toDate, {
+    message: 'A half day is a single date. Clear the half-day box or make both dates the same.',
+    path: ['halfDay'],
+});
+/**
+ * The approver's decision, one route for both outcomes.
+ *
+ * A rejection with no reason is the thing an employee escalates, so the reason
+ * is required for that branch and refused at this boundary rather than left to
+ * a nullable column.
+ */
+export const leaveDecisionSchema = z
+    .object({
+    decision: z.enum(['approve', 'reject']),
+    rejectReason: optionalText(255),
+})
+    .refine((v) => v.decision !== 'reject' || v.rejectReason !== null, {
+    message: 'Give the reason for the rejection. The employee sees it.',
+    path: ['rejectReason'],
+});
+/* Contractor labour and bills (spec 6.6 rules 2 and 3) -------------------- */
+/**
+ * The second population of 6.6, and it never mixes with the first.
+ *
+ * Nothing in this half of the file names an employee column. A contractor's
+ * workers are a headcount per skill per day, not people the company holds
+ * identity documents for, and that is the whole reason `contractor_attendance`
+ * has a `headcount SMALLINT` where `attendance` has an `employee_id`.
+ */
+export const SKILL_LEVELS = [
+    'skilled',
+    'semi_skilled',
+    'unskilled',
+    'mason',
+    'carpenter',
+    'barbender',
+    'plumber',
+    'electrician',
+    'painter',
+    'helper',
+];
+export const RATE_UOMS = ['per_day', 'per_sqft', 'per_cum', 'per_kg', 'lumpsum'];
+export const CONTRACTOR_STATUSES = ['active', 'on_hold', 'blacklisted'];
+export const CONTRACTOR_BILL_STATUSES = [
+    'draft',
+    'submitted',
+    'verified',
+    'approved',
+    'paid',
+    'disputed',
+];
+/**
+ * The contractor master.
+ *
+ * `code` is entered rather than generated: labour contractors are already known
+ * on site by a short name, and 6.6 gives no numbering series for them the way
+ * 6.3 gives one for projects.
+ *
+ * The compliance dates are optional because a contractor who has not produced a
+ * licence yet is still a row somebody has to record before the first day is
+ * marked. What the absence means is settled in the service: rule 3 refuses a
+ * date that HAS PASSED, and a NULL has not passed, so an unrecorded licence
+ * does not block. That is the spec's wording, and DECISIONS records it as a hole
+ * rather than tightening beyond it here.
+ */
+export const contractorSchema = z.object({
+    code: z
+        .string()
+        .trim()
+        .min(2, 'Give the contractor a short code.')
+        .max(20, 'The code column holds 20 characters.')
+        .transform((v) => v.toUpperCase()),
+    name: z.string().trim().min(3, 'Give the contractor a name.').max(180),
+    vendorId: optionalId,
+    contactPhone: optionalText(20),
+    pan: z
+        .string()
+        .trim()
+        .optional()
+        .transform((v) => (v === '' || v === undefined ? null : v.toUpperCase()))
+        .refine((v) => v === null || /^[A-Z]{5}[0-9]{4}[A-Z]$/.test(v), 'A PAN is 10 characters, for example ABCDE1234F.'),
+    gstin: z
+        .string()
+        .trim()
+        .optional()
+        .transform((v) => (v === '' || v === undefined ? null : v.toUpperCase()))
+        .refine((v) => v === null || /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][0-9A-Z]{3}$/.test(v), 'A GSTIN is 15 characters, for example 29ABCDE1234F1Z5.'),
+    tradeSpecialisation: optionalText(160),
+    licenceNo: optionalText(60),
+    licenceValidUntil: optionalDate,
+    esiRegistered: checkbox,
+    pfRegistered: checkbox,
+    wcPolicyNo: optionalText(60),
+    wcPolicyValidUntil: optionalDate,
+    rating: z
+        .string()
+        .trim()
+        .optional()
+        .transform((v) => {
+        if (v === '' || v === undefined)
+            return null;
+        const n = Number.parseInt(v, 10);
+        return Number.isInteger(n) ? n : Number.NaN;
+    })
+        .refine((v) => v === null || (Number.isInteger(v) && v >= 1 && v <= 5), 'Rate from 1 to 5, or leave it blank.'),
+    status: z.enum(CONTRACTOR_STATUSES).default('active'),
+});
+/** Rupees in, paise stored, for a figure that must be present and positive. */
+const rupeesRequired = (message) => z
+    .string()
+    .trim()
+    .min(1, message)
+    .transform((v) => {
+    const n = Number(v.replace(/,/g, ''));
+    return Number.isFinite(n) ? Math.round(n * 100) : Number.NaN;
+})
+    .refine((n) => Number.isFinite(n) && n > 0, message);
+/** Rupees in, paise stored, for a figure that is usually nothing. */
+const rupeesOptional = (message) => z
+    .string()
+    .trim()
+    .optional()
+    .transform((v) => {
+    if (v === '' || v === undefined)
+        return 0;
+    const n = Number(v.replace(/,/g, ''));
+    return Number.isFinite(n) ? Math.round(n * 100) : Number.NaN;
+})
+    .refine((n) => Number.isFinite(n) && n >= 0, message);
+/**
+ * A percentage held as basis points, which is how this codebase carries one
+ * outside a DECIMAL(5,2) column (migration 011, spec 4.3).
+ *
+ * The form shows a percent and this converts, so 2.5 arrives as 250. Two decimal
+ * places is the ceiling because that is what the finance columns hold, and a
+ * third would be silently rounded in the column instead of refused here.
+ */
+const percentToBasisPoints = (message) => z
+    .string()
+    .trim()
+    .optional()
+    .transform((v) => {
+    if (v === '' || v === undefined)
+        return null;
+    const n = Number(v);
+    if (!Number.isFinite(n) || n < 0 || n > 100)
+        return Number.NaN;
+    return Math.round(n * 100);
+})
+    .refine((n) => n === null || Number.isFinite(n), message);
+/**
+ * A rate card line.
+ *
+ * `effectiveFrom` is required and `effectiveTo` is not: a rate runs until it is
+ * superseded, and the service closes the previous line rather than asking the
+ * user to date both ends of it.
+ *
+ * `uom` matters more than it looks, and used to matter differently. Until
+ * migration 013 `contractor_attendance` held a headcount and no quantity, so
+ * only a `per_day` rate could be priced from a day's attendance and the other
+ * four members of the ENUM were unreachable -- recorded at the time as a
+ * structural gap in 6.6 rather than a validation choice. 013 adds the quantity,
+ * so all five now price. See DECISIONS 19.2.
+ *
+ * `skillLevel` stays optional for the measured UOMs and required for `per_day`,
+ * which is the asymmetry a piece rate has: 240 sqft of plastering costs the same
+ * whoever laid it, whereas a day is bought from a mason or from a helper at two
+ * different prices.
+ */
+export const contractorRateSchema = z
+    .object({
+    projectId: optionalId,
+    workType: z.string().trim().min(2, 'Name the work this rate is for.').max(120),
+    uom: z.enum(RATE_UOMS),
+    skillLevel: z
+        .string()
+        .trim()
+        .optional()
+        .transform((v) => (v === '' || v === undefined ? null : v))
+        .pipe(z
+        .enum(SKILL_LEVELS, { errorMap: () => ({ message: 'That is not one of the skill levels.' }) })
+        .nullable()),
+    rate: rupeesRequired('Enter the rate in rupees.'),
+    effectiveFrom: requiredDate,
+    effectiveTo: optionalDate,
+})
+    .refine((v) => v.effectiveTo === null || v.effectiveTo >= v.effectiveFrom, {
+    message: 'The rate cannot end before it starts.',
+    path: ['effectiveTo'],
+})
+    .refine((v) => v.uom !== 'per_day' || v.skillLevel !== null, {
+    message: 'A per-day rate is priced against a skill level, so choose one.',
+    path: ['skillLevel'],
+});
+/**
+ * The rate unit as the rate-card select shows it: `per_sqft` reads "per sqft".
+ *
+ * The same `replace` the enum selects use, exported so that a refusal names the
+ * unit in the words the person picked rather than in the column's spelling.
+ */
+export const uomLabel = (uom) => uom.replace(/_/g, ' ');
+/**
+ * A day's contractor headcount, one row per skill level.
+ *
+ * The same `repeated` shape as the employee grid and for the same reason: one
+ * skill row posts scalars and two post arrays. A blank headcount is dropped
+ * rather than refused, because the entry screen renders a row per skill level
+ * the contractor has a rate for and a site gate marks two of them.
+ *
+ * A headcount of 0 IS refused. Blank means "no masons today" and needs no row;
+ * a typed zero beside three overtime hours is a contradiction, and the row it
+ * would write is one the UNIQUE key then blocks the real figure from taking.
+ *
+ * A headcount is required on a measured row too, and that is a choice. The
+ * quantity is what prices such a row, so the headcount is not arithmetically
+ * needed -- but `headcount SMALLINT UNSIGNED NOT NULL` has no default, this
+ * table is called attendance, and whoever knows 300 sqft was plastered knows how
+ * many masons did it. What is NOT allowed is a quantity with the headcount cell
+ * left empty: the blank-means-skip rule would drop the row and the measure with
+ * it, so that combination refuses instead of vanishing.
+ *
+ * `uom`, `workType` and `quantity` arrived with migration 013 (DECISIONS 19.2).
+ * A blank `uom` reads as `per_day`, which is what every row posted before 013
+ * meant and what the day grid still posts. The split is strict in all three
+ * directions: a day row may not carry a quantity, a measured row must, and a
+ * lumpsum row is given one of exactly 1 rather than allowed to state one. The
+ * last of those is migration 018 and DECISIONS 21.7 -- `rate_paise` on a lumpsum
+ * row is a whole contract sum, so a quantity beside it is a multiplier over a
+ * contract sum, and the number a clerk would reach for is the square footage.
+ *
+ * `overtimeHours` is the row's total, not per worker: it sits beside a headcount,
+ * so a per-worker figure would have to be multiplied by something to mean
+ * anything. The ceiling follows from that reading -- twelve extra hours per
+ * person is already a very long day. Nothing prices this figure yet; DECISIONS
+ * records that overtime is recorded and unpriced until 8.6 gives a multiplier.
+ *
+ * `projectId` is required, unlike the employee grid's, because
+ * `contractor_attendance.project_id` is NOT NULL: contractor labour is always
+ * charged to a site, never to overhead.
+ */
+export const contractorAttendanceSchema = z
+    .object({
+    contractorId: z.coerce.number().int().min(1, 'Choose a contractor.'),
+    projectId: z.coerce.number().int().min(1, 'Choose the project this labour worked on.'),
+    attendanceDate: requiredDate,
+    skillLevel: repeated,
+    uom: repeated,
+    workType: repeated,
+    headcount: repeated,
+    quantity: repeated,
+    overtimeHours: repeated,
+    overrideCompliance: checkbox,
+})
+    .transform((v, ctx) => {
+    const rows = [];
+    const refuse = (message) => {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message });
+        return z.NEVER;
+    };
+    for (let i = 0; i < v.skillLevel.length; i += 1) {
+        const headRaw = (v.headcount[i] ?? '').trim();
+        const qtyRaw = (v.quantity[i] ?? '').trim();
+        if (headRaw === '') {
+            if (qtyRaw === '')
+                continue;
+            return refuse(`A quantity of ${qtyRaw} was entered with no headcount beside it. Fill in how many people did the work, or clear the quantity.`);
+        }
+        const skill = (v.skillLevel[i] ?? '').trim();
+        if (!SKILL_LEVELS.includes(skill)) {
+            return refuse(`'${skill}' is not one of the skill levels.`);
+        }
+        const headcount = Number(headRaw);
+        if (!Number.isInteger(headcount) || headcount < 1 || headcount > 999) {
+            return refuse('A headcount is a whole number of people from 1 to 999. Leave it blank for none.');
+        }
+        const uomRaw = (v.uom[i] ?? '').trim();
+        const uom = uomRaw === '' ? 'per_day' : uomRaw;
+        if (!RATE_UOMS.includes(uom)) {
+            return refuse(`'${uomRaw}' is not one of the rate units.`);
+        }
+        const workRaw = (v.workType[i] ?? '').trim();
+        if (workRaw.length > 120) {
+            return refuse('A work type is at most 120 characters.');
+        }
+        const workType = workRaw;
+        let quantity = null;
+        if (uom === 'per_day') {
+            if (qtyRaw !== '') {
+                return refuse(`A per-day row is priced by headcount, so it takes no quantity. Remove the ${qtyRaw} beside ${skill.replace(/_/g, ' ')}, or change the unit.`);
+            }
+            // A day row names no work, and since 016 that is enforced by
+            // chk_ca_work_type rather than left to the form. It matters because
+            // work_type is now part of uq_ca: two day rows for one skill level
+            // annotated differently would be distinct rows in the key, so they would
+            // both insert and both bill. Refuse the annotation, not the row.
+            if (workType !== '') {
+                return refuse(`The ${skill.replace(/_/g, ' ')} line is priced per day, which is decided by the skill level, so it cannot also name a work type. Remove '${workType}', or quote the line in the unit that work is measured in.`);
+            }
+        }
+        else if (uom === 'lumpsum') {
+            // A lumpsum row is one sum, once. `rate_paise` is the whole agreed sum for
+            // the scope named in `work_type`, and `amount_paise = rate_paise *
+            // quantity`, so a quantity is a multiplier over a contract sum -- which is
+            // why the form does not offer one and this branch will not read one. The
+            // guarantee is chk_ca_quantity since migration 018, which pins it to
+            // exactly 1; this is the form-level echo, and it accepts a posted 1
+            // because that is what the row will hold, not because the box exists.
+            if (workType === '') {
+                return refuse('A lumpsum row has to name the work the sum is for, so that one rate card line prices it.');
+            }
+            if (qtyRaw !== '' && Number(qtyRaw) !== 1) {
+                return refuse(`The ${workType} line is a lumpsum, so it is one sum for the whole scope and takes no quantity. Remove the ${qtyRaw} beside it -- a quantity there would multiply the agreed sum. If ${qtyRaw} of them are genuinely due, record them on their own dates.`);
+            }
+            quantity = 1;
+        }
+        else {
+            // A measured row names its work type, and this is not decoration. Skill
+            // level picks a day rate; it cannot pick between plastering and tiling
+            // when a contractor holds a per-sqft rate for both. Without the name the
+            // resolution falls back to "latest effective_from wins", which is an
+            // arbitrary choice between two very different amounts.
+            if (workType === '') {
+                return refuse(`A ${uomLabel(uom)} row has to say what work it is for, so that one rate card line prices it.`);
+            }
+            const n = Number(qtyRaw);
+            if (!Number.isFinite(n) || n <= 0) {
+                return refuse(`A ${uomLabel(uom)} rate is priced by the measure, so enter a quantity above zero.`);
+            }
+            if (n > 1_000_000) {
+                return refuse(`${qtyRaw} is too large for one day's ${uomLabel(uom)} work. Check the figure.`);
+            }
+            // DECIMAL(14,3): a fourth decimal place would be rounded by the column
+            // rather than refused here, so round it where the number is still visible.
+            quantity = Math.round(n * 1000) / 1000;
+        }
+        const otRaw = (v.overtimeHours[i] ?? '').trim();
+        const overtimeHours = otRaw === '' ? 0 : Number(otRaw);
+        if (!Number.isFinite(overtimeHours) || overtimeHours < 0) {
+            return refuse('Overtime is a number of hours, or blank for none.');
+        }
+        if (overtimeHours > headcount * 12) {
+            return refuse(`${overtimeHours} overtime hours across ${headcount} ${headcount === 1 ? 'person' : 'people'} is more than twelve each. Check the figure.`);
+        }
+        rows.push({
+            skillLevel: skill,
+            uom: uom,
+            workType,
+            headcount,
+            quantity,
+            overtimeHours: Math.round(overtimeHours * 10) / 10,
+        });
+    }
+    if (rows.length === 0) {
+        return refuse('No headcount was entered. Fill in at least one skill row.');
+    }
+    // The form-level mirror of uq_ca, which migration 016 widened to
+    // (contractor_id, project_id, attendance_date, skill_level, work_type). Two
+    // work types at one skill level on one day -- masons plastering 300 sqft and
+    // tiling 40 -- is ordinary interiors work and is now recordable. Two rows for
+    // the same skill AND the same work type is still one thing counted twice.
+    const seen = new Set();
+    for (const row of rows) {
+        // The pair is the key, and it is built by JSON.stringify rather than by
+        // joining on a separator: a skill level comes from a closed list but a work
+        // type is free text, so any printable separator is a character a work type
+        // could contain and be made to key as a different pair. Quoting both is the
+        // cheap way to be certain, and it stays greppable.
+        const key = JSON.stringify([row.skillLevel, row.workType]);
+        if (seen.has(key)) {
+            const what = row.workType === '' ? 'a day rate' : row.workType;
+            return refuse(`That form counts ${row.skillLevel.replace(/_/g, ' ')} on ${what} twice for one day. One row per skill level per work type per date.`);
+        }
+        seen.add(key);
+    }
+    // Refused here first, and refused by the database since migration 017 --
+    // trg_ca_basis_bi/_bu, because no UNIQUE index can express the rule and 017's
+    // header carries the proof. This block is now the form-level echo of a server
+    // guarantee rather than the only thing holding the line, which is what it was
+    // between 016 and 017.
+    //
+    // It is still worth having, and it is also not enough on its own. Worth having
+    // because it names the offending line while the form is still on screen. Not
+    // enough because `rows` is one submission: a day row posted in the morning and a
+    // measured row for the same gang posted in the afternoon never appear here
+    // together. `recordContractorAttendance` checks the whole day behind a FOR UPDATE
+    // and produces the message for that case; the trigger is what makes it true for
+    // a caller that reaches neither.
+    //
+    // DECISIONS 21.5 still holds the POLICY open -- whether the pair is two gangs or
+    // one gang billed twice is an owner question. What is settled is that all three
+    // layers now answer it the same way, and the conservative way: if the owner says
+    // it is legitimate, this block and the service check come out and 017 is reverted
+    // by a migration that drops the two triggers.
+    const dayRowSkills = new Set(rows.filter((r) => r.uom === 'per_day').map((r) => r.skillLevel));
+    for (const row of rows) {
+        if (row.uom !== 'per_day' && dayRowSkills.has(row.skillLevel)) {
+            return refuse(`That form puts ${row.skillLevel.replace(/_/g, ' ')} on a day rate and on ${row.workType} for the same date. If those are the same people, the day rate already pays for the ${uomLabel(row.uom)} work; if they are two gangs, record the second one under its own skill level or on its own date.`);
+        }
+    }
+    return {
+        contractorId: v.contractorId,
+        projectId: v.projectId,
+        attendanceDate: v.attendanceDate,
+        rows,
+        overrideCompliance: v.overrideCompliance,
+    };
+});
+/**
+ * A contractor, a project and a date range: the key both the approval sweep and
+ * the bill generator work on.
+ *
+ * Not in the 6.6 route table for the approval, which is a gap rather than a
+ * choice -- rule 2 bills only rows with `approved_at IS NOT NULL` and the table
+ * gives no route that could set it. Flagged in DECISIONS; the route added for it
+ * carries `hr.attendance_approve`, the permission rule 4 already uses for the
+ * employee side of the same act.
+ */
+export const contractorPeriodSchema = z
+    .object({
+    contractorId: z.coerce.number().int().min(1, 'Choose a contractor.'),
+    projectId: z.coerce.number().int().min(1, 'Choose a project.'),
+    from: requiredDate,
+    to: requiredDate,
+})
+    .refine((v) => v.to >= v.from, {
+    message: 'The last day of the period cannot fall before the first.',
+    path: ['to'],
+});
+/**
+ * Generating a bill (6.6 rule 2).
+ *
+ * The gross is never in this form: it is summed from approved attendance inside
+ * the transaction, because "generated from approved attendance, never typed" is
+ * the rule the whole table exists to serve. What IS in the form is the four
+ * figures the rule says are applied afterwards, and each of them is here for a
+ * different reason:
+ *
+ *   retentionPct and tdsPct default from `settings` (`finance.retention_default_pct`,
+ *   `finance.tds_default_pct`, both basis points since migration 011) and are
+ *   overridable per bill, because `contractor_bills` stores the resulting paise
+ *   and has no column for the rate that produced them. The service records the
+ *   rate in the audit log for that reason.
+ *
+ *   advanceRecovered is typed because there is nowhere to read it from. No
+ *   migration creates a contractor advance table; 6.8 rule 6 tracks advances to
+ *   EMPLOYEES as `expenses` rows with `advance_settlement_of`. Recorded in
+ *   DECISIONS as a blocking gap rather than invented as a table.
+ *
+ *   penalty is typed by nature: a liquidated-damages figure is a judgement.
+ */
+export const contractorBillGenerateSchema = z
+    .object({
+    contractorId: z.coerce.number().int().min(1, 'Choose a contractor.'),
+    projectId: z.coerce.number().int().min(1, 'Choose a project.'),
+    from: requiredDate,
+    to: requiredDate,
+    retentionPct: percentToBasisPoints('Retention is a percentage between 0 and 100.'),
+    tdsPct: percentToBasisPoints('TDS is a percentage between 0 and 100.'),
+    advanceRecovered: rupeesOptional('Advance recovery is an amount in rupees, or blank for none.'),
+    penalty: rupeesOptional('A penalty is an amount in rupees, or blank for none.'),
+})
+    .refine((v) => v.to >= v.from, {
+    message: 'The last day of the period cannot fall before the first.',
+    path: ['to'],
+});

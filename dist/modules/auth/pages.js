@@ -1,0 +1,41 @@
+import { jsx as _jsx, jsxs as _jsxs } from "hono/jsx/jsx-runtime";
+import { AuthLayout } from '../../dashboard/layouts/AppShell.js';
+import { Alert, CsrfInput, FormField } from '../../dashboard/components/index.js';
+import { MIN_PASSWORD_LENGTH } from '../../lib/password.js';
+/**
+ * The auth screens. They share the .ncc-auth card rather than the app shell,
+ * because there is no permission set to build a sidebar from until the user
+ * is through all of these.
+ */
+export function LoginPage(props) {
+    return (_jsxs(AuthLayout, { title: "Sign in", children: [_jsx("h1", { children: "Staff sign in" }), _jsx("p", { class: "ncc-muted", children: "Neelachandra Construction and Interiors" }), props.error ? _jsx(Alert, { tone: "error", children: props.error }) : null, props.notice ? _jsx(Alert, { tone: "ok", children: props.notice }) : null, _jsxs("form", { method: "post", action: "/login", class: "ncc-stack", style: "margin-top:1rem", children: [_jsx(CsrfInput, { token: props.csrfToken }), props.next ? _jsx("input", { type: "hidden", name: "next", value: props.next }) : null, _jsx(FormField, { label: "Work email", name: "email", type: "email", value: props.email, required: true, autocomplete: "username" }), _jsx(FormField, { label: "Password", name: "password", type: "password", required: true, autocomplete: "current-password" }), _jsx("button", { class: "ncc-btn ncc-btn-primary", type: "submit", style: "width:100%", children: "Sign in" })] }), _jsxs("div", { class: "ncc-auth__foot", children: [_jsx("a", { href: "/forgot-password", children: "Forgot password" }), _jsx("a", { href: "/", children: "Back to the website" })] }), _jsx("p", { class: "ncc-hint", style: "margin-top:.9rem", children: "Accounts are created by an administrator. There is no self sign up." })] }));
+}
+export function TotpVerifyPage(props) {
+    return (_jsxs(AuthLayout, { title: "Two factor", children: [_jsx("h1", { children: "Enter your code" }), _jsx("p", { class: "ncc-muted", children: "Open your authenticator app and enter the current 6 digit code." }), props.error ? _jsx(Alert, { tone: "error", children: props.error }) : null, _jsxs("form", { method: "post", action: "/2fa/verify", class: "ncc-stack", style: "margin-top:1rem", children: [_jsx(CsrfInput, { token: props.csrfToken }), _jsx(FormField, { label: "Code", name: "code", required: true, autocomplete: "one-time-code", placeholder: "123456", hint: "A recovery code also works here." }), _jsx("button", { class: "ncc-btn ncc-btn-primary", type: "submit", style: "width:100%", children: "Continue" })] }), _jsx("div", { class: "ncc-auth__foot", children: _jsxs("form", { method: "post", action: "/logout", children: [_jsx(CsrfInput, { token: props.csrfToken }), _jsx("button", { class: "ncc-btn", type: "submit", children: "Sign out" })] }) })] }));
+}
+export function TotpEnrolPage(props) {
+    return (_jsxs(AuthLayout, { title: "Set up two factor", children: [_jsx("h1", { children: "Set up two factor authentication" }), _jsx("p", { class: "ncc-muted", children: "Your role requires this. It has to be done before you can use the rest of the platform." }), props.error ? _jsx(Alert, { tone: "error", children: props.error }) : null, _jsxs("ol", { class: "ncc-hint", style: "padding-left:1.2rem;line-height:1.7", children: [_jsx("li", { children: "Install Google Authenticator, Authy or any TOTP app." }), _jsx("li", { children: "Scan this code, or type the key below it." }), _jsx("li", { children: "Enter the 6 digit code the app shows." })] }), _jsxs("div", { style: "text-align:center;margin:.8rem 0", children: [_jsx("img", { src: props.qrDataUrl, alt: "Two factor setup QR code", width: "200", height: "200", style: "border:1px solid var(--ncc-border);border-radius:var(--ncc-radius)" }), _jsxs("p", { class: "ncc-hint", style: "margin-top:.4rem", children: ["Setup key: ", _jsx("code", { children: props.secret })] })] }), _jsxs("form", { method: "post", action: "/2fa/enrol", class: "ncc-stack", children: [_jsx(CsrfInput, { token: props.csrfToken }), _jsx(FormField, { label: "Code from the app", name: "code", required: true, placeholder: "123456" }), _jsx("button", { class: "ncc-btn ncc-btn-primary", type: "submit", style: "width:100%", children: "Confirm and finish" })] })] }));
+}
+/**
+ * Shown once, immediately after enrolment. There is no route that redisplays
+ * these, because they are stored only as argon2 hashes and the server cannot
+ * read them back (spec 4.5).
+ */
+export function RecoveryCodesPage(props) {
+    return (_jsxs(AuthLayout, { title: "Recovery codes", children: [_jsx("h1", { children: "Save your recovery codes" }), _jsx(Alert, { tone: "warn", children: "These are shown once and cannot be shown again. Each one works a single time. Print them or put them in a password manager now." }), _jsx("ul", { style: "list-style:none;padding:0;margin:1rem 0;display:grid;grid-template-columns:1fr 1fr;gap:.4rem", children: props.codes.map((c) => (_jsx("li", { children: _jsx("code", { children: c }) }))) }), _jsx("a", { class: "ncc-btn ncc-btn-primary", href: "/app", style: "display:block;text-align:center", children: "I have saved them, continue" })] }));
+}
+export function ForgotPasswordPage(props) {
+    if (props.sent) {
+        return (_jsxs(AuthLayout, { title: "Check your email", children: [_jsx("h1", { children: "Check your email" }), _jsx("p", { children: "If an account exists for that address, a reset link is on its way. The link works once and expires in 2 hours." }), _jsx("div", { class: "ncc-auth__foot", children: _jsx("a", { href: "/login", children: "Back to sign in" }) })] }));
+    }
+    return (_jsxs(AuthLayout, { title: "Forgot password", children: [_jsx("h1", { children: "Forgot your password" }), _jsx("p", { class: "ncc-muted", children: "Enter your work email and we will send a reset link." }), _jsxs("form", { method: "post", action: "/forgot-password", class: "ncc-stack", style: "margin-top:1rem", children: [_jsx(CsrfInput, { token: props.csrfToken }), _jsx(FormField, { label: "Work email", name: "email", type: "email", value: props.email, required: true, autocomplete: "username" }), _jsx("button", { class: "ncc-btn ncc-btn-primary", type: "submit", style: "width:100%", children: "Send reset link" })] }), _jsx("div", { class: "ncc-auth__foot", children: _jsx("a", { href: "/login", children: "Back to sign in" }) })] }));
+}
+export function ResetPasswordPage(props) {
+    const isInvite = props.purpose === 'invite';
+    return (_jsxs(AuthLayout, { title: isInvite ? 'Set your password' : 'Choose a new password', children: [_jsx("h1", { children: isInvite ? 'Set your password' : 'Choose a new password' }), _jsx("p", { class: "ncc-muted", children: isInvite
+                    ? 'Welcome. Choose the password you will use to sign in. Nobody else has seen or set one for this account.'
+                    : 'Choose a new password. Every existing session will be signed out.' }), props.error ? _jsx(Alert, { tone: "error", children: props.error }) : null, _jsxs("form", { method: "post", action: `/reset-password/${props.token}`, class: "ncc-stack", style: "margin-top:1rem", children: [_jsx(CsrfInput, { token: props.csrfToken }), _jsx(FormField, { label: "New password", name: "password", type: "password", required: true, autocomplete: "new-password", hint: `At least ${MIN_PASSWORD_LENGTH} characters. Checked against the most common passwords. No other rules.`, error: props.fieldError?.password }), _jsx(FormField, { label: "Repeat new password", name: "confirm", type: "password", required: true, autocomplete: "new-password", error: props.fieldError?.confirm }), _jsx("button", { class: "ncc-btn ncc-btn-primary", type: "submit", style: "width:100%", children: "Save password" })] })] }));
+}
+export function ResetInvalidPage() {
+    return (_jsxs(AuthLayout, { title: "Link not valid", children: [_jsx("h1", { children: "That link is no longer valid" }), _jsx("p", { children: "Reset and invite links work once and then expire. Request a new one, or ask an administrator to reissue your invite." }), _jsxs("div", { class: "ncc-auth__foot", children: [_jsx("a", { href: "/forgot-password", children: "Request a new link" }), _jsx("a", { href: "/login", children: "Back to sign in" })] })] }));
+}
