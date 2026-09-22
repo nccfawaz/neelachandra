@@ -6811,3 +6811,73 @@ answers 200 on the temporary domain; the temporary domain is the canary.
 If the database was migrated and the app then fails, forward-only
 migrations mean the DB stays ahead — the static site still works and no
 rollback of the schema is attempted; record the state and stop.
+
+### 29.71 Admin account maintenance: email change, password reset, employee code (2026-09-22)
+
+Production staff administration had three absent routes (reported before
+they were built, same session): no edit-email, no admin password reset, no
+employee-code writer. All three now exist, following the four-file admin
+pattern.
+
+- `POST /app/admin/users/:id/email` — `users.manage`. Audited
+  (`user.email_change`) in the same transaction; all target sessions die.
+  Duplicate email → 409 naming the clash; unchanged email → 400.
+- `POST /app/admin/users/:id/password-reset` — `users.manage`. The
+  temporary password is the admin-set value from the form (12+ chars,
+  mixed case, digit; the schema enforces it), shown once in the redirect
+  banner, never written to any log or audit row (the audit row records that
+  a reset happened and its before/after flags, not the credential).
+  `must_change_password=1`, sessions die, self-reset refused (400).
+- `POST /app/admin/users/:id/employee-code` — `hr.employee_manage`, NOT
+  `users.manage`: the code lives on `employees` (006_hr.sql:44,
+  `uq_emp_code`), it is an HR-record field alongside the existing
+  `POST /app/hr/employees/:employeeId` which already uses
+  `hr.employee_manage`; gating it to the account-management permission
+  would let an account admin write HR data while an HR manager could not.
+  Duplicate code → 409; account with no employee record → 409. The write
+  stamps `employees.updated_by` — which exposed a fixture-sweep gap (below).
+
+Proven through the real router by
+`tests/integration/admin-account-maintenance.test.ts` (17 tests at this
+entry): unauthenticated refused, wrong-permission role 403 naming the
+permission, CSRF enforced on each route, duplicate-email and duplicate-code
+409s leaving the row unchanged, sessions dead after email/password
+changes, audit rows carrying actor and target, and the temporary password
+actually authenticating (302 into /app, then the must-change interstitial).
+
+Two sweep gaps surfaced by the suite, both fixed in the sweep (not the
+assertions): `employees.updated_by` (fk_emp_updated) blocked fixture-user
+deletion after the code route stamped it, and fixture USERS at
+`.example.invalid` with linked employee rows had no employee cleanup
+before the user delete. Also: the sweep had never deleted `[fixture]`
+ROLES — 99 accumulated roles were rendering into every roles dropdown; now
+removed with their role_permissions and user_roles.
+
+Route coverage: 3 routes exercised, allowlist 214 → 211
+(`[route-coverage] mounted(concrete) 255 = exercised 44 ∪ allowlisted 211,
+ceiling 222, overlap 0`).
+
+### 29.72 One-screen staff account editing (2026-09-22)
+
+`GET /app/admin/users/:id/edit` (`users.manage`) shows current name,
+email, employee code, roles and status and posts them through the 29.71
+routes plus the existing status/roles/totp-reset routes, so every mutation
+keeps its own audit row with actor and target. New:
+`POST /app/admin/users/:id/edit/name` (`users.manage`, audited as
+`user.name_change`, no session invalidation — a rename is an identity
+correction, not a security event). Controls the actor lacks permission for
+render as a note naming the missing permission instead of a form that
+fails after submit; credential controls do not render at all on a self
+view. Linked as "Edit account" from the users list rows.
+
+Proven by the `edit screen (29.72)` block of the same suite: 403 for a
+non-`users.manage` session, current values rendered, self view hides
+password/2FA controls, name save in one submit with the audit row, list
+row link present, CSRF enforced. Route coverage: 2 routes exercised
+(257 mounted = 46 exercised ∪ 211 allowlisted, ceiling 222, overlap 0).
+
+Note: the maintenance suite's repeated admin logins exceed the
+`loginByEmail` 10-per-15-minutes budget by the final tests, so the last
+test clears its own bucket first — the same workaround the sweep already
+applies between runs (the lockout itself is correct behaviour and is not
+weakened).
