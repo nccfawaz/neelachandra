@@ -62,6 +62,14 @@ export async function sweepFixtures(db: Kysely<any>): Promise<void> {
   await sql`delete i from items i join users u on i.created_by = u.id where u.full_name like ${FIXTURE_MARKER + '%'}`.execute(db)
   await sql`delete psl from package_spec_lines psl join items i on psl.item_id = i.id where i.name like ${FIXTURE_MARKER + '%'}`.execute(db)
   await sql`delete ur from user_roles ur join users u on ur.user_id = u.id where u.full_name like ${FIXTURE_MARKER + '%'}`.execute(db)
+  // Fixture ROLES are never referenced by real rows (only fixture users hold
+  // them) but every run created three (admin/hr/clerk) and nothing removed
+  // them — 99 accumulated rows were rendering into every roles dropdown on
+  // the account screens. Users and their user_roles go first (fk), then the
+  // role_permissions and the roles themselves.
+  await sql`delete rp from role_permissions rp join roles r on rp.role_id = r.id where r.\`key\` like ${FIXTURE_MARKER + '%'}`.execute(db)
+  await sql`delete ur from user_roles ur join roles r on ur.role_id = r.id where r.\`key\` like ${FIXTURE_MARKER + '%'}`.execute(db)
+  await sql`delete from roles where \`key\` like ${FIXTURE_MARKER + '%'}`.execute(db)
   // Live sessions reference users with no cascade (fk_sessions_user), so a
   // crashed login test (29.36) leaves a session that would block the user
   // delete forever. Sessions are worthless once the user is gone.
@@ -82,8 +90,12 @@ export async function sweepFixtures(db: Kysely<any>): Promise<void> {
   await sql`delete lr from leave_requests lr join employees e on lr.employee_id = e.id join users u on e.user_id = u.id where u.full_name like ${FIXTURE_MARKER + '%'}`.execute(db)
   // users.employee_id -> employees (fk_users_employee) and employees.user_id
   // -> users (fk_emp_user) reference each other: null the user pointer first,
-  // then the employee rows, then the users.
+  // then the employee rows, then the users. employees.updated_by (fk_emp_updated)
+  // also references users: an employee whose code was set by a fixture admin
+  // (the 29.71 code route stamps updated_by) would block user deletion, so
+  // the pointer is nulled alongside employee_id.
   await sql`update users u join employees e on e.user_id = u.id set u.employee_id = null where u.full_name like ${FIXTURE_MARKER + '%'}`.execute(db)
+  await sql`update employees e join users u on e.updated_by = u.id set e.updated_by = null where u.full_name like ${FIXTURE_MARKER + '%'}`.execute(db)
   await sql`delete e from employees e join users u on e.user_id = u.id where u.full_name like ${FIXTURE_MARKER + '%'}`.execute(db)
   await sql`delete from users where full_name like ${FIXTURE_MARKER + '%'}`.execute(db)
   await sql`delete from accounting_periods where financial_year like ${FIXTURE_PERIOD_PREFIX + '%'}`.execute(db)
@@ -107,6 +119,13 @@ export async function sweepFixtures(db: Kysely<any>): Promise<void> {
   // next run (found by test-login-accounts, 29.48).
   await sql`delete from rate_limit_hits where bucket like ${'login:email:%'}`.execute(db)
   await sql`delete from rate_limit_hits where bucket like ${'login:ip:%'}`.execute(db)
+  // A fixture user may have an employee row (the account-maintenance suite
+  // links one per 29.71/29.72): the FKs point both ways, so null users.
+  // employee_id, null employees.updated_by, delete the employee, then the
+  // user — the same order the marked sweep above uses.
+  await sql`update users u join employees e on e.user_id = u.id set u.employee_id = null where u.email like ${'%@example.invalid'}`.execute(db)
+  await sql`update employees e join users u on e.updated_by = u.id set e.updated_by = null where u.email like ${'%@example.invalid'}`.execute(db)
+  await sql`delete e from employees e join users u on e.user_id = u.id where u.email like ${'%@example.invalid'}`.execute(db)
   await sql`delete from users where email like ${'%@example.invalid'}`.execute(db)
   // The manual-test login fixtures (scripts/seed-test-login.mjs, 29.48) carry
   // a full_name of FIXTURE-TESTLOGIN… — swept like any other fixture row so a

@@ -6,6 +6,7 @@ import { jsonColumnEquals, parseJsonColumn } from '../../lib/json.js'
 import { issueInvite } from '../auth/service.js'
 import { invalidateSettings, coerceSetting } from '../../lib/settings.js'
 import { otherActiveOwnerCount, userByEmail } from './queries.js'
+import { hash as argonHash } from '@node-rs/argon2'
 
 /**
  * Admin policy (spec 6.2).
@@ -439,6 +440,211 @@ export async function setEnquiryStatus(
       entityId: enquiryId,
       before: { status: before.status },
       after: { status },
+      ip: actor.ip,
+    })
+  })
+}
+
+/**
+ * Admin email change (DECISIONS 29.71).
+ *
+ * There was no email-edit capability anywhere in the app: a wrong address
+ * could only be fixed with raw SQL and no audit row. This closes that gap
+ * following the same policy as every other mutation here — transaction with
+ * the audit row, duplicate check against the unique index, and all of the
+ * target's sessions destroyed so a stale session under the old identity
+ * cannot continue (the session row carries user_id, but a re-auth forces
+ * the new address through login, which is what makes the change take).
+ */
+/**
+ * Name correction (29.72): a rename is an identity correction, not a
+ * security event — no sessions die, but the audit row records who renamed
+ * whom so the record's history is attributable.
+ */
+export async function changeUserName(
+  db: Db,
+  actor: Actor,
+  targetUserId: number,
+  fullName: string
+): Promise<void> {
+  const target = await db
+    .selectFrom('users')
+    .select(['id', 'full_name'])
+    .where('id', '=', targetUserId)
+    .executeTakeFirst()
+  if (!target) throw new NotFoundError('No such user.')
+
+  await db.transaction().execute(async (trx) => {
+    await trx
+      .updateTable('users')
+      .set({ full_name: fullName })
+      .where('id', '=', targetUserId)
+      .execute()
+    await writeAudit(trx, {
+      userId: actor.userId,
+      action: 'user.name_change',
+      entityType: 'user',
+      entityId: targetUserId,
+      before: { fullName: target.full_name },
+      after: { fullName },
+      ip: actor.ip,
+    })
+  })
+}
+
+export async function changeUserEmail(
+  db: Db,
+  actor: Actor,
+  targetUserId: number,
+  email: string
+): Promise<{ email: string }> {
+  const target = await db
+    .selectFrom('users')
+    .select(['id', 'email'])
+    .where('id', '=', targetUserId)
+    .executeTakeFirst()
+  if (!target) throw new NotFoundError('No such user.')
+
+  const clash = await userByEmail(db, email)
+  if (clash && Number(clash.id) !== targetUserId) {
+    throw new ConflictError('An account with that email already exists.')
+  }
+  if (target.email.toLowerCase() === email.toLowerCase()) {
+    throw new BadRequestError('That is already the account\u2019s email address.')
+  }
+
+  await db.transaction().execute(async (trx) => {
+    await trx
+      .updateTable('users')
+      .set({ email: email.toLowerCase() })
+      .where('id', '=', targetUserId)
+      .execute()
+    await destroyAllUserSessions(trx, targetUserId)
+    await writeAudit(trx, {
+      userId: actor.userId,
+      action: 'user.email_change',
+      entityType: 'user',
+      entityId: targetUserId,
+      before: { email: target.email },
+      after: { email: email.toLowerCase() },
+      ip: actor.ip,
+    })
+  })
+  return { email: email.toLowerCase() }
+}
+
+/**
+ * Admin-set temporary password (29.71).
+ *
+ * The self-service reset depends on SMTP, which is unconfigured, so a staff
+ * member who forgets their password had no route back. The admin sets a
+ * temporary value: must_change_password forces the person to replace it at
+ * first sign-in, and every live session dies in the same transaction. The
+ * temporary password is returned to the caller for a single display in the
+ * redirect banner; it is never written to the audit log or any log file —
+ * the audit rows record that a reset happened, never the credential.
+ */
+export async function adminResetPassword(
+  db: Db,
+  actor: Actor,
+  targetUserId: number,
+  temporaryPassword: string
+): Promise<void> {
+  if (targetUserId === actor.userId) {
+    throw new BadRequestError(
+      'You cannot reset your own password here. Use your own account\u2019s password change.'
+    )
+  }
+  const target = await db
+    .selectFrom('users')
+    .select(['id', 'email'])
+    .where('id', '=', targetUserId)
+    .executeTakeFirst()
+  if (!target) throw new NotFoundError('No such user.')
+
+  const hash = await argonHash(temporaryPassword)
+  await db.transaction().execute(async (trx) => {
+    await trx
+      .updateTable('users')
+      .set({
+        password_hash: hash,
+        password_algo: 'argon2id',
+        must_change_password: 1,
+        password_changed_at: null,
+        failed_login_count: 0,
+        locked_until: null,
+      })
+      .where('id', '=', targetUserId)
+      .execute()
+    await destroyAllUserSessions(trx, targetUserId)
+    await writeAudit(trx, {
+      userId: actor.userId,
+      action: 'user.password_reset',
+      entityType: 'user',
+      entityId: targetUserId,
+      before: { mustChangePassword: false },
+      after: { mustChangePassword: true, sessionsDestroyed: true },
+      ip: actor.ip,
+    })
+  })
+}
+
+/**
+ * Employee code assignment (29.71). Lives in the admin module (not HR)
+ * because it is invoked from the user detail screen, but gated by
+ * HR_EMPLOYEE_MANAGE: the employee code is an HR-record field, and the
+ * roster owner (Sushma's role) holds it while USERS_MANAGE holders need
+ * not. Uniqueness rides on uq_emp_code; the duplicate is caught by a
+ * pre-check for a readable error and by the index if a race slips past.
+ */
+export async function setEmployeeCode(
+  db: Db,
+  actor: Actor,
+  userId: number,
+  employeeCode: string
+): Promise<void> {
+  const target = await db
+    .selectFrom('users')
+    .select(['id', 'email', 'employee_id'])
+    .where('id', '=', userId)
+    .executeTakeFirst()
+  if (!target) throw new NotFoundError('No such user.')
+  if (target.employee_id === null) {
+    throw new ConflictError('This account is not linked to an employee record, so it has no employee code.')
+  }
+
+  await db.transaction().execute(async (trx) => {
+    const employee = await trx
+      .selectFrom('employees')
+      .select(['id', 'employee_code'])
+      .where('id', '=', target.employee_id)
+      .forUpdate()
+      .executeTakeFirst()
+    if (!employee) throw new NotFoundError('No such employee.')
+
+    const clash = await trx
+      .selectFrom('employees')
+      .select('id')
+      .where('employee_code', '=', employeeCode)
+      .where('id', '!=', employee.id)
+      .executeTakeFirst()
+    if (clash) {
+      throw new ConflictError(`Employee code ${employeeCode} is already assigned to another employee.`)
+    }
+
+    await trx
+      .updateTable('employees')
+      .set({ employee_code: employeeCode, updated_by: actor.userId })
+      .where('id', '=', employee.id)
+      .execute()
+
+    await writeAudit(trx, {
+      userId: actor.userId,
+      action: 'employee.code_set',
+      entityType: 'employee',
+      entityId: employee.id,
+      before: { employeeCode: employee.employee_code },
+      after: { employeeCode },
       ip: actor.ip,
     })
   })

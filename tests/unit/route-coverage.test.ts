@@ -51,6 +51,11 @@ export const EXERCISED = [
   'GET /forgot-password', // csrf-pre-session.test.ts path-set bounds
   'POST /forgot-password',
   'POST /app/admin/users/:id/totp-reset', // totp-reset-route.test.ts (29.65)
+  'POST /app/admin/users/:id/email', // admin-account-maintenance.test.ts (29.71)
+  'POST /app/admin/users/:id/password-reset', // admin-account-maintenance.test.ts (29.71)
+  'POST /app/admin/users/:id/employee-code', // admin-account-maintenance.test.ts (29.71)
+  'GET /app/admin/users/:id/edit', // admin-account-maintenance.test.ts (29.72)
+  'POST /app/admin/users/:id/edit/name', // admin-account-maintenance.test.ts (29.72)
   'GET /reset-password/:token',
   'POST /reset-password/:token',
   'POST /logout',
@@ -241,6 +246,8 @@ export const ALLOWLIST: string[] = [
   'POST /app/admin/users/:id/roles',
   'POST /app/admin/users/:id/status',
   // (POST /app/admin/users/:id/totp-reset exercised by totp-reset-route.test.ts, 29.65)
+  // (email / password-reset / employee-code exercised by
+  // admin-account-maintenance.test.ts, 29.71 — not allowlisted)
   'POST /app/crm/leads',
   'POST /app/crm/leads/:id/edit',
   'POST /app/crm/quotes',

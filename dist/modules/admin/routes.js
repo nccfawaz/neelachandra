@@ -7,6 +7,7 @@ import { requirePermission } from '../../middleware/requirePermission.js';
 import { PERMISSIONS, PERMISSION_MODULES } from '../../lib/permissions.js';
 import { readBody } from '../../middleware/csrf.js';
 import { NotFoundError } from '../../lib/errors.js';
+import { changeEmailSchema, changeNameSchema, adminPasswordSchema, employeeCodeSchema, } from './schemas.js';
 import { parseJsonColumn } from '../../lib/json.js';
 import { formatDate, formatDateTime } from '../../lib/dates.js';
 import { formatPaiseAsRupees } from '../../lib/money.js';
@@ -45,7 +46,7 @@ admin.get('/app/admin/users', requirePermission(PERMISSIONS.USERS_MANAGE), async
     const columns = [
         {
             header: 'Name',
-            cell: (row) => (_jsxs(_Fragment, { children: [_jsx("a", { href: `/app/admin/users/${row.id}`, children: _jsx("strong", { children: row.full_name }) }), _jsx("div", { class: "ncc-muted", children: row.email })] })),
+            cell: (row) => (_jsxs(_Fragment, { children: [_jsx("a", { href: `/app/admin/users/${row.id}`, children: _jsx("strong", { children: row.full_name }) }), _jsx("div", { class: "ncc-muted", children: row.email }), _jsx("a", { class: "ncc-muted", href: `/app/admin/users/${row.id}/edit`, children: "Edit account" })] })),
         },
         { header: 'Roles', cell: (row) => row.roles ?? _jsx("span", { class: "ncc-muted", children: "None" }) },
         {
@@ -144,6 +145,85 @@ admin.post('/app/admin/users/:id/status', requirePermission(PERMISSIONS.USERS_MA
         throw new NotFoundError('No such user.');
     await svc.setUserStatus(c.get('db'), actorOf(c), id, parsed.data.status);
     return c.redirect(`/app/admin/users/${id}?ok=${encodeURIComponent('Status updated.')}`, 303);
+});
+/** Email change (29.71): USERS_MANAGE, audited, sessions invalidated. */
+admin.post('/app/admin/users/:id/email', requirePermission(PERMISSIONS.USERS_MANAGE), async (c) => {
+    const id = Number(c.req.param('id'));
+    const parsed = changeEmailSchema.safeParse(await readBody(c));
+    if (!Number.isInteger(id) || !parsed.success) {
+        return c.redirect(`/app/admin/users/${id}?error=${encodeURIComponent(parsed.success ? 'No such user.' : parsed.error.issues[0].message)}`, 303);
+    }
+    const result = await svc.changeUserEmail(c.get('db'), actorOf(c), id, parsed.data.email);
+    return c.redirect(`/app/admin/users/${id}?ok=${encodeURIComponent(`Email changed to ${result.email}. They have been signed out everywhere and must sign in again.`)}`, 303);
+});
+/** Admin password reset (29.71): the temporary value is shown once in the
+ * redirect banner and lives nowhere else. */
+admin.post('/app/admin/users/:id/password-reset', requirePermission(PERMISSIONS.USERS_MANAGE), async (c) => {
+    const id = Number(c.req.param('id'));
+    const parsed = adminPasswordSchema.safeParse(await readBody(c));
+    if (!Number.isInteger(id) || !parsed.success) {
+        return c.redirect(`/app/admin/users/${id}?error=${encodeURIComponent(parsed.success ? 'No such user.' : parsed.error.issues[0].message)}`, 303);
+    }
+    // The admin-set value from the form is the temporary password (29.71):
+    // the operator chooses it and reads it to the person over a call. The
+    // schema enforces 12+ chars with mixed case and a digit, and
+    // must_change_password forces replacement at first sign-in.
+    const temporary = parsed.data.password;
+    await svc.adminResetPassword(c.get('db'), actorOf(c), id, temporary);
+    return c.redirect(`/app/admin/users/${id}?ok=${encodeURIComponent(`Temporary password, shown once: ${temporary}. The person must change it at next sign-in.`)}`, 303);
+});
+/**
+ * One-screen staff administration (29.72). The page shows current values and
+ * posts the fields the actor may change; every mutation still goes through
+ * its own service call and writes its own audit row with actor and target.
+ * Controls the actor lacks the permission for render disabled with a note
+ * rather than failing after submit.
+ */
+admin.get('/app/admin/users/:id/edit', requirePermission(PERMISSIONS.USERS_MANAGE), async (c) => {
+    const db = c.get('db');
+    const id = Number(c.req.param('id'));
+    if (!Number.isInteger(id) || id <= 0)
+        throw new NotFoundError('No such user.');
+    const target = await q.findUser(db, id);
+    if (!target)
+        throw new NotFoundError('No such user.');
+    const [roles, roleIds, employeeRow] = await Promise.all([
+        q.allRoles(db),
+        q.roleIdsFor(db, id),
+        target.employee_id
+            ? db
+                .selectFrom('employees')
+                .select(['id', 'employee_code'])
+                .where('id', '=', Number(target.employee_id))
+                .executeTakeFirst()
+            : Promise.resolve(undefined),
+    ]);
+    const perms = c.get('perms');
+    const canManageRoles = perms.has(PERMISSIONS.ROLES_MANAGE);
+    const canManageHr = perms.has(PERMISSIONS.HR_EMPLOYEE_MANAGE);
+    const self = currentUser(c).id === id;
+    return c.html(_jsxs(AppShell, { title: `Edit ${target.full_name}`, user: currentUser(c), perms: perms, csrfToken: currentSession(c).csrfToken, path: "/app/admin/users", subtitle: target.email, actions: _jsx("a", { class: "ncc-btn", href: `/app/admin/users/${id}`, children: "Back to account" }), children: [banner(c), _jsx(Panel, { title: "Identity", children: _jsxs("form", { method: "post", action: `/app/admin/users/${id}/edit/name`, class: "ncc-stack", children: [_jsx("input", { type: "hidden", name: "nc_csrf", value: currentSession(c).csrfToken }), _jsxs("div", { class: "ncc-grid ncc-grid--2", children: [_jsx(FormField, { label: "Full name", name: "fullName", value: target.full_name, required: true }), _jsx(FormField, { label: "Email", name: "email", type: "email", value: target.email, disabled: true })] }), _jsx("p", { class: "ncc-hint", children: "Email is changed on its own below \u2014 changing it signs the person out everywhere." }), _jsx("button", { class: "ncc-btn ncc-btn--primary", type: "submit", children: "Save name" })] }) }), _jsx(Panel, { title: "Email", children: _jsxs("form", { method: "post", action: `/app/admin/users/${id}/email`, class: "ncc-stack", children: [_jsx("input", { type: "hidden", name: "nc_csrf", value: currentSession(c).csrfToken }), _jsxs("div", { class: "ncc-grid ncc-grid--2", children: [_jsx(FormField, { label: "New email", name: "email", type: "email", value: target.email, required: true }), _jsx(FormField, { label: "Confirm current email", name: "confirmEmail", value: target.email, disabled: true })] }), _jsx("p", { class: "ncc-hint", children: "The address is their sign-in. Changing it signs them out everywhere immediately." }), _jsx("button", { class: "ncc-btn ncc-btn--primary", type: "submit", children: "Change email" })] }) }), _jsx(Panel, { title: "Employee record", children: employeeRow ? (canManageHr ? (_jsxs("form", { method: "post", action: `/app/admin/users/${id}/employee-code`, class: "ncc-stack", children: [_jsx("input", { type: "hidden", name: "nc_csrf", value: currentSession(c).csrfToken }), _jsx("div", { class: "ncc-grid ncc-grid--2", children: _jsx(FormField, { label: "Employee code", name: "employeeCode", value: employeeRow.employee_code, required: true, hint: "Must be unique across all employees." }) }), _jsx("button", { class: "ncc-btn ncc-btn--primary", type: "submit", children: "Save employee code" })] })) : (_jsxs("p", { class: "ncc-hint", children: ["Employee code ", _jsx("code", { children: employeeRow.employee_code }), ". Editing it needs the hr.employee_manage permission, which your account does not hold."] }))) : (_jsx("p", { class: "ncc-hint", children: "This account is not linked to an employee record, so there is no code to edit." })) }), _jsxs(Panel, { title: "Role and status", children: [canManageRoles ? (_jsxs("form", { method: "post", action: `/app/admin/users/${id}/roles`, class: "ncc-stack", children: [_jsx("input", { type: "hidden", name: "nc_csrf", value: currentSession(c).csrfToken }), _jsx("div", { class: "ncc-grid ncc-grid--2", children: roles.map((role) => (_jsxs("label", { class: "ncc-check", children: [_jsx("input", { type: "checkbox", name: "roleIds", value: String(role.id), checked: roleIds.includes(Number(role.id)) }), _jsxs("span", { children: [_jsx("strong", { children: role.label }), Number(role.require_2fa) === 1 ? _jsx("span", { class: "ncc-muted", children: " requires two factor" }) : null] })] }))) }), _jsx("button", { class: "ncc-btn ncc-btn--primary", type: "submit", children: "Save roles" })] })) : (_jsx("p", { class: "ncc-hint", children: "Changing roles needs the roles.manage permission, which your account does not hold." })), _jsxs("form", { method: "post", action: `/app/admin/users/${id}/status`, class: "ncc-toolbar", children: [_jsx("input", { type: "hidden", name: "nc_csrf", value: currentSession(c).csrfToken }), _jsxs("select", { name: "status", class: "ncc-input", "aria-label": "Account status", children: [_jsx("option", { value: "active", selected: target.status === 'active', children: "Active" }), _jsx("option", { value: "suspended", selected: target.status === 'suspended', children: "Suspended" }), _jsx("option", { value: "inactive", selected: target.status === 'inactive', children: "Inactive" })] }), _jsx("button", { class: "ncc-btn", type: "submit", children: "Update status" })] })] }), _jsx(Panel, { title: "Credentials", children: self ? (_jsx("p", { class: "ncc-hint", children: "You cannot reset your own password or two factor here \u2014 use your own account\u2019s pages, or ask another administrator." })) : (_jsxs(_Fragment, { children: [_jsxs("form", { method: "post", action: `/app/admin/users/${id}/password-reset`, class: "ncc-stack", children: [_jsx("input", { type: "hidden", name: "nc_csrf", value: currentSession(c).csrfToken }), _jsx("p", { class: "ncc-hint", children: "Sets a temporary password you choose. The person must change it at next sign-in and their sessions all die." }), _jsx("div", { class: "ncc-grid ncc-grid--2", children: _jsx(FormField, { label: "Temporary password", name: "password", required: true, hint: "At least 12 characters with upper case, lower case and a digit." }) }), _jsx("button", { class: "ncc-btn", type: "submit", children: "Set temporary password" })] }), target.totp_confirmed_at ? (_jsxs("form", { method: "post", action: `/app/admin/users/${id}/totp-reset`, class: "ncc-toolbar", children: [_jsx("input", { type: "hidden", name: "nc_csrf", value: currentSession(c).csrfToken }), _jsx("button", { class: "ncc-btn", type: "submit", children: "Reset two factor" })] })) : (_jsx("p", { class: "ncc-hint", children: "Two factor is not enrolled on this account." }))] })) })] }));
+});
+/** Name correction (29.72): audited, no session invalidation. */
+admin.post('/app/admin/users/:id/edit/name', requirePermission(PERMISSIONS.USERS_MANAGE), async (c) => {
+    const id = Number(c.req.param('id'));
+    const parsed = changeNameSchema.safeParse(await readBody(c));
+    if (!Number.isInteger(id) || !parsed.success) {
+        return c.redirect(`/app/admin/users/${id}/edit?error=${encodeURIComponent(parsed.success ? 'No such user.' : firstError(parsed.error))}`, 303);
+    }
+    await svc.changeUserName(c.get('db'), actorOf(c), id, parsed.data.fullName);
+    return c.redirect(`/app/admin/users/${id}/edit?ok=${encodeURIComponent('Name updated.')}`, 303);
+});
+/** Employee code assignment (29.71): HR_EMPLOYEE_MANAGE — the code is an
+ * HR-record field; see the service note for the gate choice. */
+admin.post('/app/admin/users/:id/employee-code', requirePermission(PERMISSIONS.HR_EMPLOYEE_MANAGE), async (c) => {
+    const id = Number(c.req.param('id'));
+    const parsed = employeeCodeSchema.safeParse(await readBody(c));
+    if (!Number.isInteger(id) || !parsed.success) {
+        return c.redirect(`/app/admin/users/${id}?error=${encodeURIComponent(parsed.success ? 'No such user.' : parsed.error.issues[0].message)}`, 303);
+    }
+    await svc.setEmployeeCode(c.get('db'), actorOf(c), id, parsed.data.employeeCode);
+    return c.redirect(`/app/admin/users/${id}?ok=${encodeURIComponent('Employee code updated.')}`, 303);
 });
 admin.post('/app/admin/users/:id/roles', requirePermission(PERMISSIONS.ROLES_MANAGE), async (c) => {
     const id = Number(c.req.param('id'));

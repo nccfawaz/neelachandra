@@ -35,6 +35,34 @@ export const statusSchema = z.object({
   status: z.enum(['active', 'suspended', 'inactive']),
 })
 
+/** Admin email change (DECISIONS 29.71): lower-cased at the boundary, same
+ * ceiling as users.email VARCHAR(190). */
+export const changeEmailSchema = z.object({
+  email: z.string().trim().toLowerCase().email('Enter a valid email address.').max(190),
+})
+
+/** Name correction (29.72 edit screen). */
+export const changeNameSchema = z.object({
+  fullName: z.string().trim().min(2, 'Enter the person’s full name.').max(160),
+})
+
+/** Admin temporary password (29.71): no format rule beyond length — the
+ * temporary value is generated server-side in the normal path, but an admin
+ * may type one; strength is enforced by length + classes so "password1" is
+ * refused. */
+export const adminPasswordSchema = z
+  .object({
+    password: z
+      .string()
+      .min(12, 'The temporary password needs at least 12 characters.')
+      .max(128)
+      .refine(
+        (v) => /[A-Z]/.test(v) && /[a-z]/.test(v) && /[0-9]/.test(v),
+        'Use upper case, lower case and a digit.'
+      ),
+  })
+  .passthrough()
+
 export const rolesSchema = z.object({
   roleIds: idList,
 })
@@ -53,6 +81,13 @@ export const rolePermissionsSchema = z.object({
 
 export const enquiryStatusSchema = z.object({
   status: z.enum(['new', 'contacted', 'promoted', 'spam', 'closed']),
+})
+
+/** Employee code assignment (29.71): mirrors employees.employee_code
+ * VARCHAR(20) and the NCC-### shape the seed uses, without hard-coding the
+ * prefix — a future joiner outside the NCC sequence must not be blocked. */
+export const employeeCodeSchema = z.object({
+  employeeCode: z.string().trim().min(3, 'Enter the employee code.').max(20),
 })
 
 export const auditFilterSchema = z.object({
