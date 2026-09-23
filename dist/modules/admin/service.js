@@ -51,6 +51,76 @@ export async function createUser(db, actor, input) {
     return { userId, inviteLink };
 }
 /**
+ * One-submit staff onboarding (DECISIONS 29.76, spec 4.5).
+ *
+ * Unlike createUser, this path also makes the employees row — role, employee
+ * name and employee_code arrive with the account, because the office assigns
+ * the code at hiring, not at first sign-in. Both rows commit in one
+ * transaction so an account can never exist without its employee record or
+ * vice versa. The code is required; uniqueness rides on uq_emp_code with a
+ * pre-check for a readable error rather than a bare driver errno.
+ */
+export async function createStaff(db, actor, input) {
+    const existing = await userByEmail(db, input.email);
+    if (existing)
+        throw new ConflictError('An account with that email already exists.');
+    const codeClash = await db
+        .selectFrom('employees')
+        .select('employee_code')
+        .where('employee_code', '=', input.employeeCode)
+        .executeTakeFirst();
+    if (codeClash) {
+        throw new ConflictError(`Employee code ${input.employeeCode} is already assigned to another employee.`);
+    }
+    const { userId, employeeId } = await db.transaction().execute(async (trx) => {
+        const inserted = await trx
+            .insertInto('users')
+            .values({
+            email: input.email.toLowerCase(),
+            full_name: input.fullName,
+            phone: input.phone,
+            status: 'invited',
+            must_change_password: 0,
+        })
+            .executeTakeFirst();
+        const id = Number(inserted.insertId ?? 0);
+        if (!id)
+            throw new Error('User insert returned no id');
+        const empInserted = await trx
+            .insertInto('employees')
+            .values({
+            employee_code: input.employeeCode,
+            user_id: id,
+            full_name: input.fullName,
+            employment_type: 'permanent',
+            date_of_joining: new Date(),
+            status: 'active',
+        })
+            .executeTakeFirst();
+        const empId = Number(empInserted.insertId ?? 0);
+        if (!empId)
+            throw new Error('Employee insert returned no id');
+        await trx.updateTable('users').set({ employee_id: empId }).where('id', '=', id).execute();
+        if (input.roleIds.length > 0) {
+            await trx
+                .insertInto('user_roles')
+                .values(input.roleIds.map((roleId) => ({ user_id: id, role_id: roleId, granted_by: actor.userId })))
+                .execute();
+        }
+        await writeAudit(trx, {
+            userId: actor.userId,
+            action: 'user.create_staff',
+            entityType: 'user',
+            entityId: id,
+            after: { email: input.email, fullName: input.fullName, roleIds: input.roleIds, employeeCode: input.employeeCode },
+            ip: actor.ip,
+        });
+        return { userId: id, employeeId: empId };
+    });
+    const inviteLink = await issueInvite(db, userId, input.email, input.fullName, actor.ip);
+    return { userId, employeeId, inviteLink };
+}
+/**
  * Admin two-factor reset (DECISIONS 29.65, spec 4.5).
  *
  * This is a privilege-escalation path by design: it exists so that a lost

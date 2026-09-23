@@ -17,7 +17,7 @@
 //   - approval_limits is NOT touched (§8.2): seeding a person grants nothing
 //     about money authority.
 //
-// Usage: node scripts/seed-staff.mjs [--reset-passwords] [--seed-dormant-admin]
+// Usage: node scripts/seed-staff.mjs [--reset-passwords] [--seed-dormant-admin] [--remove-roster]
 //   --reset-passwords  regenerate every password and print the new values to
 //     THIS terminal (use it if an earlier output was ever shared). Runs on the
 //     operator's own machine so the values never pass through any chat or log.
@@ -82,6 +82,7 @@ const PEOPLE = [
 ]
 
 const RESET_PASSWORDS = process.argv.includes('--reset-passwords')
+const REMOVE_ROSTER = process.argv.includes('--remove-roster')
 const DORMANT_ADMIN = process.argv.includes('--seed-dormant-admin')
 
 const conn = await mysql.createConnection({
@@ -94,6 +95,57 @@ const conn = await mysql.createConnection({
 })
 
 try {
+  // --- --remove-roster: remove the thirteen seeded people except Fawaz ---
+  // (DECISIONS 29.75). A script flag, not an admin route: removing a real
+  // person's account is a bootstrap operation, not day-to-day staff
+  // administration, and the admin UI already has status=suspended for the
+  // day-to-day case. Refuses on ANY activity row so the audit trail an
+  // account has accumulated can never be orphaned.
+  if (REMOVE_ROSTER) {
+    const KEEP = 'fawaz@neelachandra.dev'
+    const targets = PEOPLE.map((x) => x.email).filter((e) => e !== KEEP)
+    const [found] = await conn.query(
+      'SELECT id, email FROM users WHERE email IN (?)', [targets])
+    const present = targets.filter((t) => found.some((f) => f.email === t))
+    const missing = targets.filter((t) => !present.includes(t))
+    if (missing.length) console.log('Not present (skipped): ' + missing.join(', '))
+    if (present.length === 0) { console.log('Nothing to remove.'); process.exit(0) }
+    const ids = found.filter((f) => present.includes(f.email)).map((f) => f.id)
+
+    // Activity checks. Each named query maps to a foreign key that would
+    // reject the delete (fk_audit_user RESTRICT etc.). Any hit aborts the
+    // whole operation: no partial removal.
+    const checks = [
+      ['audit rows',          'SELECT COUNT(*) AS n FROM audit_log WHERE user_id IN (?) OR (entity_type = ? AND entity_id IN (?))', [ids, 'user', ids]],
+      ['notifications',       'SELECT COUNT(*) AS n FROM notifications WHERE user_id IN (?)', [ids]],
+      ['project assignments', 'SELECT COUNT(*) AS n FROM project_assignments WHERE user_id IN (?)', [ids]],
+      ['sessions',            'SELECT COUNT(*) AS n FROM user_sessions WHERE user_id IN (?)', [ids]],
+      ['login attempts',      'SELECT COUNT(*) AS n FROM login_attempts WHERE email IN (?)', [present]],
+      ['settings stamps',     'SELECT COUNT(*) AS n FROM settings WHERE updated_by IN (?)', [ids]],
+    ]
+    let blocked = false
+    for (const [label, sqlText, args] of checks) {
+      const [[{ n }]] = await conn.query(sqlText, args)
+      if (n > 0) { console.log('REFUSED: ' + n + ' ' + label + ' exist for the roster accounts.'); blocked = true }
+    }
+    if (blocked) {
+      console.error('REFUSED: the accounts carry activity. Rows referencing them must survive the person (spec 4.7). Deactivate instead: the admin UI status control, or status=inactive.')
+      process.exit(2)
+    }
+
+    await conn.beginTransaction()
+    try {
+      // Employees rows are RETAINED and detached: an employee record is an
+      // HR document with its own life, not a by-product of the account.
+      await conn.query('UPDATE employees SET user_id = NULL, updated_by = NULL WHERE user_id IN (?)', [ids])
+      await conn.query('DELETE FROM user_roles WHERE user_id IN (?)', [ids])
+      await conn.query('DELETE FROM users WHERE id IN (?)', [ids])
+      await conn.commit()
+      console.log('Removed ' + ids.length + ' roster accounts; employees rows detached and retained; ' + KEEP + ' kept.')
+    } catch (err) { await conn.rollback().catch(() => {}); throw err }
+    process.exit(0)
+  }
+
   // Designation lookup (code -> id). A person whose designation is null is
   // left with designation_id NULL rather than inventing a reference row.
   const [desigs] = await conn.query('SELECT id, code FROM designations')
@@ -137,6 +189,19 @@ try {
 
       // Employee row, linked from users.employee_id. Idempotent on employee_code.
       let employeeId = existing ? existing.employee_id : null
+      // After --remove-roster the user row is gone but the employee row was
+      // deliberately retained with user_id NULL. Re-adopt it by code instead
+      // of colliding with uq_emp_code on the insert.
+      if (!employeeId) {
+        const [[detached]] = await conn.query(
+          'SELECT id FROM employees WHERE employee_code = ? AND user_id IS NULL',
+          [person.employeeCode])
+        if (detached) {
+          await conn.execute('UPDATE employees SET user_id = ? WHERE id = ?', [userId, detached.id])
+          employeeId = detached.id
+          await conn.execute('UPDATE users SET employee_id = ? WHERE id = ?', [employeeId, userId])
+        }
+      }
       if (!employeeId) {
         const [empRes] = await conn.execute(
           `INSERT INTO employees (employee_code, user_id, full_name, designation_id,

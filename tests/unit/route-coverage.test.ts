@@ -103,7 +103,10 @@ export const EXERCISED = [
  * a test or lowering the ceiling fails, and raising this number is a
  * conscious edit to the recorded figure — never an accident.
  */
-const ALLOWLIST_CEILING = 222
+// 29.76: one raised, once — the new POST /app/admin/users/staff route enters
+// the allowlist until its exercise coverage lands; raising the ceiling is a
+// DECISIONS-recorded event, not a silent bump.
+const ALLOWLIST_CEILING = 223
 export const ALLOWLIST: string[] = [
   'GET /.well-known/security.txt',
   'GET /097ee841c58a4b25b8eb2c348ca67dce.txt',
@@ -145,6 +148,7 @@ export const ALLOWLIST: string[] = [
   'GET /app/admin/settings',
   'GET /app/admin/users',
   'GET /app/admin/users/:id',
+  'POST /app/admin/users/staff', // staff-batch.test.ts (29.76) — remove when exercised
   'GET /app/crm',
   'GET /app/crm/leads',
   'GET /app/crm/leads/:id',
@@ -330,7 +334,8 @@ const NOT_ROUTES = [/^ALL /, /^(GET|POST) \/?$/]
  * (exercised ∪ allowlisted = mounted exactly), and this committed figure
  * pins the split so the denominator cannot drift unnoticed.
  */
-const NON_PARAMETRISED_MOUNTED = 146
+// 29.76: +1 for POST /app/admin/users/staff (staff onboarding).
+const NON_PARAMETRISED_MOUNTED = 147
 describe('the route-coverage tripwire (DECISIONS 29.35, ceiling 29.43)', () => {
   it('enumerates a non-empty route set from the app router itself', () => {
     const mounted = mountedRoutes()

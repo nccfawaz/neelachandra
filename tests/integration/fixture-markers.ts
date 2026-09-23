@@ -96,6 +96,11 @@ export async function sweepFixtures(db: Kysely<any>): Promise<void> {
   // the pointer is nulled alongside employee_id.
   await sql`update users u join employees e on e.user_id = u.id set u.employee_id = null where u.full_name like ${FIXTURE_MARKER + '%'}`.execute(db)
   await sql`update employees e join users u on e.updated_by = u.id set e.updated_by = null where u.full_name like ${FIXTURE_MARKER + '%'}`.execute(db)
+  // password_reset_tokens rows reference users (fk_reset_user), purpose
+  // covers both invite and reset tokens: the 29.76 onboarding path issues an
+  // invite inside the request, so a crashed prior run leaves a token row
+  // behind that blocks the user delete.
+  await sql`delete t from password_reset_tokens t join users u on t.user_id = u.id where u.full_name like ${FIXTURE_MARKER + '%'}`.execute(db)
   await sql`delete e from employees e join users u on e.user_id = u.id where u.full_name like ${FIXTURE_MARKER + '%'}`.execute(db)
   await sql`delete from users where full_name like ${FIXTURE_MARKER + '%'}`.execute(db)
   await sql`delete from accounting_periods where financial_year like ${FIXTURE_PERIOD_PREFIX + '%'}`.execute(db)
@@ -125,6 +130,7 @@ export async function sweepFixtures(db: Kysely<any>): Promise<void> {
   // user — the same order the marked sweep above uses.
   await sql`update users u join employees e on e.user_id = u.id set u.employee_id = null where u.email like ${'%@example.invalid'}`.execute(db)
   await sql`update employees e join users u on e.updated_by = u.id set e.updated_by = null where u.email like ${'%@example.invalid'}`.execute(db)
+  await sql`delete t from password_reset_tokens t join users u on t.user_id = u.id where u.email like ${'%@example.invalid'}`.execute(db)
   await sql`delete e from employees e join users u on e.user_id = u.id where u.email like ${'%@example.invalid'}`.execute(db)
   await sql`delete from users where email like ${'%@example.invalid'}`.execute(db)
   // The manual-test login fixtures (scripts/seed-test-login.mjs, 29.48) carry

@@ -6,7 +6,7 @@ import { Alert, DataTable, DefinitionList, FormField, Pager, Panel, StatusBadge,
 import { requirePermission } from '../../middleware/requirePermission.js';
 import { PERMISSIONS, PERMISSION_MODULES } from '../../lib/permissions.js';
 import { readBody } from '../../middleware/csrf.js';
-import { NotFoundError } from '../../lib/errors.js';
+import { BadRequestError, ConflictError, NotFoundError } from '../../lib/errors.js';
 import { changeEmailSchema, changeNameSchema, adminPasswordSchema, employeeCodeSchema, } from './schemas.js';
 import { parseJsonColumn } from '../../lib/json.js';
 import { formatDate, formatDateTime } from '../../lib/dates.js';
@@ -14,7 +14,7 @@ import { formatPaiseAsRupees } from '../../lib/money.js';
 import { allSettings } from '../../lib/settings.js';
 import * as q from './queries.js';
 import * as svc from './service.js';
-import { auditFilterSchema, createUserSchema, enquiryStatusSchema, firstError, overrideSchema, rolePermissionsSchema, rolesSchema, statusSchema, } from './schemas.js';
+import { auditFilterSchema, createStaffSchema, createUserSchema, enquiryStatusSchema, firstError, overrideSchema, rolePermissionsSchema, rolesSchema, statusSchema, } from './schemas.js';
 const admin = new Hono();
 const ADMIN_TABS = [
     { label: 'Users', href: '/app/admin/users' },
@@ -64,7 +64,7 @@ admin.get('/app/admin/users', requirePermission(PERMISSIONS.USERS_MANAGE), async
     ];
     const user = currentUser(c);
     const session = currentSession(c);
-    return c.html(_jsxs(AppShell, { title: "Users", user: user, perms: c.get('perms'), csrfToken: session.csrfToken, path: "/app/admin/users", subtitle: "Staff accounts. There is no self sign up; every account starts here as an invitation.", children: [_jsx(Tabs, { tabs: ADMIN_TABS, active: "/app/admin/users" }), banner(c), _jsx(Panel, { title: `${users.length} ${users.length === 1 ? 'account' : 'accounts'}`, children: _jsx(DataTable, { columns: columns, rows: users, empty: "No accounts yet." }) }), _jsx(Panel, { title: "Invite a new user", children: _jsxs("form", { method: "post", action: "/app/admin/users", class: "ncc-stack", children: [_jsx("input", { type: "hidden", name: "nc_csrf", value: session.csrfToken }), _jsxs("div", { class: "ncc-grid ncc-grid--2", children: [_jsx(FormField, { label: "Full name", name: "fullName", required: true }), _jsx(FormField, { label: "Email", name: "email", type: "email", required: true }), _jsx(FormField, { label: "Phone", name: "phone", hint: "Optional." })] }), _jsxs("fieldset", { class: "ncc-fieldset", children: [_jsx("legend", { children: "Roles" }), _jsx("p", { class: "ncc-hint", children: "Permissions come from roles. A user with no role can sign in but sees an empty dashboard." }), _jsx("div", { class: "ncc-grid ncc-grid--2", children: roles.map((role) => (_jsxs("label", { class: "ncc-check", children: [_jsx("input", { type: "checkbox", name: "roleIds", value: String(role.id) }), _jsxs("span", { children: [_jsx("strong", { children: role.label }), Number(role.require_2fa) === 1 ? _jsx("span", { class: "ncc-muted", children: " requires two factor" }) : null, role.description ? _jsx("div", { class: "ncc-muted", children: role.description }) : null] })] }))) })] }), _jsx("p", { class: "ncc-hint", children: "The person receives a link to set their own password. No administrator ever sets or sees it." }), _jsx("button", { class: "ncc-btn ncc-btn--primary", type: "submit", children: "Create account and send invite" })] }) })] }));
+    return c.html(_jsxs(AppShell, { title: "Users", user: user, perms: c.get('perms'), csrfToken: session.csrfToken, path: "/app/admin/users", subtitle: "Staff accounts. There is no self sign up; every account starts here as an invitation.", children: [_jsx(Tabs, { tabs: ADMIN_TABS, active: "/app/admin/users" }), banner(c), _jsx(Panel, { title: `${users.length} ${users.length === 1 ? 'account' : 'accounts'}`, children: _jsx(DataTable, { columns: columns, rows: users, empty: "No accounts yet." }) }), _jsx(Panel, { title: "Invite a new user", children: _jsxs("form", { method: "post", action: "/app/admin/users", class: "ncc-stack", children: [_jsx("input", { type: "hidden", name: "nc_csrf", value: session.csrfToken }), _jsxs("div", { class: "ncc-grid ncc-grid--2", children: [_jsx(FormField, { label: "Full name", name: "fullName", required: true }), _jsx(FormField, { label: "Email", name: "email", type: "email", required: true }), _jsx(FormField, { label: "Phone", name: "phone", hint: "Optional." })] }), _jsxs("fieldset", { class: "ncc-fieldset", children: [_jsx("legend", { children: "Roles" }), _jsx("p", { class: "ncc-hint", children: "Permissions come from roles. A user with no role can sign in but sees an empty dashboard." }), _jsx("div", { class: "ncc-grid ncc-grid--2", children: roles.map((role) => (_jsxs("label", { class: "ncc-check", children: [_jsx("input", { type: "checkbox", name: "roleIds", value: String(role.id) }), _jsxs("span", { children: [_jsx("strong", { children: role.label }), Number(role.require_2fa) === 1 ? _jsx("span", { class: "ncc-muted", children: " requires two factor" }) : null, role.description ? _jsx("div", { class: "ncc-muted", children: role.description }) : null] })] }))) })] }), _jsx("p", { class: "ncc-hint", children: "The person receives a link to set their own password. No administrator ever sets or sees it." }), _jsx("button", { class: "ncc-btn ncc-btn--primary", type: "submit", children: "Create account and send invite" })] }) }), _jsx(Panel, { title: "Onboard a staff member (account and employee record together)", children: _jsxs("form", { method: "post", action: "/app/admin/users/staff", class: "ncc-stack", children: [_jsx("input", { type: "hidden", name: "nc_csrf", value: session.csrfToken }), _jsxs("div", { class: "ncc-grid ncc-grid--2", children: [_jsx(FormField, { label: "Full name", name: "fullName", required: true }), _jsx(FormField, { label: "Email", name: "email", type: "email", required: true }), _jsx(FormField, { label: "Phone", name: "phone", hint: "Optional." }), _jsx(FormField, { label: "Employee code", name: "employeeCode", required: true, hint: "Assigned by the office, e.g. NCC-015. Must be unique \u2014 a duplicate is refused." })] }), _jsxs("fieldset", { class: "ncc-fieldset", children: [_jsx("legend", { children: "Role" }), _jsx("div", { class: "ncc-grid ncc-grid--2", children: roles.map((role) => (_jsxs("label", { class: "ncc-check", children: [_jsx("input", { type: "checkbox", name: "roleId", value: String(role.id) }), _jsxs("span", { children: [_jsx("strong", { children: role.label }), Number(role.require_2fa) === 1 ? _jsx("span", { class: "ncc-muted", children: " requires two factor" }) : null] })] }))) })] }), _jsx("p", { class: "ncc-hint", children: "Creates the account and the employee record in one transaction; both exist or neither does. The person receives the usual invite link to choose their own password." }), _jsx("button", { class: "ncc-btn ncc-btn--primary", type: "submit", children: "Create account and employee record" })] }) })] }));
 });
 admin.post('/app/admin/users', requirePermission(PERMISSIONS.USERS_MANAGE), async (c) => {
     const body = await readBody(c);
@@ -84,6 +84,33 @@ admin.post('/app/admin/users', requirePermission(PERMISSIONS.USERS_MANAGE), asyn
     // that exists only in a failed email means the account cannot be used.
     const message = `Account created. Invite link, valid 24 hours: ${result.inviteLink}`;
     return c.redirect(`/app/admin/users/${result.userId}?ok=${encodeURIComponent(message)}`, 303);
+});
+/** One-submit staff onboarding (29.76): users + employees rows in one
+ * transaction, employee code required, duplicate refused with a readable
+ * error. Same USERS_MANAGE gate as the invite path. */
+admin.post('/app/admin/users/staff', requirePermission(PERMISSIONS.USERS_MANAGE), async (c) => {
+    const body = await readBody(c);
+    const parsed = createStaffSchema.safeParse(body);
+    if (!parsed.success) {
+        return c.redirect(`/app/admin/users?error=${encodeURIComponent(firstError(parsed.error))}`, 303);
+    }
+    try {
+        const result = await svc.createStaff(c.get('db'), actorOf(c), {
+            email: parsed.data.email,
+            fullName: parsed.data.fullName,
+            phone: parsed.data.phone,
+            roleIds: parsed.data.roleIds,
+            employeeCode: parsed.data.employeeCode,
+        });
+        const message = `Account and employee record created (code ${parsed.data.employeeCode}). Invite link, valid 24 hours: ${result.inviteLink}`;
+        return c.redirect(`/app/admin/users/${result.userId}?ok=${encodeURIComponent(message)}`, 303);
+    }
+    catch (err) {
+        if (err instanceof ConflictError || err instanceof BadRequestError) {
+            return c.redirect(`/app/admin/users?error=${encodeURIComponent(err.message)}`, 303);
+        }
+        throw err;
+    }
 });
 admin.get('/app/admin/users/:id', requirePermission(PERMISSIONS.USERS_MANAGE), async (c) => {
     const db = c.get('db');

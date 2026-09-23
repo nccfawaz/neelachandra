@@ -90,6 +90,14 @@ export const employeeCodeSchema = z.object({
   employeeCode: z.string().trim().min(3, 'Enter the employee code.').max(20),
 })
 
+/** One-submit staff onboarding (29.76): role, employee name and code arrive
+ * with the account. The code is required — the office assigns it — and
+ * uniqueness rides on uq_emp_code with a pre-check for a readable error. */
+export const createStaffSchema = createUserSchema.extend({
+  employeeCode: employeeCodeSchema.shape.employeeCode,
+  roleId: idList,
+})
+
 export const auditFilterSchema = z.object({
   userId: z
     .string()

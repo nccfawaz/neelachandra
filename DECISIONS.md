@@ -6916,3 +6916,93 @@ exists — a narrower-designation person holding a broader role's grant set
 after owner) — clearly wider than the job; Sunil (architect) sits on
 `sales_exec`. A `site_engineer` role with a narrow grant set is proposed
 and awaits an owner decision.
+
+### 29.74 — Four roles added: site_engineer, qa_qc, architect, procurement_executive (2026-09-23)
+
+The 29.63 mapping flagged three mismatches and one gap: site engineers on
+site_supervisor, QA/QC/QS on ops_manager, the architect on sales_exec, and
+no procurement-executive-grade role for Karthik. Migration
+`029_new_roles.sql` (forward, idempotent) creates the four roles, their
+grants, and the three missing designation rows (QA-QC-QS, ARCHITECT,
+PROC-EXEC).
+
+Permission sets, each grant cited against the spec's 4.3 matrix:
+
+- **site_engineer** (8): dashboard.view_own_kpi, projects.view,
+  projects.update_progress, projects.dpr_submit, inventory.view,
+  inventory.grn_create, inventory.issue, hr.attendance_record — the
+  supervisor set minus projects.snag_manage (QA's domain once qa_qc exists)
+  and finance.expense_create (a site engineer does not raise expenses;
+  matrix grants that to supervisor, not engineer-grade staff).
+- **qa_qc** (6): dashboard.view_own_kpi, projects.view,
+  projects.quality_signoff, projects.snag_manage, inventory.view,
+  hr.attendance_record. quality_signoff is justified by spec 6.3 rule 3:
+  "Milestone certification is gated on quality, not on someone clicking
+  done" — someone independent must record the pass, and that is this role.
+- **architect** (4): dashboard.view_own_kpi, projects.view, inventory.view,
+  hr.attendance_record — the read-and-record site view; the matrix grants
+  architects nothing explicitly, so the role defaults narrow.
+- **procurement_executive** (5): dashboard.view_own_kpi, inventory.view,
+  inventory.po_create, inventory.grn_create, inventory.view_rates. Raises
+  POs, approves nothing — the segregation-of-duties rule (4.2: the same
+  guard as approveExpense applies to approvePurchaseOrder) needs raiser and
+  approver to be different people. view_rates per the schema note:
+  vendor_item_rates exists "so a PO can be checked against the last rate".
+
+None of the four holds any finance.*, approval, or cost-visibility
+permission. Pinned exactly by `tests/integration/role-grants.test.ts`
+(six tests: each role's exact set, a no-money-approval sweep across all
+four, and the designation rows).
+
+### 29.75 — Removing the seeded roster: script flag, not an admin route (2026-09-23)
+
+`scripts/seed-staff.mjs --remove-roster` removes the thirteen seeded
+people except fawaz@neelachandra.dev. Chosen as a script flag because
+removing a real person's account is a bootstrap operation, not day-to-day
+staff administration — the admin UI's status control (suspended/inactive)
+is the day-to-day path and never destroys data. The flag refuses to run
+against any non-local host (same 29.62 guard as the seed itself).
+
+Activity refusal: any audit row, notification, project assignment, live
+session, login attempt, or settings stamp naming a roster account aborts
+the whole operation with a named count — no partial removal. Proven live:
+the first run refused on 154 notifications; after they were cleared the
+run removed 13 accounts.
+
+Linked employees rows are detached (user_id/updated_by NULL) and RETAINED,
+not deleted — an employee record is an HR document with its own life, not
+a by-product of the account. A re-seed re-adopts the detached row by
+employee_code instead of colliding with uq_emp_code, proven live (13
+relinked, 0 duplicate codes).
+
+Two defects found and fixed by proving the removal end to end: mysql2's
+`execute()` silently coerces an array parameter to a scalar (matching zero
+or one row) while `query()` expands it — the delete reported success while
+deleting nothing; the first verification caught it. And a failed seed run
+mid-loop left users without employees rows; the re-adoption block closed
+that.
+
+### 29.76 — One-submit staff onboarding (2026-09-23)
+
+`POST /app/admin/users/staff` (USERS_MANAGE, audited `user.create_staff`
+with actor and target) creates the users row and the employees row in ONE
+transaction with the role checkboxes and a REQUIRED employee_code — the
+office assigns the code at hiring, so the field cannot be left empty.
+Uniqueness rides on uq_emp_code with a pre-check producing "Employee code
+X is already assigned to another employee." instead of a bare errno; the
+duplicate-email path names the clash the same way. An invite link is
+issued after commit exactly as the plain invite path does.
+
+The edit screen's employee-code panel (29.71) already allowed changing the
+code for accounts that have one; together with the onboarding path every
+account can now get its code through the UI. Proven through the HTTP path
+in `tests/integration/staff-batch.test.ts` (9 tests): unauthenticated
+refused, non-USERS_MANAGE refused 403, forged CSRF refused 403, one-submit
+success writes both rows plus the audit entry, duplicate code refused with
+a readable error and nothing written, duplicate email refused, form
+renders with the employee-code field, and the new roles appear in the
+pickers.
+
+Route-coverage accounting: mounted non-parameterised total 146 → 147;
+allowlist 146 with ceiling raised once 222 → 223 (recorded here, per the
+ceiling's own rule that raising is a documented event).

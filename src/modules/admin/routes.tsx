@@ -17,7 +17,7 @@ import {
 import { requirePermission } from '../../middleware/requirePermission.js'
 import { PERMISSIONS, PERMISSION_MODULES } from '../../lib/permissions.js'
 import { readBody } from '../../middleware/csrf.js'
-import { NotFoundError } from '../../lib/errors.js'
+import { BadRequestError, ConflictError, NotFoundError } from '../../lib/errors.js'
 import {
   changeEmailSchema,
   changeNameSchema,
@@ -32,6 +32,7 @@ import * as q from './queries.js'
 import * as svc from './service.js'
 import {
   auditFilterSchema,
+  createStaffSchema,
   createUserSchema,
   enquiryStatusSchema,
   firstError,
@@ -172,6 +173,42 @@ admin.get('/app/admin/users', requirePermission(PERMISSIONS.USERS_MANAGE), async
           </button>
         </form>
       </Panel>
+
+      <Panel title="Onboard a staff member (account and employee record together)">
+        <form method="post" action="/app/admin/users/staff" class="ncc-stack">
+          <input type="hidden" name="nc_csrf" value={session.csrfToken} />
+          <div class="ncc-grid ncc-grid--2">
+            <FormField label="Full name" name="fullName" required />
+            <FormField label="Email" name="email" type="email" required />
+            <FormField label="Phone" name="phone" hint="Optional." />
+            <FormField
+              label="Employee code"
+              name="employeeCode"
+              required
+              hint="Assigned by the office, e.g. NCC-015. Must be unique — a duplicate is refused."
+            />
+          </div>
+          <fieldset class="ncc-fieldset">
+            <legend>Role</legend>
+            <div class="ncc-grid ncc-grid--2">
+              {roles.map((role) => (
+                <label class="ncc-check">
+                  <input type="checkbox" name="roleId" value={String(role.id)} />
+                  <span>
+                    <strong>{role.label}</strong>
+                    {Number(role.require_2fa) === 1 ? <span class="ncc-muted"> requires two factor</span> : null}
+                  </span>
+                </label>
+              ))}
+            </div>
+          </fieldset>
+          <p class="ncc-hint">
+            Creates the account and the employee record in one transaction; both exist or neither does.
+            The person receives the usual invite link to choose their own password.
+          </p>
+          <button class="ncc-btn ncc-btn--primary" type="submit">Create account and employee record</button>
+        </form>
+      </Panel>
     </AppShell>
   )
 })
@@ -196,6 +233,34 @@ admin.post('/app/admin/users', requirePermission(PERMISSIONS.USERS_MANAGE), asyn
   // that exists only in a failed email means the account cannot be used.
   const message = `Account created. Invite link, valid 24 hours: ${result.inviteLink}`
   return c.redirect(`/app/admin/users/${result.userId}?ok=${encodeURIComponent(message)}`, 303)
+})
+
+/** One-submit staff onboarding (29.76): users + employees rows in one
+ * transaction, employee code required, duplicate refused with a readable
+ * error. Same USERS_MANAGE gate as the invite path. */
+admin.post('/app/admin/users/staff', requirePermission(PERMISSIONS.USERS_MANAGE), async (c) => {
+  const body = await readBody(c)
+  const parsed = createStaffSchema.safeParse(body)
+  if (!parsed.success) {
+    return c.redirect(`/app/admin/users?error=${encodeURIComponent(firstError(parsed.error))}`, 303)
+  }
+
+  try {
+    const result = await svc.createStaff(c.get('db'), actorOf(c), {
+      email: parsed.data.email,
+      fullName: parsed.data.fullName,
+      phone: parsed.data.phone,
+      roleIds: parsed.data.roleIds,
+      employeeCode: parsed.data.employeeCode,
+    })
+    const message = `Account and employee record created (code ${parsed.data.employeeCode}). Invite link, valid 24 hours: ${result.inviteLink}`
+    return c.redirect(`/app/admin/users/${result.userId}?ok=${encodeURIComponent(message)}`, 303)
+  } catch (err) {
+    if (err instanceof ConflictError || err instanceof BadRequestError) {
+      return c.redirect(`/app/admin/users?error=${encodeURIComponent(err.message)}`, 303)
+    }
+    throw err
+  }
 })
 
 admin.get('/app/admin/users/:id', requirePermission(PERMISSIONS.USERS_MANAGE), async (c) => {
