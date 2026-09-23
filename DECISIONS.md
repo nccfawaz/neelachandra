@@ -7006,3 +7006,96 @@ pickers.
 Route-coverage accounting: mounted non-parameterised total 146 → 147;
 allowlist 146 with ceiling raised once 222 → 223 (recorded here, per the
 ceiling's own rule that raising is a documented event).
+
+### 29.77 — The granted_by schema defect and the drift tripwire (2026-09-23)
+
+**The incident.** Production returned 500 on `POST /app/admin/users/:id/roles`:
+`Unknown column 'granted_by' in 'INSERT INTO'`. Reproduced by hand against
+production through the tunnel (the same INSERT failed with `ER_BAD_FIELD_ERROR`),
+and against dev too — **dev does not have the column either**; the earlier
+report that dev had acquired it was wrong. There was never any drift for this
+column: both databases came from the same incomplete chain.
+
+**Root cause.** Every writer in `src/modules/admin/service.ts` inserts
+`granted_by` into `user_roles` (createUser :54, createStaff :143,
+replaceUserRoles :313), but `migrations/002_rbac.sql` never created it —
+`granted_by` exists only on `user_permission_overrides`. TypeScript passed
+because `src/db/types.ts` (generated from information_schema) declares
+`UserRolesTable` without the column, and Kysely does not reject excess keys
+in a `.values()` payload. Nothing at runtime caught it because no test ever
+POSTs to `.../users/:id/roles` — the route sat on the route-coverage
+allowlist, i.e. it was "covered" by being listed as uncovered.
+
+**Migration 030** (`migrations/030_user_roles_granted_by.sql`): forward-only
+`ALTER TABLE user_roles ADD COLUMN granted_by BIGINT UNSIGNED NULL` with
+`idx_user_roles_granted_by` and `fk_ur_grantor ... ON DELETE SET NULL`.
+NULLable deliberately: seeded and historical rows have no grantor, and NOT
+NULL would fail against the rows it must coexist with. Applied to dev
+(re-apply proven by deleting the schema_migrations row and re-running) and
+ready for production through the tunnel; **this is the fix for the 500**.
+
+**Full schema comparison (b).** Built a clean database from the full
+migration chain on the same server and diffed information_schema — columns
+(type/nullability/default/extra), indexes (name, columns, uniqueness),
+tables/views (name and type), triggers (name, table, timing, event) —
+between clean-chain and dev: **zero drift in every category**. Dev is
+exactly what the migrations produce. The production 500 was therefore not a
+dev-vs-prod divergence; it was a code-vs-DDL divergence invisible to both,
+which is the worse shape: a fresh cut-over would have shipped it.
+
+**The tripwire.** `tests/integration/schema-drift.test.ts` applies the whole
+migration chain to a throwaway `ncc_schema_drift_probe` database on the same
+server as the dev database (same credentials, nothing new for the gate to
+depend on), snapshots both schemas from information_schema, and asserts
+equality of all four sets. Empty-green guard: the probe build asserts a
+non-zero floor (>20 tables) so a broken snapshot cannot pass as `[] == []`.
+Red proof: dropped `granted_by` (+ its FK and index) from dev and the tripwire
+failed naming exactly `user_roles.granted_by:bigint(20) unsigned:YES:NULL`;
+re-applied via migrate.mjs → green. Proven: `2 passed` after restore.
+
+**Manual production edits, recorded for the ledger (owner's direction).**
+Two edits were made on production through the tunnel outside the
+application, with no audit trail — recorded here because the audit log
+cannot record them:
+1. The six `@neelachandra.dev` → real-address changes on users 1, 2, 5, 7, 9, 12:
+   the owner states he made these directly (accounts@, mylarappa@, projects@,
+   chandrashekar@ .com, sushma@ .com, anilkumar@ .com), not through the
+   email-change route as the surviving audit rows suggested.
+2. **User id 16 (`nccfawaz@gmail.com`) and its `password_reset_tokens` row were
+   deleted by hand with no audit row.** The account was Fawaz's own experiment,
+   suspended minutes after creation on 2026-09-23, and carried audit rows
+   `user.create` and `user.status`. Those two audit rows now reference a user
+   id that no longer exists — the first orphaned audit references in
+   production, created deliberately and knowingly. Recorded because an audit
+   gap nobody wrote down is worse than an audit gap everybody can see.
+   Production `users` now holds the fourteen roster accounts exactly.
+
+### 29.78 — The port that printed undefined (2026-09-23)
+
+Production logged `listening on http://0.0.0.0:undefined (production)`.
+How the port resolves: `src/env.ts:56` declares `PORT` with
+`z.coerce.number().int().min(1).max(65535).default(3000)`; `src/server.ts:20`
+passes `env.PORT` to `serve()`; `@hono/node-server`'s `serve` does
+`server.listen(options?.port ?? 3000, ...)` and calls the listening callback
+with `server.address()`, whose `.port` is what the log line prints.
+
+Proven locally: with `PORT=31250` the committed dist prints
+`listening on http://0.0.0.0:31250 (production)`; with `PORT` unset it binds
+3000; with `PORT=''` (the hPanel empty-field shape) **boot fails** on
+`PORT: Number must be greater than or equal to 1` — it does not print
+undefined. Across @hono/node-server 1.3.0 → 2.1.1 the callback always
+received a numeric `info.port`. Within this code, a successful boot cannot
+print `undefined`: every input that makes `env.PORT` invalid fails the boot
+before `serve()` runs, and every valid input yields a defined port.
+
+So the undefined is evidence about the *deployment*, not the code: the
+running process was not booted by this exact code path. The two shapes that
+fit are (a) the host runs a startup wrapper that pre-opens or proxies the
+socket (hPanel Node apps sit behind their own listener wiring) so
+`server.address()` at callback time does not carry the requested port, or
+(b) the host runs an entry file older than the committed dist. The fix that
+makes the log honest under either: print `env.PORT` (what we asked for)
+alongside `info.port` (what we bound), so a wrapper's interference becomes
+visible instead of silent. Not yet changed — the deploy state, not the log
+line, is what the §7.6 preflight should verify next (curl the app, not read
+its boot log).
