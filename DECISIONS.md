@@ -6881,3 +6881,38 @@ Note: the maintenance suite's repeated admin logins exceed the
 test clears its own bucket first — the same workaround the sweep already
 applies between runs (the lockout itself is correct behaviour and is not
 weakened).
+
+### 29.73 — The admin role gains hr.employee_manage (2026-09-23)
+
+The permission audit showed Fawaz (website administrator, `admin` role)
+holding 14 of 60 permissions, including `users.manage`, `roles.manage` and
+`audit.view`, but only `hr.employee_view` on the HR side. He is the
+production staff administrator (§17.3), yet the employees panel of the
+account-edit screen (29.71) gates the code field on `hr.employee_manage` —
+he could read an employee record and not correct its code, the exact
+operation this batch was built for.
+
+Decision: grant `hr.employee_manage` to the `admin` role. Landed twice,
+deliberately:
+- `migrations/028_admin_employee_manage.sql` — forward, idempotent
+  (NOT EXISTS guard), so the migration path covers every database including
+  production through the SSH-tunnel route;
+- `scripts/seed-staff.mjs` — the same idempotent grant runs on every seed,
+  so a database seeded before 028 existed is brought up to date on the next
+  re-seed without manual SQL.
+
+The grant is pinned by `tests/integration/admin-role-grants.test.ts`
+(non-zero-floor assertion naming the permission). The seed-staff gate is
+NOT relaxed: still local-host/3307 only; production receives the grant
+through migration 028 applied after the tunnel comes up, or the seed run
+through it.
+
+Wider/narrower mapping flags from the same audit (report only, no action
+taken): the four site engineers (Sunil H M, Sunil Mylarappa, Dinesh, Anil
+Kumar) are mapped to `site_supervisor` because no `site_engineer` role
+exists — a narrower-designation person holding a broader role's grant set
+(Site supervisor: 10 grants including `finance.expense_create`); Shridhar
+(QA/QC/QS, no designation row) sits on `ops_manager` (41 grants, the widest
+after owner) — clearly wider than the job; Sunil (architect) sits on
+`sales_exec`. A `site_engineer` role with a narrow grant set is proposed
+and awaits an owner decision.

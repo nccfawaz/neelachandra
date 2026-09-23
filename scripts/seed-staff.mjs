@@ -163,6 +163,23 @@ try {
     }
   }
 
+  // --- Admin-role grant top-up (DECISIONS 29.73, idempotent) ---
+  // Fawaz maintains employee codes, so admin must hold hr.employee_manage.
+  // Mirrors migrations/028; runs here too so a database seeded before 028
+  // existed is brought up to date on the next re-seed.
+  {
+    const [res] = await conn.execute(
+      `INSERT INTO role_permissions (role_id, permission_id)
+       SELECT r.id, p.id
+         FROM roles r
+         JOIN permissions p ON p.\`key\` = 'hr.employee_manage'
+        WHERE r.\`key\` = 'admin'
+          AND NOT EXISTS (SELECT 1 FROM role_permissions rp
+                           WHERE rp.role_id = r.id AND rp.permission_id = p.id)`
+    )
+    if (res.affectedRows > 0) console.log('admin role: granted hr.employee_manage')
+  }
+
   // --- The dormant second admin (DECISIONS 29.68, only with the flag) ---
   if (DORMANT_ADMIN) {
     const DORMANT_EMAIL = 'dormant.admin@neelachandra.dev'
