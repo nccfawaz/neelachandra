@@ -1007,9 +1007,11 @@ export async function farChecksOn(db, date) {
         'attendance.checkin_at',
         'attendance.checkin_lat',
         'attendance.checkin_lng',
+        'attendance.checkin_far',
         'attendance.checkout_at',
         'attendance.checkout_lat',
         'attendance.checkout_lng',
+        'attendance.checkout_far',
     ])
         .where('attendance.attendance_date', '=', date)
         .where((eb) => eb.or([eb('attendance.checkin_far', '=', 1), eb('attendance.checkout_far', '=', 1)]))
@@ -1017,7 +1019,14 @@ export async function farChecksOn(db, date) {
         .execute();
     const out = [];
     for (const r of rows) {
-        if (r.checkin_at !== null && r.checkin_lat !== null && r.checkin_lng !== null) {
+        // A row flagged far carries far on exactly one side; a side that is not
+        // itself flagged (an on-site check-in beside a far check-out) is not a far
+        // reading and does not belong on Sushma's page, even though its columns
+        // are filled.
+        if (Number(r.checkin_far) === 1 &&
+            r.checkin_at !== null &&
+            r.checkin_lat !== null &&
+            r.checkin_lng !== null) {
             out.push({
                 attendance_id: Number(r.attendance_id),
                 employee_id: Number(r.employee_id),
@@ -1031,7 +1040,10 @@ export async function farChecksOn(db, date) {
                 lng: r.checkin_lng,
             });
         }
-        if (r.checkout_at !== null && r.checkout_lat !== null && r.checkout_lng !== null) {
+        if (Number(r.checkout_far) === 1 &&
+            r.checkout_at !== null &&
+            r.checkout_lat !== null &&
+            r.checkout_lng !== null) {
             out.push({
                 attendance_id: Number(r.attendance_id),
                 employee_id: Number(r.employee_id),
