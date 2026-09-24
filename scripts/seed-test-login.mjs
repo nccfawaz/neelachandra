@@ -41,7 +41,16 @@ if (!process.argv.includes('--test-login')) {
 const host = process.env.DB_HOST || 'localhost'
 const port = Number(process.env.DB_PORT || 3307)
 const LOCAL_HOSTS = ['localhost', '127.0.0.1', '::1']
-if (!LOCAL_HOSTS.includes(host) || port !== 3307) {
+// The machine's own LAN address also counts as local: an ssh port-forward
+// tunnel squatting on 127.0.0.1:3307 once forced .env to name the host by its
+// LAN IP to reach the same local MariaDB (2026-09-24). The list is matched
+// against every address this machine actually holds, not just the string.
+import { networkInterfaces } from 'node:os'
+const ownAddresses = new Set(LOCAL_HOSTS)
+for (const addrs of Object.values(networkInterfaces())) {
+  for (const a of addrs ?? []) ownAddresses.add(a.address)
+}
+if (!ownAddresses.has(host) || port !== 3307) {
   console.error(
     `REFUSED: seed-test-login targets the dev database only (host must be one of ${LOCAL_HOSTS.join('/')} and port must be 3307); got ${host}:${port}.`
   )
