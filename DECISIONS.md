@@ -7165,3 +7165,20 @@ the pre-existing (dormant) `checkin_at` column's companions into the canonical
 set; an earlier abandoned experiment's columns were dropped from the dev
 database by hand before 031 applied, and no committed migration ever created
 them.
+
+### 31.7 The exclusion keys on the role, not the employee code (2026-09-24)
+
+Production renumbered the employee codes: the owner is NCC-000 and Sushma
+(HR) is NCC-001. The seed's original muster-exclusion rule was pinned to
+NCC-001 and would have excluded Sushma — the wrong person, on the strength of
+a number. The fix: the exclusion is DERIVED from the owner ROLE wherever the
+seed writes an employee row, and `musterExcluded` no longer exists as a
+per-person flag in the seed data. A code the office can change is not
+identity; the role is what the office cannot renumber without changing who
+the owner is. The seed refuses to run unless exactly one person carries the
+owner role, so the derivation can neither double-exclude nor silently
+un-exclude.
+
+The runtime service (`assertNotMusterExcluded`) is unchanged and already
+correct: it reads the employee row's stored flag, which is now written from
+the role. Nothing in src/ ever referenced a code.

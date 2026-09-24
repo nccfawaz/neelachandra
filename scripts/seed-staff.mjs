@@ -68,8 +68,15 @@ function generatePassword() {
 // employee row stays for name resolution but sits outside the attendance grid,
 // the muster roll and every printed Form XVI, and no attendance write succeeds
 // against it. Fawaz appears normally.
+//
+// The exclusion itself is DERIVED from roleKey below the loop, not carried on
+// the data: production renumbered the codes (the owner is NCC-000 there), so
+// a code-based rule would have excluded Sushma. A code the office can change
+// is not identity; the role is what the office cannot renumber without
+// changing who the owner is. Exactly one person may carry the owner role —
+// see the assertion above the loop.
 const PEOPLE = [
-  { name: 'Chandrashekar', email: 'chandrashekar@neelachandra.dev', roleKey: 'owner', designationCode: 'FOUNDER', employeeCode: 'NCC-001', dept: 'MGMT', musterExcluded: true },
+  { name: 'Chandrashekar', email: 'chandrashekar@neelachandra.dev', roleKey: 'owner', designationCode: 'FOUNDER', employeeCode: 'NCC-001', dept: 'MGMT' },
   { name: 'Sushma', email: 'sushma@neelachandra.dev', roleKey: 'hr_manager', designationCode: 'HR-MGR', employeeCode: 'NCC-002', dept: 'HR' },
   { name: 'Ramesh', email: 'ramesh@neelachandra.dev', roleKey: 'project_manager', designationCode: 'PROJ-MGR', employeeCode: 'NCC-003', dept: 'SITE' },
   { name: 'Vinay', email: 'vinay@neelachandra.dev', roleKey: 'ops_manager', designationCode: 'PROC-LEAD', employeeCode: 'NCC-004', dept: 'PROC' },
@@ -84,6 +91,16 @@ const PEOPLE = [
   { name: 'Shishir', email: 'shishir@neelachandra.dev', roleKey: 'site_supervisor', designationCode: 'SITE-SUP', employeeCode: 'NCC-013', dept: 'SITE' },
   { name: 'Fawaz B H', email: 'fawaz@neelachandra.dev', roleKey: 'admin', designationCode: null, employeeCode: 'NCC-014', dept: 'OPS' },
 ]
+
+// The muster exclusion keys on the owner ROLE (DECISIONS 31), so exactly one
+// person may carry that role: two owners would both be excluded, and zero
+// would silently un-exclude the owner. A duplicate or missing roleKey here is
+// a seed-authoring mistake, not a runtime condition — refuse loudly.
+const ownerCount = PEOPLE.filter((p) => p.roleKey === 'owner').length
+if (ownerCount !== 1) {
+  console.error(`seed-staff: exactly one person must carry roleKey 'owner' (found ${ownerCount}).`)
+  process.exit(1)
+}
 
 const RESET_PASSWORDS = process.argv.includes('--reset-passwords')
 const REMOVE_ROSTER = process.argv.includes('--remove-roster')
@@ -206,13 +223,18 @@ try {
           await conn.execute('UPDATE users SET employee_id = ? WHERE id = ?', [employeeId, userId])
         }
       }
+      // The muster exclusion follows the ROLE, never the employee code: the
+      // office renumbered the codes once already (owner = NCC-000 on
+      // production), and a rule pinned to a mutable code would have excluded
+      // whoever inherited the number next.
+      const musterExcluded = person.roleKey === 'owner' ? 1 : 0
       if (!employeeId) {
         const [empRes] = await conn.execute(
           `INSERT INTO employees (employee_code, user_id, full_name, designation_id,
              employment_type, date_of_joining, status, muster_excluded)
            VALUES (?, ?, ?, ?, 'permanent', CURDATE(), 'active', ?)`,
           [person.employeeCode, userId, person.name, person.designationCode ? desigId.get(person.designationCode) ?? null : null,
-           person.musterExcluded ? 1 : 0]
+           musterExcluded]
         )
         employeeId = empRes.insertId
         await conn.execute('UPDATE users SET employee_id = ? WHERE id = ?', [employeeId, userId])
@@ -221,7 +243,7 @@ try {
           `UPDATE employees SET full_name = ?, designation_id = COALESCE(?, designation_id),
              status = 'active', muster_excluded = ? WHERE id = ?`,
           [person.name, person.designationCode ? desigId.get(person.designationCode) ?? null : null,
-           person.musterExcluded ? 1 : 0, employeeId]
+           musterExcluded, employeeId]
         )
       }
 
