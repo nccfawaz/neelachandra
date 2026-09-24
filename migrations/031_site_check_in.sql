@@ -16,6 +16,9 @@
 
 -- One ALTER per column: MariaDB cannot reference a column added earlier in
 -- the same multi-ADD statement.
+ALTER TABLE locations ADD COLUMN latitude DECIMAL(9,6) NULL AFTER address;
+ALTER TABLE locations ADD COLUMN longitude DECIMAL(9,6) NULL AFTER latitude;
+
 -- checkin_at itself: an earlier draft of this feature left the column alone
 -- outside the committed chain, so the forward chain owns creating it here.
 ALTER TABLE attendance ADD COLUMN checkin_at DATETIME NULL AFTER overtime_hours;
@@ -29,3 +32,5 @@ ALTER TABLE attendance ADD COLUMN checkout_far TINYINT(1) NOT NULL DEFAULT 0 AFT
 
 ALTER TABLE employees
   ADD COLUMN muster_excluded TINYINT(1) NOT NULL DEFAULT 0 AFTER status;
+
+ALTER TABLE attendance ADD INDEX idx_att_checkin_date (checkin_at);
