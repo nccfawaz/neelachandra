@@ -1078,6 +1078,7 @@ export async function farChecksOn(db, date) {
         'attendance.checkout_lat',
         'attendance.checkout_lng',
         'attendance.checkout_far',
+        'attendance.checkin_test',
     ])
         .where('attendance.attendance_date', '=', date)
         .where((eb) => eb.or([
@@ -1098,6 +1099,7 @@ export async function farChecksOn(db, date) {
                 return 'unavailable';
             return Number(far) === 1 ? 'far' : 'ok';
         };
+        const test = Number(r.checkin_test) === 1;
         if (r.checkin_at !== null) {
             out.push({
                 attendance_id: Number(r.attendance_id),
@@ -1111,6 +1113,7 @@ export async function farChecksOn(db, date) {
                 lat: r.checkin_lat,
                 lng: r.checkin_lng,
                 flag: flagOf(String(r.checkin_at), r.checkin_lat, r.checkin_lng, r.checkin_far),
+                test,
             });
         }
         if (r.checkout_at !== null) {
@@ -1126,8 +1129,80 @@ export async function farChecksOn(db, date) {
                 lat: r.checkout_lat,
                 lng: r.checkout_lng,
                 flag: flagOf(String(r.checkout_at), r.checkout_lat, r.checkout_lng, r.checkout_far),
+                test,
             });
         }
     }
     return out;
+}
+/**
+ * Whether the employee's row carries checkin_test_mode (DECISIONS 31.10).
+ *
+ * A missing row is false, not an error: the caller's refusal paths name the
+ * problem better than this lookup would.
+ */
+export async function isCheckinTestMode(db, employeeId) {
+    const row = await db
+        .selectFrom('employees')
+        .select('checkin_test_mode')
+        .where('id', '=', employeeId)
+        .executeTakeFirst();
+    return row !== undefined && Number(row.checkin_test_mode) === 1;
+}
+export async function dayAttendanceSummary(db, date) {
+    const roster = await db
+        .selectFrom('employees')
+        .select(['id', 'employee_code', 'full_name', 'checkin_test_mode'])
+        .where('muster_excluded', '=', 0)
+        .where('date_of_joining', '<=', date)
+        .where((eb) => eb.or([eb('date_of_exit', 'is', null), eb('date_of_exit', '>=', date)]))
+        .orderBy('employee_code')
+        .execute();
+    const readings = await db
+        .selectFrom('attendance')
+        .select([
+        'employee_id',
+        'checkin_at',
+        'checkout_at',
+        'checkin_far',
+        'checkout_far',
+        'checkin_lat',
+        'checkin_lng',
+        'checkout_lat',
+        'checkout_lng',
+        'checkin_test',
+    ])
+        .where('attendance_date', '=', date)
+        .execute();
+    const byEmployee = new Map(readings.map((r) => [Number(r.employee_id), r]));
+    const inToday = [];
+    const missing = [];
+    for (const p of roster) {
+        const r = byEmployee.get(Number(p.id));
+        const row = {
+            employee_id: Number(p.id),
+            employee_code: p.employee_code,
+            full_name: p.full_name,
+            checkin_at: r?.checkin_at === null || r?.checkin_at === undefined ? null : String(r.checkin_at),
+            checkout_at: r?.checkout_at === null || r?.checkout_at === undefined ? null : String(r.checkout_at),
+            flagged: r !== undefined &&
+                Number(r.checkin_test) !== 1 &&
+                ((r.checkin_at !== null &&
+                    ((r.checkin_lat === null && true) || Number(r.checkin_far) === 1)) ||
+                    (r.checkout_at !== null &&
+                        ((r.checkout_lat === null && true) || Number(r.checkout_far) === 1))),
+            test: r !== undefined && Number(r.checkin_test) === 1,
+        };
+        // A test-mode employee with no row is still a TEST roster line, not a
+        // missing worker.
+        if (Number(p.checkin_test_mode) === 1 && !row.test) {
+            inToday.push({ ...row, test: true });
+            continue;
+        }
+        if (r !== undefined && r.checkin_at !== null)
+            inToday.push(row);
+        else
+            missing.push({ ...row, checkout_at: null });
+    }
+    return { inToday, missing };
 }

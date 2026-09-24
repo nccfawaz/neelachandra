@@ -1792,14 +1792,17 @@ export default hr;
 hr.get('/app/hr/attendance/far', requirePermission(PERMISSIONS.HR_ATTENDANCE_RECORD), async (c) => {
     const db = c.get('db');
     const date = dateParam(c, 'date');
-    const rows = await q.farChecksOn(db, date);
-    const flagged = rows.filter((r) => r.flag === 'far' || r.flag === 'unavailable').length;
-    const flagBadge = (flag) => {
-        if (flag === 'far')
+    const [rows, summary] = await Promise.all([q.farChecksOn(db, date), q.dayAttendanceSummary(db, date)]);
+    // Test rows never count toward the flagged total (DECISIONS 31.10).
+    const flagged = rows.filter((r) => !r.test && (r.flag === 'far' || r.flag === 'unavailable')).length;
+    const flagBadge = (r) => {
+        if (r.test)
+            return _jsx("span", { class: "ncc-badge ncc-badge-muted", children: "TEST" });
+        if (r.flag === 'far')
             return _jsx("span", { class: "ncc-badge ncc-badge-danger", children: "FAR" });
-        if (flag === 'unavailable')
-            return _jsx("span", { class: "ncc-badge", children: "no reading" });
-        if (flag === '')
+        if (r.flag === 'unavailable')
+            return _jsx("span", { class: "ncc-badge ncc-badge-warn", children: "no reading" });
+        if (r.flag === '')
             return _jsx("span", { class: "ncc-muted", children: "\u2014" });
         return _jsx("span", { class: "ncc-badge ncc-badge-ok", children: "on site" });
     };
@@ -1811,14 +1814,23 @@ hr.get('/app/hr/attendance/far', requirePermission(PERMISSIONS.HR_ATTENDANCE_REC
     return page(c, {
         title: 'Site check-ins',
         path: '/app/hr/attendance/far',
-        subtitle: `${date} — ${rows.length} reading${rows.length === 1 ? '' : 's'}, ${flagged} flagged`,
+        subtitle: `${date} — ${summary.inToday.length} checked in · ${summary.missing.length} missing · ${flagged} need a look`,
         actions: (_jsx("a", { class: "ncc-btn", href: "/app/hr/attendance", children: "Attendance entry" })),
-    }, _jsxs(_Fragment, { children: [banner(c), _jsx(Alert, { tone: "warn", children: "A far reading is recorded, never refused: the attendance always stands, and on_duty_travel days are not exempt. FAR marks a real position beyond the 500 m threshold; \"no reading\" marks a check-in whose device supplied no position. Both are review items, not corrections." }), _jsx(DataTable, { columns: [
-                    { header: 'Employee', cell: (r) => (_jsxs(_Fragment, { children: [_jsx("strong", { children: r.full_name }), _jsxs("div", { class: "ncc-muted", children: [r.employee_code, r.designation_name ? ` · ${r.designation_name}` : ''] })] })) },
-                    { header: 'Reading', cell: (r) => (r.which === 'checkin' ? 'Check-in' : 'Check-out') },
-                    { header: 'At', cell: (r) => r.at ?? _jsx("span", { class: "ncc-muted", children: "\u2014" }) },
-                    { header: 'Status', cell: (r) => titleCase(r.status) },
-                    { header: 'Flag', cell: (r) => flagBadge(r.flag) },
-                    { header: 'Position', cell: (r) => mapsLink(r) },
-                ], rows: rows, empty: `No check-ins or check-outs recorded on ${date}.` })] }));
+    }, _jsxs(_Fragment, { children: [banner(c), _jsx(Panel, { title: "Who is in today", children: _jsx(DataTable, { columns: [
+                        { header: 'Person', cell: (r) => (_jsxs(_Fragment, { children: [_jsx("strong", { children: r.full_name }), _jsxs("div", { class: "ncc-muted", children: [r.employee_code, r.test ? ' · TEST' : ''] })] })) },
+                        { header: 'Checked in at', cell: (r) => r.checkin_at ?? _jsx("span", { class: "ncc-muted", children: "\u2014" }) },
+                        { header: 'Checked out at', cell: (r) => r.checkout_at ?? _jsx("span", { class: "ncc-muted", children: "still on site" }) },
+                        { header: 'Needs a look', cell: (r) => r.test ? _jsx("span", { class: "ncc-badge ncc-badge-muted", children: "TEST" })
+                                : r.flagged ? _jsx("span", { class: "ncc-badge ncc-badge-danger", children: "YES" })
+                                    : _jsx("span", { class: "ncc-badge ncc-badge-ok", children: "no" }) },
+                    ], rows: summary.inToday, empty: `Nobody has checked in yet on ${date}.` }) }), _jsx(Panel, { title: "Missing \u2014 no check-in today", children: _jsx(DataTable, { columns: [
+                        { header: 'Person', cell: (r) => (_jsxs(_Fragment, { children: [_jsx("strong", { children: r.full_name }), _jsx("div", { class: "ncc-muted", children: r.employee_code })] })) },
+                    ], rows: summary.missing, empty: `Everyone on the roster has checked in on ${date}.` }) }), _jsxs(Panel, { title: "Every reading \u2014 the detail", children: [_jsx(Alert, { tone: "warn", children: "A far reading is recorded, never refused: the attendance always stands, and on_duty_travel days are not exempt. FAR marks a real position beyond the 500 m threshold; \"no reading\" marks a check-in whose device supplied no position. Both are review items, not corrections. TEST rows were written in test mode and never count here." }), _jsx(DataTable, { columns: [
+                            { header: 'Employee', cell: (r) => (_jsxs(_Fragment, { children: [_jsx("strong", { children: r.full_name }), _jsxs("div", { class: "ncc-muted", children: [r.employee_code, r.designation_name ? ` · ${r.designation_name}` : ''] })] })) },
+                            { header: 'Reading', cell: (r) => (r.which === 'checkin' ? 'Check-in' : 'Check-out') },
+                            { header: 'At', cell: (r) => r.at ?? _jsx("span", { class: "ncc-muted", children: "\u2014" }) },
+                            { header: 'Status', cell: (r) => titleCase(r.status) },
+                            { header: 'Flag', cell: (r) => flagBadge(r) },
+                            { header: 'Position', cell: (r) => mapsLink(r) },
+                        ], rows: rows, empty: `No check-ins or check-outs recorded on ${date}.` })] })] }));
 });
