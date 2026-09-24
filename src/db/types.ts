@@ -125,6 +125,7 @@ export interface AttendanceTable {
   checkout_lng: Generated<number | null>
   checkout_far: Generated<number>
   checkin_test: Generated<number>
+  checkin_site_key: Generated<string | null>
   marked_by: number
   marked_at: SqlDateGen
   approved_by: Generated<number | null>

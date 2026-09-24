@@ -1094,6 +1094,8 @@ export async function selfCheckIn(
           checkin_lng: reading?.lng ?? null,
           checkin_far: far ? 1 : 0,
           checkin_test: testMode ? 1 : 0,
+          // Stored at check-in: check-out reads it back (033).
+          checkin_site_key: input.siteKey,
         })
         .where('id', '=', Number(prior.id))
         .execute()
@@ -1111,6 +1113,7 @@ export async function selfCheckIn(
           checkin_lng: reading?.lng ?? null,
           checkin_far: far ? 1 : 0,
           checkin_test: testMode ? 1 : 0,
+          checkin_site_key: input.siteKey,
         })
         .execute()
     }
@@ -1147,7 +1150,7 @@ export async function selfCheckIn(
 export async function selfCheckOut(
   db: Db,
   actor: Actor,
-  input: SelfCheckInput
+  input: Omit<SelfCheckInput, 'siteKey'>
 ): Promise<SelfCheckResult> {
   return db.transaction().execute(async (trx) => {
     await assertNotMusterExcluded(trx, input.employeeId)
@@ -1156,7 +1159,7 @@ export async function selfCheckOut(
 
     const prior = await trx
       .selectFrom('attendance')
-      .select(['id', 'checkin_at', 'checkout_at'])
+      .select(['id', 'checkin_at', 'checkout_at', 'checkin_site_key'])
       .where('employee_id', '=', input.employeeId)
       .where('attendance_date', '=', today())
       .executeTakeFirst()
@@ -1167,8 +1170,17 @@ export async function selfCheckOut(
       throw new ConflictError('You are already checked out today.')
     }
 
-    const site = await resolveCheckinSite(trx, input.siteKey)
-    if (!site) throw new UnprocessableError('That site is no longer offered for check-in.')
+    // The site is the one chosen at CHECK-IN, stored on the row (033): the
+    // check-out form renders no dropdown, so asking the handler for a site
+    // key would ask for an answer the browser was never given.
+    const storedKey = prior.checkin_site_key === null ? null : String(prior.checkin_site_key)
+    if (storedKey === null) {
+      throw new UnprocessableError(
+        'Your check-in did not record a site, so check-out cannot compare positions. Ask HR to note the day manually.'
+      )
+    }
+    const site = await resolveCheckinSite(trx, storedKey)
+    if (!site) throw new UnprocessableError('The site you checked in at is no longer offered for check-in.')
 
     const reading: LatLng | null =
       input.reading !== null && isValidReading(input.reading) ? input.reading : null
@@ -1204,7 +1216,7 @@ export async function selfCheckOut(
       after: {
         employee_id: input.employeeId,
         date: today(),
-        site_key: input.siteKey,
+        site_key: storedKey,
         distance_m: distance,
         far,
       },

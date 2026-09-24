@@ -190,6 +190,7 @@ afterAll(async () => {
   // users.employee_id all reference rows that must go before their parents.
   await sql`delete from audit_log where user_id = ${userId}`.execute(db)
   await sql`delete from user_sessions where user_id = ${userId}`.execute(db)
+  await sql`delete from user_roles where user_id = ${userId}`.execute(db)
   await sql`update users set employee_id = NULL where id = ${userId}`.execute(db)
   await sql`delete from attendance where employee_id = ${employeeId}`.execute(db)
   await sql`delete from employees where id = ${employeeId}`.execute(db)
@@ -332,12 +333,14 @@ describe('the check-in forms carry a valid CSRF token', () => {
     const token = html.match(/name="nc_csrf" value="([^"]+)"/)?.[1] ?? ''
     expect(token).not.toBe('')
 
+    // The rendered check-out form posts NO siteKey field: the site chosen at
+    // check-in is stored on the attendance row and read back by the service.
+    // This body is exactly what the real form submits.
     const ok = await app.request('/app/attendance/checkout', {
       method: 'POST',
       redirect: 'manual',
       headers: { 'content-type': 'application/x-www-form-urlencoded', cookie: jar },
       body: new URLSearchParams({
-        siteKey: 'office:' + officeId,
         lat: '12.9054',
         lng: '77.6',
         nc_csrf: token,

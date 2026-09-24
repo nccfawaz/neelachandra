@@ -373,16 +373,19 @@ async function checkinPanel(c: Context<AppEnv>) {
 }
 
 interface CheckPost {
-  siteKey: string
+  siteKey: string | null
   reading: { lat: number; lng: number } | null
 }
 
 async function checkPostOf(c: Context<AppEnv>): Promise<CheckPost> {
   const body = await readBody(c)
-  const siteKey = typeof body['siteKey'] === 'string' ? body['siteKey'] : ''
-  if (!/^(office|project):\d+$/.test(siteKey)) {
-    throw new UnprocessableError('Choose the site you are checking in at.')
-  }
+  // Only the CHECK-IN form carries the site dropdown. The check-out form
+  // posts no siteKey at all -- the site was chosen at check-in and is read
+  // back from the attendance row by the service (DECISIONS 31.12). A siteKey
+  // on a check-out post is accepted and ignored, so a stale cached form
+  // cannot break the post.
+  const rawSiteKey = typeof body['siteKey'] === 'string' ? body['siteKey'] : ''
+  const siteKey = /^(office|project):\d+$/.test(rawSiteKey) ? rawSiteKey : null
   // A missing, blank, or failed position ("0", "0,0", garbage) is a reading
   // of "unavailable", not a refusal and not a coordinate: the client script
   // fills these from navigator.geolocation when the worker grants it, and a
@@ -427,6 +430,9 @@ const checkoutMessage = (r: Awaited<ReturnType<typeof svc.selfCheckOut>>): strin
 dashboard.post('/app/attendance/checkin', requirePermission(PERMISSIONS.DASHBOARD_VIEW_OWN_KPI), async (c) => {
   const post = await checkPostOf(c)
   try {
+    if (post.siteKey === null) {
+      throw new UnprocessableError('Choose the site you are checking in at.')
+    }
     const result = await svc.selfCheckIn(c.get('db'), actorOf(c), {
       employeeId: await employeeIdOf(c),
       siteKey: post.siteKey,
@@ -446,7 +452,6 @@ dashboard.post('/app/attendance/checkout', requirePermission(PERMISSIONS.DASHBOA
   try {
     const result = await svc.selfCheckOut(c.get('db'), actorOf(c), {
       employeeId: await employeeIdOf(c),
-      siteKey: post.siteKey,
       reading: post.reading,
     })
     return okRedirect(c, '/app', checkoutMessage(result))
