@@ -310,6 +310,11 @@ export async function attendanceRoster(db, month, opts = {}) {
         .orderBy('employees.employee_code');
     if (opts.employeeId)
         query = query.where('employees.id', '=', opts.employeeId);
+    // Muster-excluded rows (the owner) never render on a worker register. The
+    // exclusion is an option, not a hard filter, because the service layer has to
+    // be able to fetch the row BY NAME for the refusal message (DECISIONS 31).
+    if (!opts.includeMusterExcluded)
+        query = query.where('employees.muster_excluded', '=', 0);
     return (await query.execute());
 }
 export async function attendanceMonth(db, month, opts = {}) {
@@ -957,4 +962,89 @@ export async function findContractorBill(db, id) {
         .where('contractor_bills.id', '=', id)
         .executeTakeFirst();
     return row === undefined ? undefined : billRow(row);
+}
+export async function selfDay(db, userId) {
+    return (await db
+        .selectFrom('attendance')
+        .innerJoin('employees', 'employees.id', 'attendance.employee_id')
+        .leftJoin('users', (join) => join.on((eb) => eb.or([
+        eb('users.id', '=', eb.ref('employees.user_id')),
+        eb('users.employee_id', '=', eb.ref('employees.id')),
+    ])))
+        .select([
+        'attendance.employee_id',
+        'employees.full_name',
+        'employees.employee_code',
+        'attendance.status',
+        'attendance.checkin_at',
+        'attendance.checkout_at',
+    ])
+        .where('users.id', '=', userId)
+        .where('attendance.attendance_date', '=', new Date().toISOString().slice(0, 10))
+        .executeTakeFirst());
+}
+/** Sites the check-in panel can offer: any active location that has coordinates. */
+export async function checkinSiteOptions(db) {
+    return db
+        .selectFrom('locations')
+        .select(['id', 'name', 'latitude', 'longitude'])
+        .where('is_active', '=', 1)
+        .orderBy('name')
+        .execute();
+}
+export async function farChecksOn(db, date) {
+    const rows = await db
+        .selectFrom('attendance')
+        .innerJoin('employees', 'employees.id', 'attendance.employee_id')
+        .leftJoin('designations', 'designations.id', 'employees.designation_id')
+        .select([
+        'attendance.id as attendance_id',
+        'attendance.employee_id',
+        'employees.employee_code',
+        'employees.full_name',
+        'designations.name as designation_name',
+        'attendance.status',
+        'attendance.checkin_at',
+        'attendance.checkin_lat',
+        'attendance.checkin_lng',
+        'attendance.checkout_at',
+        'attendance.checkout_lat',
+        'attendance.checkout_lng',
+    ])
+        .where('attendance.attendance_date', '=', date)
+        .where((eb) => eb.or([eb('attendance.checkin_far', '=', 1), eb('attendance.checkout_far', '=', 1)]))
+        .orderBy('employees.employee_code')
+        .execute();
+    const out = [];
+    for (const r of rows) {
+        if (r.checkin_at !== null && r.checkin_lat !== null && r.checkin_lng !== null) {
+            out.push({
+                attendance_id: Number(r.attendance_id),
+                employee_id: Number(r.employee_id),
+                employee_code: r.employee_code,
+                full_name: r.full_name,
+                designation_name: r.designation_name,
+                status: String(r.status),
+                which: 'checkin',
+                at: String(r.checkin_at),
+                lat: r.checkin_lat,
+                lng: r.checkin_lng,
+            });
+        }
+        if (r.checkout_at !== null && r.checkout_lat !== null && r.checkout_lng !== null) {
+            out.push({
+                attendance_id: Number(r.attendance_id),
+                employee_id: Number(r.employee_id),
+                employee_code: r.employee_code,
+                full_name: r.full_name,
+                designation_name: r.designation_name,
+                status: String(r.status),
+                which: 'checkout',
+                at: String(r.checkout_at),
+                lat: r.checkout_lat,
+                lng: r.checkout_lng,
+            });
+        }
+    }
+    return out;
 }

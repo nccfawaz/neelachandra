@@ -7099,3 +7099,69 @@ alongside `info.port` (what we bound), so a wrapper's interference becomes
 visible instead of silent. Not yet changed — the deploy state, not the log
 line, is what the §7.6 preflight should verify next (curl the app, not read
 its boot log).
+
+## 30 (continued) and 31. Site check-in and check-out, 2026-09-24
+
+The owner set the policy in conversation; every clause below is his decision,
+not an inference from the spec.
+
+### 31.1 Attendance is never refused on location grounds
+
+A check-in or check-out whose GPS reading sits beyond the threshold is
+RECORDED and FLAGGED, never refused. There is no code path — service, route,
+or schema — that turns a far reading into a 4xx. A worker with a dead GPS chip
+or a mis-geolocated phone must not lose a day's attendance; the flag exists so
+Sushma (HR) reviews the reading in conversation, not so the system corrects
+it. This is the invariant the integration suite pins
+(`hr-site-checkin-flow.test.ts`, "attendance is NEVER refused on location").
+
+### 31.2 Threshold: 500 m, fixed
+
+`SITE_FAR_THRESHOLD_M = 500` in `src/lib/geo.ts`. It is a constant, not a
+setting: a threshold that only colours a review flag needs no configurability,
+and a wrong value loses nothing because nothing is refused on it.
+`on_duty_travel` days get NO exemption — a travel day flags far like any
+other, because "he was supposed to be elsewhere" is exactly the flag worth
+reviewing.
+
+### 31.3 Two moments only, stated on the page
+
+Location is captured at check-in and at check-out, each in its own columns
+(`checkin_at/lat/lng/far`, `checkout_at/lat/lng/far`) with its own flag, and
+never at any other time. The check-in panel on the dashboard says this on the
+page, in prose, because one measurement with informed consent is not the same
+act as silent continuous tracking. No tracking exists between the two
+moments; there is no background job, no polling, no third write.
+
+### 31.4 The owner is not a worker of record
+
+Chandrashekar (NCC-001) is muster-excluded: `employees.muster_excluded` removes
+him from the attendance grid, the muster roll and every printed Form XVI drawn
+from it. His employee row is KEPT for name resolution — the exclusion is a
+register question, not an existence question. Fawaz appears normally.
+
+The exclusion is a WRITE GATE, not a silent filter: every attendance write —
+bulk, grid, self check-in, self check-out — refuses BY NAME
+(employee code and name in the message) when the target row is
+muster-excluded. A silent filter would let a grid post create payroll rows for
+a person the register says was never there; a named refusal surfaces it in the
+supervisor's browser instead.
+
+### 31.5 Check-in and check-out live on the staff's own screen
+
+Both buttons are on the landing dashboard, visible immediately on sign-in,
+rendered server-side with no client component (a form post works without
+JavaScript, the same rule the attendance grid holds). Check-out captures
+location exactly as check-in does. No new permission was created: the panel is
+authenticated-only "own", like self leave — the muster-excluded refusal in the
+service is what stops the owner's own button from writing, not a missing
+button.
+
+### 31.6 Schema note
+
+Migration 031 adds no CHECK constraints on the distance columns, deliberately:
+a CHECK that refused a far row would violate 31.1. The migration also converts
+the pre-existing (dormant) `checkin_at` column's companions into the canonical
+set; an earlier abandoned experiment's columns were dropped from the dev
+database by hand before 031 applied, and no committed migration ever created
+them.

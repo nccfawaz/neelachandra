@@ -380,7 +380,7 @@ export interface RosterRow {
 export async function attendanceRoster(
   db: Queryable,
   month: string,
-  opts: { employeeId?: number } = {}
+  opts: { employeeId?: number; includeMusterExcluded?: boolean } = {}
 ): Promise<RosterRow[]> {
   const { start, end } = monthBounds(month)
   let query = db
@@ -408,6 +408,10 @@ export async function attendanceRoster(
     )
     .orderBy('employees.employee_code')
   if (opts.employeeId) query = query.where('employees.id', '=', opts.employeeId)
+  // Muster-excluded rows (the owner) never render on a worker register. The
+  // exclusion is an option, not a hard filter, because the service layer has to
+  // be able to fetch the row BY NAME for the refusal message (DECISIONS 31).
+  if (!opts.includeMusterExcluded) query = query.where('employees.muster_excluded', '=', 0)
   return (await query.execute()) as unknown as RosterRow[]
 }
 
@@ -1314,4 +1318,138 @@ export async function findContractorBill(db: Queryable, id: number) {
     .where('contractor_bills.id', '=', id)
     .executeTakeFirst()
   return row === undefined ? undefined : billRow(row)
+}
+
+/* Site check-in reads (DECISIONS 31) -------------------------------------- */
+
+/**
+ * The user's own day, for the dashboard check-in panel.
+ *
+ * Reads by user id through the two-direction login link the rest of this file
+ * uses (see employeeLoginId), so an account created through the admin screen
+ * with employees.user_id never written still resolves.
+ */
+export interface SelfDayRow {
+  employee_id: number
+  full_name: string
+  employee_code: string
+  status: string | null
+  checkin_at: string | null
+  checkout_at: string | null
+}
+
+export async function selfDay(db: Queryable, userId: number): Promise<SelfDayRow | undefined> {
+  return (await db
+    .selectFrom('attendance')
+    .innerJoin('employees', 'employees.id', 'attendance.employee_id')
+    .leftJoin('users', (join) =>
+      join.on((eb) =>
+        eb.or([
+          eb('users.id', '=', eb.ref('employees.user_id')),
+          eb('users.employee_id', '=', eb.ref('employees.id')),
+        ])
+      )
+    )
+    .select([
+      'attendance.employee_id',
+      'employees.full_name',
+      'employees.employee_code',
+      'attendance.status',
+      'attendance.checkin_at',
+      'attendance.checkout_at',
+    ])
+    .where('users.id', '=', userId)
+    .where('attendance.attendance_date', '=', new Date().toISOString().slice(0, 10))
+    .executeTakeFirst()) as unknown as SelfDayRow | undefined
+}
+
+/** Sites the check-in panel can offer: any active location that has coordinates. */
+export async function checkinSiteOptions(db: Queryable) {
+  return db
+    .selectFrom('locations')
+    .select(['id', 'name', 'latitude', 'longitude'])
+    .where('is_active', '=', 1)
+    .orderBy('name')
+    .execute()
+}
+
+/**
+ * The HR far-flag day view: every reading beyond the 500 m threshold for a
+ * given date, with the distance worked out in SQL's decimal-free absence.
+ *
+ * Distances are recomputed here in JS (via the service's use of geo.ts on
+ * write, and this query's callers re-deriving what they display) because SQL
+ * haversine on DECIMAL(9,6) is where precision goes to die.
+ */
+export interface FarCheckRow {
+  attendance_id: number
+  employee_id: number
+  employee_code: string
+  full_name: string
+  designation_name: string | null
+  status: string
+  which: 'checkin' | 'checkout'
+  at: string
+  lat: string | number
+  lng: string | number
+}
+
+export async function farChecksOn(db: Queryable, date: string): Promise<FarCheckRow[]> {
+  const rows = await db
+    .selectFrom('attendance')
+    .innerJoin('employees', 'employees.id', 'attendance.employee_id')
+    .leftJoin('designations', 'designations.id', 'employees.designation_id')
+    .select([
+      'attendance.id as attendance_id',
+      'attendance.employee_id',
+      'employees.employee_code',
+      'employees.full_name',
+      'designations.name as designation_name',
+      'attendance.status',
+      'attendance.checkin_at',
+      'attendance.checkin_lat',
+      'attendance.checkin_lng',
+      'attendance.checkout_at',
+      'attendance.checkout_lat',
+      'attendance.checkout_lng',
+    ])
+    .where('attendance.attendance_date', '=', date)
+    .where((eb) =>
+      eb.or([eb('attendance.checkin_far', '=', 1), eb('attendance.checkout_far', '=', 1)])
+    )
+    .orderBy('employees.employee_code')
+    .execute()
+
+  const out: FarCheckRow[] = []
+  for (const r of rows) {
+    if (r.checkin_at !== null && r.checkin_lat !== null && r.checkin_lng !== null) {
+      out.push({
+        attendance_id: Number(r.attendance_id),
+        employee_id: Number(r.employee_id),
+        employee_code: r.employee_code,
+        full_name: r.full_name,
+        designation_name: r.designation_name,
+        status: String(r.status),
+        which: 'checkin',
+        at: String(r.checkin_at),
+        lat: r.checkin_lat,
+        lng: r.checkin_lng,
+      })
+    }
+    if (r.checkout_at !== null && r.checkout_lat !== null && r.checkout_lng !== null) {
+      out.push({
+        attendance_id: Number(r.attendance_id),
+        employee_id: Number(r.employee_id),
+        employee_code: r.employee_code,
+        full_name: r.full_name,
+        designation_name: r.designation_name,
+        status: String(r.status),
+        which: 'checkout',
+        at: String(r.checkout_at),
+        lat: r.checkout_lat,
+        lng: r.checkout_lng,
+      })
+    }
+  }
+  return out
 }

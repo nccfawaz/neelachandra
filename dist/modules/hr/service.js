@@ -4,6 +4,7 @@ import { nextNumber, sequenceCode } from '../../lib/numbering.js';
 import { ConflictError, ForbiddenError, NotFoundError, UnprocessableError } from '../../lib/errors.js';
 import { resolveApprovalLimit } from '../../lib/permissions.js';
 import { applyPct, formatPaiseAsRupees, roundPaise } from '../../lib/money.js';
+import { distanceMeters, isFarFromSite } from '../../lib/geo.js';
 import { addDays, datesBetween, daysBetween, financialYear, formatMonth, isWorkingDay, monthBounds, monthOf, nowSqlDateTime, today, workingDaysBetween, } from '../../lib/dates.js';
 import { attendanceMonthState, approvedLeaveMonth, blockerCount, employeeLoginId, exitBlockers, applicableRate, } from './queries.js';
 import { uomLabel, LEAVE_DAY_STATUSES } from './schemas.js';
@@ -394,6 +395,28 @@ async function assertMonthOpen(trx, month, canOverride) {
     }
 }
 /**
+ * Muster exclusion is a write gate, not a filter (DECISIONS 31).
+ *
+ * Chandrashekar (the owner) is not a worker of record: his employee row exists
+ * for name resolution, but he is neither on the attendance grid, the muster
+ * roll, nor any printed Form XVI, and NOTHING writes attendance against his
+ * row. A silent filter on reads plus an open write path would let a grid post
+ * create payroll rows for a person the register says was never there; so the
+ * exclusion is enforced here, on every attendance write, and it refuses BY
+ * NAME -- a silent filter is how a wrong row gets discovered in payroll, a
+ * named refusal is how it gets discovered in the supervisor's browser.
+ */
+async function assertNotMusterExcluded(trx, employeeId) {
+    const row = await trx
+        .selectFrom('employees')
+        .select(['id', 'employee_code', 'full_name', 'muster_excluded'])
+        .where('id', '=', employeeId)
+        .executeTakeFirst();
+    if (row && Number(row.muster_excluded) === 1) {
+        throw new UnprocessableError(`${row.full_name} (${row.employee_code}) is muster-excluded: the owner is not a worker of record, so attendance cannot be recorded against this row. No screen shows a mark for them, and none can be written here.`);
+    }
+}
+/**
  * One post for a whole day across a project (spec 6.6, rule 1).
  *
  * Every refusal here is about a row that would corrupt 6.8's cost allocation
@@ -454,6 +477,7 @@ export async function recordAttendanceBulk(db, actor, input, opts) {
             const employee = employeeById.get(row.employeeId);
             if (!employee)
                 throw new UnprocessableError('One of those employees no longer exists.');
+            await assertNotMusterExcluded(trx, row.employeeId);
             if (input.attendanceDate < String(employee.date_of_joining)) {
                 throw new UnprocessableError(`${employee.full_name} joined on ${String(employee.date_of_joining)} and cannot be marked before that.`);
             }
@@ -608,6 +632,7 @@ export async function recordAttendanceGrid(db, actor, input, opts) {
             const employee = employeeById.get(cell.employeeId);
             if (!employee)
                 throw new UnprocessableError('One of those employees no longer exists.');
+            await assertNotMusterExcluded(trx, cell.employeeId);
             const who = employee.full_name;
             const key = `${cell.employeeId}|${cell.date}`;
             const prior = priorByCell.get(key);
@@ -727,6 +752,158 @@ export async function approveAttendanceMonth(db, actor, month) {
             ip: actor.ip,
         });
         return { approved: pending, alreadyApproved: state.approved };
+    });
+}
+/**
+ * Self check-in, from the staff's own dashboard (DECISIONS 31).
+ *
+ * THE LOCATION IS RECORDED, NEVER JUDGED. There is no code path here that
+ * refuses a check-in because the reading is far from the site -- the distance
+ * is computed, the flag is set, and the day stands, because the alternative is
+ * a worker stuck at the gate with a dead GPS chip and no attendance. That is
+ * the never-refused invariant the integration test pins.
+ *
+ * The muster-excluded refusal DOES fire here, before anything else: the owner's
+ * own login is linked to his employee row, so a guard on the grid alone would
+ * leave him a working button on his own dashboard. No attendance write of any
+ * kind succeeds against a muster-excluded row.
+ *
+ * The write upserts: one row per employee per day (uq_att), carrying whatever
+ * status the supervisor marked. If the day has no row yet, one is created with
+ * status `present` and the check-in stamped on it -- a worker who checks in
+ * before the supervisor's grid post should not overwrite to nothing.
+ */
+export async function selfCheckIn(db, actor, input) {
+    return db.transaction().execute(async (trx) => {
+        await assertNotMusterExcluded(trx, input.employeeId);
+        const site = await trx
+            .selectFrom('locations')
+            .select(['id', 'name', 'latitude', 'longitude'])
+            .where('id', '=', input.siteLocationId)
+            .executeTakeFirst();
+        if (!site)
+            throw new UnprocessableError('That site location no longer exists.');
+        const siteCoords = site.latitude === null || site.longitude === null
+            ? null
+            : { lat: Number(site.latitude), lng: Number(site.longitude) };
+        const far = isFarFromSite(input.reading, siteCoords);
+        const distance = siteCoords === null ? null : Math.round(distanceMeters(input.reading, siteCoords));
+        const now = nowSqlDateTime();
+        const day = today();
+        const prior = await trx
+            .selectFrom('attendance')
+            .select(['id', 'checkin_at'])
+            .where('employee_id', '=', input.employeeId)
+            .where('attendance_date', '=', day)
+            .executeTakeFirst();
+        if (prior) {
+            if (prior.checkin_at !== null)
+                throw new ConflictError('You are already checked in today.');
+            await trx
+                .updateTable('attendance')
+                .set({
+                checkin_at: now,
+                checkin_lat: input.reading.lat,
+                checkin_lng: input.reading.lng,
+                checkin_far: far ? 1 : 0,
+            })
+                .where('id', '=', Number(prior.id))
+                .execute();
+        }
+        else {
+            await trx
+                .insertInto('attendance')
+                .values({
+                employee_id: input.employeeId,
+                attendance_date: day,
+                status: 'present',
+                overtime_hours: 0,
+                marked_by: actor.userId,
+                checkin_at: now,
+                checkin_lat: input.reading.lat,
+                checkin_lng: input.reading.lng,
+                checkin_far: far ? 1 : 0,
+            })
+                .execute();
+        }
+        await writeAudit(trx, {
+            userId: actor.userId,
+            action: 'hr.self_checkin',
+            entityType: 'attendance',
+            entityId: null,
+            after: {
+                employee_id: input.employeeId,
+                date: day,
+                site_location_id: input.siteLocationId,
+                distance_m: distance,
+                far,
+            },
+            ip: actor.ip,
+        });
+        return { far, distanceM: distance };
+    });
+}
+/**
+ * Self check-out, same shape as check-in (DECISIONS 31).
+ *
+ * Own columns, own flag: `checkout_at`/`checkout_lat`/`checkout_lng`/
+ * `checkout_far` are written and `checkin_*` is untouched, so a far check-out
+ * never rewrites an on-site check-in or the reverse. A check-out with no
+ * check-in is refused rather than invented: the pair is what the day view
+ * reads, and a check-out that silently creates the morning it missed would
+ * write a history nobody recorded.
+ */
+export async function selfCheckOut(db, actor, input) {
+    return db.transaction().execute(async (trx) => {
+        await assertNotMusterExcluded(trx, input.employeeId);
+        const prior = await trx
+            .selectFrom('attendance')
+            .select(['id', 'checkin_at', 'checkout_at'])
+            .where('employee_id', '=', input.employeeId)
+            .where('attendance_date', '=', today())
+            .executeTakeFirst();
+        if (!prior || prior.checkin_at === null) {
+            throw new UnprocessableError('You have no check-in recorded today, so there is nothing to check out of.');
+        }
+        if (prior.checkout_at !== null)
+            throw new ConflictError('You are already checked out today.');
+        const site = await trx
+            .selectFrom('locations')
+            .select(['id', 'name', 'latitude', 'longitude'])
+            .where('id', '=', input.siteLocationId)
+            .executeTakeFirst();
+        if (!site)
+            throw new UnprocessableError('That site location no longer exists.');
+        const siteCoords = site.latitude === null || site.longitude === null
+            ? null
+            : { lat: Number(site.latitude), lng: Number(site.longitude) };
+        const far = isFarFromSite(input.reading, siteCoords);
+        const distance = siteCoords === null ? null : Math.round(distanceMeters(input.reading, siteCoords));
+        await trx
+            .updateTable('attendance')
+            .set({
+            checkout_at: nowSqlDateTime(),
+            checkout_lat: input.reading.lat,
+            checkout_lng: input.reading.lng,
+            checkout_far: far ? 1 : 0,
+        })
+            .where('id', '=', Number(prior.id))
+            .execute();
+        await writeAudit(trx, {
+            userId: actor.userId,
+            action: 'hr.self_checkout',
+            entityType: 'attendance',
+            entityId: null,
+            after: {
+                employee_id: input.employeeId,
+                date: today(),
+                site_location_id: input.siteLocationId,
+                distance_m: distance,
+                far,
+            },
+            ip: actor.ip,
+        });
+        return { far, distanceM: distance };
     });
 }
 /**

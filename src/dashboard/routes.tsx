@@ -2,6 +2,7 @@ import { Hono } from 'hono'
 import type { AppEnv } from '../types.js'
 import { currentUser, currentSession, currentScope } from '../types.js'
 import { AppShell } from './layouts/AppShell.js'
+import type { Context } from 'hono'
 import { Alert, DataTable, KpiCard, Panel, type Column } from './components/index.js'
 import { requirePermission } from '../middleware/requirePermission.js'
 import { PERMISSIONS } from '../lib/permissions.js'
@@ -10,6 +11,10 @@ import { formatPaiseAsRupeesSymbol } from '../lib/money.js'
 import { formatDateTime } from '../lib/dates.js'
 import { NotFoundError } from '../lib/errors.js'
 import { readBody } from '../middleware/csrf.js'
+import { okRedirect, errRedirect } from './render.js'
+import * as q from '../modules/hr/queries.js'
+import * as svc from '../modules/hr/service.js'
+import { UnprocessableError, ConflictError } from '../lib/errors.js'
 
 /**
  * The landing dashboard and the notification list (spec 6.2).
@@ -107,6 +112,7 @@ dashboard.get('/app', requirePermission(PERMISSIONS.DASHBOARD_VIEW_OWN_KPI), asy
     .where('read_at', 'is', null)
     .executeTakeFirst()
   const unreadCount = Number(unread?.n ?? 0)
+  const checkinPanelHtml = await checkinPanel(c)
 
   return c.html(
     <AppShell
@@ -145,6 +151,8 @@ dashboard.get('/app', requirePermission(PERMISSIONS.DASHBOARD_VIEW_OWN_KPI), asy
           ))}
         </div>
       ) : null}
+
+      {checkinPanelHtml}
     </AppShell>
   )
 })
@@ -281,3 +289,144 @@ dashboard.post('/api/notifications/:id/read', requirePermission(PERMISSIONS.DASH
 })
 
 export default dashboard
+
+/* Site check-in / check-out (DECISIONS 31) -------------------------------- */
+
+/**
+ * The own-day panel on the landing dashboard.
+ *
+ * Both buttons live here, on the first screen after login, rendered server
+ * side with no client component: a check-in is a form post and a form post
+ * works without JavaScript, which is the same rule the attendance grid holds
+ * itself to.
+ *
+ * The on-page statement is part of the decision, not decoration: the panel
+ * says, in prose, that location is captured at check-in and check-out only and
+ * never tracked in between. A worker's consent to one measurement is informed
+ * consent; silence about continuous tracking is not.
+ *
+ * The panel renders for any user whose login is linked to an employee record.
+ * The muster-excluded owner sees the panel too, but his posts are refused by
+ * name in the service -- the exclusion is a write gate, not a missing button.
+ */
+async function checkinPanel(c: Context<AppEnv>) {
+  const user = currentUser(c)
+  const db = c.get('db')
+  if (user.employeeId === null) return null
+
+  const [day, sites] = await Promise.all([q.selfDay(db, user.id), q.checkinSiteOptions(db)])
+  const checkedIn = day?.checkin_at != null
+  const checkedOut = day?.checkout_at != null
+
+  return (
+    <section class="ncc-card ncc-card--wide">
+      <p class="ncc-kpi__label">Site attendance — {formatDateTime(new Date().toISOString())}</p>
+      {checkedIn && checkedOut ? (
+        <p class="ncc-list__item">
+          Day complete: checked in at {day?.checkin_at}, checked out at {day?.checkout_at}.
+        </p>
+      ) : checkedIn ? (
+        <p>You are checked in today. Check out when you leave the site.</p>
+      ) : (
+        <p>You are not checked in yet today.</p>
+      )}
+
+      <p class="ncc-muted">
+        Location is recorded when you press check-in and check-out — at those two moments only.
+        Your position is not tracked at any other time.
+      </p>
+
+      {sites.length === 0 ? (
+        <p class="ncc-muted">
+          No site locations carry coordinates yet; ask an administrator to set latitude and longitude on a location.
+        </p>
+      ) : (
+        <form method="post" action="/app/attendance/checkin" class="ncc-inline-form">
+          <label>
+            Site
+            <select name="siteLocationId">
+              {sites.map((s) => (
+                <option value={String(s.id)}>{s.name}</option>
+              ))}
+            </select>
+          </label>
+          <input type="hidden" name="lat" value="" />
+          <input type="hidden" name="lng" value="" />
+          {!checkedIn ? <button type="submit">Check in</button> : null}
+          {checkedIn && !checkedOut ? <button type="submit" formaction="/app/attendance/checkout">Check out</button> : null}
+        </form>
+      )}
+    </section>
+  )
+}
+
+interface CheckPost {
+  siteLocationId: number
+  reading: { lat: number; lng: number }
+}
+
+async function checkPostOf(c: Context<AppEnv>): Promise<CheckPost> {
+  const body = await readBody(c)
+  const siteLocationId = Number(body['siteLocationId'])
+  const lat = Number(body['lat'])
+  const lng = Number(body['lng'])
+  if (!Number.isInteger(siteLocationId) || siteLocationId < 1) {
+    throw new UnprocessableError('Choose the site you are checking in at.')
+  }
+  // A missing or stale browser position is a reading of "unavailable", not a
+  // refusal: DECISIONS 31 means the check-in stands and the flag says what the
+  // device could not supply. The browser fills these via geolocation when it
+  // can; without it the row carries NULLs and the far view notes the gap.
+  if (Number.isNaN(lat) || Number.isNaN(lng)) {
+    throw new UnprocessableError('No position was supplied. Press the button again to retry, or continue and the reading will be flagged.')
+  }
+  return { siteLocationId, reading: { lat, lng } }
+}
+
+const employeeIdOf = async (c: Context<AppEnv>): Promise<number> => {
+  const employeeId = currentUser(c).employeeId
+  if (employeeId === null) {
+    throw new UnprocessableError(
+      'Your login is not linked to an employee record. Ask HR to link them before checking in.'
+    )
+  }
+  return employeeId
+}
+
+dashboard.post('/app/attendance/checkin', requirePermission(PERMISSIONS.DASHBOARD_VIEW_OWN_KPI), async (c) => {
+  const post = await checkPostOf(c)
+  try {
+    const result = await svc.selfCheckIn(c.get('db'), actorOf(c), {
+      employeeId: await employeeIdOf(c),
+      siteLocationId: post.siteLocationId,
+      reading: post.reading,
+    })
+    return okRedirect(c, '/app', result.far ? 'Checked in. The reading was far from the site, so it has been flagged for HR review — your attendance stands.' : 'Checked in.')
+  } catch (err) {
+    if (err instanceof UnprocessableError || err instanceof ConflictError) {
+      return errRedirect(c, '/app', err.message)
+    }
+    throw err
+  }
+})
+
+dashboard.post('/app/attendance/checkout', requirePermission(PERMISSIONS.DASHBOARD_VIEW_OWN_KPI), async (c) => {
+  const post = await checkPostOf(c)
+  try {
+    const result = await svc.selfCheckOut(c.get('db'), actorOf(c), {
+      employeeId: await employeeIdOf(c),
+      siteLocationId: post.siteLocationId,
+      reading: post.reading,
+    })
+    return okRedirect(c, '/app', result.far ? 'Checked out. The reading was far from the site, so it has been flagged for HR review — your attendance stands.' : 'Checked out.')
+  } catch (err) {
+    if (err instanceof UnprocessableError || err instanceof ConflictError) {
+      return errRedirect(c, '/app', err.message)
+    }
+    throw err
+  }
+})
+
+function actorOf(c: Context<AppEnv>): svc.Actor {
+  return { userId: currentUser(c).id, ip: c.get('clientIp') }
+}

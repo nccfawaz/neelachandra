@@ -2307,6 +2307,10 @@ hr.get('/app/hr/reports/muster', requirePermission(PERMISSIONS.HR_EMPLOYEE_VIEW)
         </button>
       </form>
       <Panel title={`Muster roll — ${formatMonth(month)}`}>
+        <Alert tone="warn">
+          Printed Form XVI is drawn from this register. Muster-excluded employees (the owner) are left off
+          it by design: the exclusion is a write gate as well, so no attendance row can exist for them.
+        </Alert>
         <DataTable
           columns={columns}
           rows={rows}
@@ -2317,7 +2321,9 @@ hr.get('/app/hr/reports/muster', requirePermission(PERMISSIONS.HR_EMPLOYEE_VIEW)
           P present · A absent · ½ half day · WO weekly off · H holiday · PL paid leave · LWP unpaid ·
           OD on duty travel · CO comp off · · not marked · — not employed. Payable counts present, on duty,
           comp off and paid leave in full and a half day as 0.5. Sundays are the weekly off; public holidays are
-          not in the system, so a festival day shows as whatever it was marked.
+          not in the system, so a festival day shows as whatever it was marked. Muster-excluded staff (the
+          owner, not a worker of record — DECISIONS 31) do not appear on this register or on any printed
+          Form XVI drawn from it.
         </p>
       </Panel>
     </>
@@ -3819,3 +3825,60 @@ hr.get('/app/hr/recruiting', requirePermission(PERMISSIONS.HR_RECRUIT_MANAGE), a
 })
 
 export default hr
+
+/* Far-flag day view (DECISIONS 31) ---------------------------------------- */
+
+/**
+ * The day view Sushma reviews: every check-in or check-out that read beyond
+ * the 500 m threshold, plus the distance in metres beside each.
+ *
+ * No action button exists on this page, deliberately. DECISIONS 31 makes a far
+ * reading a review item, not a correction queue -- the day always stands, so
+ * there is nothing here to approve or refuse. What the page is for is the
+ * conversation: who was far, how far, at which end of the day.
+ */
+hr.get('/app/hr/attendance/far', requirePermission(PERMISSIONS.HR_ATTENDANCE_RECORD), async (c) => {
+  const db = c.get('db')
+  const date = dateParam(c, 'date')
+
+  const rows = await q.farChecksOn(db, date)
+
+  return page(
+    c,
+    {
+      title: 'Far check-ins',
+      path: '/app/hr/attendance/far',
+      subtitle: `${date} — ${rows.length} far reading${rows.length === 1 ? '' : 's'} beyond 500 m`,
+      actions: (
+        <a class="ncc-btn" href="/app/hr/attendance">
+          Attendance entry
+        </a>
+      ),
+    },
+    <>
+      {banner(c)}
+      <Alert tone="warn">
+        A far reading is recorded, never refused: the attendance always stands. This page exists so the
+        flags get reviewed, and it shows nothing for a day with no far readings — including a day where a
+        reading could not be compared because the site has no coordinates. on_duty_travel days are not
+        exempt; they flag far like any other.
+      </Alert>
+      <DataTable
+        columns={[
+          { header: 'Employee', cell: (r: (typeof rows)[number]) => (
+            <>
+              <strong>{r.full_name}</strong>
+              <div class="ncc-muted">{r.employee_code}{r.designation_name ? ` · ${r.designation_name}` : ''}</div>
+            </>
+          ) },
+          { header: 'Reading', cell: (r) => (r.which === 'checkin' ? 'Check-in' : 'Check-out') },
+          { header: 'At', cell: (r) => r.at },
+          { header: 'Status', cell: (r) => titleCase(r.status) },
+          { header: 'Position', cell: (r) => `${r.lat}, ${r.lng}` },
+        ]}
+        rows={rows}
+        empty={`No far readings on ${date}.`}
+      />
+    </>
+  )
+})

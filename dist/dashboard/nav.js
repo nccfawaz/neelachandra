@@ -79,6 +79,10 @@ export const NAV = [
             // hr.employee_view is here because it is what the 6.6 route table gives
             // the attendance GET, and the route now guards on the OR of all three.
             { label: 'Attendance', href: '/app/hr/attendance', perms: [PERMISSIONS.HR_EMPLOYEE_VIEW, PERMISSIONS.HR_ATTENDANCE_RECORD, PERMISSIONS.HR_ATTENDANCE_APPROVE] },
+            // Far-flag review (DECISIONS 31): Sushma's day view of check-in and
+            // check-out readings beyond the 500 m threshold. Recorded, never refused,
+            // so the link sits beside Attendance rather than inside it.
+            { label: 'Far check-ins', href: '/app/hr/attendance/far', perms: [PERMISSIONS.HR_ATTENDANCE_RECORD] },
             // The statutory register, linked despite the "not every report" rule the
             // CRM group states: hr.employee_view is the only permission the spec gives
             // it, and the link on the attendance screen sits behind permissions an

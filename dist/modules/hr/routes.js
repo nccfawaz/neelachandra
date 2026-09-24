@@ -1128,7 +1128,7 @@ hr.get('/app/hr/reports/muster', requirePermission(PERMISSIONS.HR_EMPLOYEE_VIEW)
         path: '/app/hr/reports/muster',
         subtitle: `${formatMonth(month)} — ${roster.length} on the roster, ${totalPayable} payable day${totalPayable === 1 ? '' : 's'}`,
         actions: (_jsx("a", { class: "ncc-btn", href: `/app/hr/attendance?month=${month}`, children: "Attendance entry" })),
-    }, _jsxs(_Fragment, { children: [banner(c), state.locked ? (_jsxs(Alert, { tone: "ok", children: [formatMonth(month), " is closed: ", state.approved, " of ", state.total, " rows carry an approval. This register is final unless somebody holding ", _jsx("code", { children: "finance.period_close" }), " reopens it."] })) : (_jsxs(Alert, { tone: "warn", children: [formatMonth(month), " is not closed. ", state.total - state.approved, " of ", state.total, " rows are still unapproved, so this register is a draft: do not file or pay against it until", ' ', _jsx("code", { children: "hr.attendance_approve" }), " has closed the month."] })), _jsxs("form", { class: "ncc-toolbar", method: "get", action: "/app/hr/reports/muster", children: [_jsx(FormField, { label: "Month", name: "month", type: "month", value: month }), _jsx("button", { class: "ncc-btn", type: "submit", children: "Show" })] }), _jsxs(Panel, { title: `Muster roll — ${formatMonth(month)}`, children: [_jsx(DataTable, { columns: columns, rows: rows, empty: "Nobody was on the books in this month.", caption: `${totalMarked} of ${roster.length * days.length} employee-days are marked. Unmarked days count as nothing, not as absent.` }), _jsx("p", { class: "ncc-hint", children: "P present \u00B7 A absent \u00B7 \u00BD half day \u00B7 WO weekly off \u00B7 H holiday \u00B7 PL paid leave \u00B7 LWP unpaid \u00B7 OD on duty travel \u00B7 CO comp off \u00B7 \u00B7 not marked \u00B7 \u2014 not employed. Payable counts present, on duty, comp off and paid leave in full and a half day as 0.5. Sundays are the weekly off; public holidays are not in the system, so a festival day shows as whatever it was marked." })] })] }));
+    }, _jsxs(_Fragment, { children: [banner(c), state.locked ? (_jsxs(Alert, { tone: "ok", children: [formatMonth(month), " is closed: ", state.approved, " of ", state.total, " rows carry an approval. This register is final unless somebody holding ", _jsx("code", { children: "finance.period_close" }), " reopens it."] })) : (_jsxs(Alert, { tone: "warn", children: [formatMonth(month), " is not closed. ", state.total - state.approved, " of ", state.total, " rows are still unapproved, so this register is a draft: do not file or pay against it until", ' ', _jsx("code", { children: "hr.attendance_approve" }), " has closed the month."] })), _jsxs("form", { class: "ncc-toolbar", method: "get", action: "/app/hr/reports/muster", children: [_jsx(FormField, { label: "Month", name: "month", type: "month", value: month }), _jsx("button", { class: "ncc-btn", type: "submit", children: "Show" })] }), _jsxs(Panel, { title: `Muster roll — ${formatMonth(month)}`, children: [_jsx(Alert, { tone: "warn", children: "Printed Form XVI is drawn from this register. Muster-excluded employees (the owner) are left off it by design: the exclusion is a write gate as well, so no attendance row can exist for them." }), _jsx(DataTable, { columns: columns, rows: rows, empty: "Nobody was on the books in this month.", caption: `${totalMarked} of ${roster.length * days.length} employee-days are marked. Unmarked days count as nothing, not as absent.` }), _jsx("p", { class: "ncc-hint", children: "P present \u00B7 A absent \u00B7 \u00BD half day \u00B7 WO weekly off \u00B7 H holiday \u00B7 PL paid leave \u00B7 LWP unpaid \u00B7 OD on duty travel \u00B7 CO comp off \u00B7 \u00B7 not marked \u00B7 \u2014 not employed. Payable counts present, on duty, comp off and paid leave in full and a half day as 0.5. Sundays are the weekly off; public holidays are not in the system, so a festival day shows as whatever it was marked. Muster-excluded staff (the owner, not a worker of record \u2014 DECISIONS 31) do not appear on this register or on any printed Form XVI drawn from it." })] })] }));
 });
 /* Contractor labour and bills (spec 6.6 rules 2 and 3) --------------------- */
 /**
@@ -1777,3 +1777,30 @@ hr.get('/app/hr/recruiting', requirePermission(PERMISSIONS.HR_RECRUIT_MANAGE), a
     return page(c, { title: 'Recruiting', path: '/app/hr/recruiting' }, _jsxs(_Fragment, { children: [banner(c), _jsx("div", { class: "ncc-kpi-row", children: _jsx(KpiCard, { label: "Records held", value: String(total), hint: "Live count from applicants" }) }), _jsx(Panel, { title: "Recruiting", children: _jsx(Alert, { tone: "warn", children: "The data model behind this screen is migrated. The entry and approval forms are the next build phase." }) })] }));
 });
 export default hr;
+/* Far-flag day view (DECISIONS 31) ---------------------------------------- */
+/**
+ * The day view Sushma reviews: every check-in or check-out that read beyond
+ * the 500 m threshold, plus the distance in metres beside each.
+ *
+ * No action button exists on this page, deliberately. DECISIONS 31 makes a far
+ * reading a review item, not a correction queue -- the day always stands, so
+ * there is nothing here to approve or refuse. What the page is for is the
+ * conversation: who was far, how far, at which end of the day.
+ */
+hr.get('/app/hr/attendance/far', requirePermission(PERMISSIONS.HR_ATTENDANCE_RECORD), async (c) => {
+    const db = c.get('db');
+    const date = dateParam(c, 'date');
+    const rows = await q.farChecksOn(db, date);
+    return page(c, {
+        title: 'Far check-ins',
+        path: '/app/hr/attendance/far',
+        subtitle: `${date} — ${rows.length} far reading${rows.length === 1 ? '' : 's'} beyond 500 m`,
+        actions: (_jsx("a", { class: "ncc-btn", href: "/app/hr/attendance", children: "Attendance entry" })),
+    }, _jsxs(_Fragment, { children: [banner(c), _jsx(Alert, { tone: "warn", children: "A far reading is recorded, never refused: the attendance always stands. This page exists so the flags get reviewed, and it shows nothing for a day with no far readings \u2014 including a day where a reading could not be compared because the site has no coordinates. on_duty_travel days are not exempt; they flag far like any other." }), _jsx(DataTable, { columns: [
+                    { header: 'Employee', cell: (r) => (_jsxs(_Fragment, { children: [_jsx("strong", { children: r.full_name }), _jsxs("div", { class: "ncc-muted", children: [r.employee_code, r.designation_name ? ` · ${r.designation_name}` : ''] })] })) },
+                    { header: 'Reading', cell: (r) => (r.which === 'checkin' ? 'Check-in' : 'Check-out') },
+                    { header: 'At', cell: (r) => r.at },
+                    { header: 'Status', cell: (r) => titleCase(r.status) },
+                    { header: 'Position', cell: (r) => `${r.lat}, ${r.lng}` },
+                ], rows: rows, empty: `No far readings on ${date}.` })] }));
+});

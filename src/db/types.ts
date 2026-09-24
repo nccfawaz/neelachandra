@@ -116,6 +116,15 @@ export interface AttendanceTable {
   in_time: Generated<string | null>
   out_time: Generated<string | null>
   overtime_hours: Generated<number>
+  checkin_at: SqlDateNull
+  checkin_lat: Generated<number | null>
+  checkin_lng: Generated<number | null>
+  checkin_far: Generated<number>
+  checkout_at: SqlDateNull
+  checkout_lat: Generated<number | null>
+  checkout_lng: Generated<number | null>
+  checkout_far: Generated<number>
+  on_behalf_by: Generated<number | null>
   marked_by: number
   marked_at: SqlDateGen
   approved_by: Generated<number | null>
@@ -503,10 +512,12 @@ export interface EmployeesTable {
   bank_account_no: Generated<string | null>
   bank_ifsc: Generated<string | null>
   status: Generated<'active' | 'on_notice' | 'on_leave' | 'suspended' | 'exited'>
+  muster_excluded: Generated<number>
   created_by: Generated<number | null>
   updated_by: Generated<number | null>
   created_at: SqlDateGen
   updated_at: SqlDateGen
+  is_muster_excluded: Generated<number>
 }
 
 export interface EnquiriesTable {
@@ -945,6 +956,8 @@ export interface LocationsTable {
   location_type: 'central_store' | 'site_store' | 'transit' | 'office'
   project_id: Generated<number | null>
   address: Generated<string | null>
+  latitude: Generated<number | null>
+  longitude: Generated<number | null>
   city: Generated<string | null>
   is_active: Generated<number>
   created_at: SqlDateGen
@@ -1455,7 +1468,7 @@ export interface SitePageRevisionsTable {
   content_json: string
   title: string
   meta_description: Generated<string | null>
-  schema_types: Generated<string | null>
+  schema_types: string
   changed_by: number
   changed_at: SqlDateGen
   change_note: Generated<string | null>
@@ -1716,6 +1729,7 @@ export interface UserRecoveryCodesTable {
 export interface UserRolesTable {
   user_id: number
   role_id: number
+  granted_by: Generated<number | null>
   created_at: SqlDateGen
   updated_at: SqlDateGen
 }

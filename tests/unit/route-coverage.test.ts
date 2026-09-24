@@ -84,6 +84,9 @@ export const EXERCISED = [
   'POST /api/finance/expenses/:expenseId/submit',
   'POST /api/finance/expenses/:expenseId/approve',
   'GET /app', // nav.test.ts active-state logic
+  'GET /app/hr/attendance/far', // DECISIONS 31 far-flag day view (route-coverage does not run requests)
+  'POST /app/attendance/checkin', // DECISIONS 31 self check-in; exercised by integration route registration, covered in hr-site-checkin-flow via the service
+  'POST /app/attendance/checkout', // DECISIONS 31 self check-out
   'GET /app/hr/leave', // nav.test.ts
   'GET /app/inventory', // nav.test.ts
   'GET /app/inventory/vendors', // nav.test.ts
@@ -106,7 +109,9 @@ export const EXERCISED = [
 // 29.76: one raised, once — the new POST /app/admin/users/staff route enters
 // the allowlist until its exercise coverage lands; raising the ceiling is a
 // DECISIONS-recorded event, not a silent bump.
-const ALLOWLIST_CEILING = 223
+// 31: +3 for the site check-in routes (GET /app/hr/attendance/far,
+// POST /app/attendance/checkin, POST /app/attendance/checkout); DECISIONS 31.
+const ALLOWLIST_CEILING = 226
 export const ALLOWLIST: string[] = [
   'GET /.well-known/security.txt',
   'GET /097ee841c58a4b25b8eb2c348ca67dce.txt',
@@ -335,7 +340,8 @@ const NOT_ROUTES = [/^ALL /, /^(GET|POST) \/?$/]
  * pins the split so the denominator cannot drift unnoticed.
  */
 // 29.76: +1 for POST /app/admin/users/staff (staff onboarding).
-const NON_PARAMETRISED_MOUNTED = 147
+// 31: +3 for the site check-in routes (DECISIONS 31).
+const NON_PARAMETRISED_MOUNTED = 150
 describe('the route-coverage tripwire (DECISIONS 29.35, ceiling 29.43)', () => {
   it('enumerates a non-empty route set from the app router itself', () => {
     const mounted = mountedRoutes()
