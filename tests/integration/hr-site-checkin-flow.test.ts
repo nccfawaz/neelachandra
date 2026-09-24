@@ -49,6 +49,7 @@ let actor = { userId: 0, ip: '127.0.0.1' as string | null }
 let workerId = 0
 let excludedId = 0
 let siteId = 0
+let officeId = 0
 let farSiteId = 0
 
 /** Site at a fixed point; ~600 m and ~40 m readings relative to it. */
@@ -95,6 +96,21 @@ beforeAll(async () => {
     .executeTakeFirst()
   siteId = Number(site.insertId ?? 0)
 
+  // The check-in site the tests resolve against: an OFFICE location (the
+  // new option source is office + projects, not the inventory list).
+  await sql`delete from locations where code = 'FIXOFF-CK'`.execute(db)
+  const office = await db
+    .insertInto('locations')
+    .values({
+      code: 'FIXOFF-CK',
+      name: 'Fixture head office',
+      location_type: 'office',
+      latitude: String(SITE.lat),
+      longitude: String(SITE.lng),
+    })
+    .executeTakeFirstOrThrow()
+  officeId = Number(office.insertId ?? 0)
+
   const noCoords = await db
     .insertInto('locations')
     .values({
@@ -129,7 +145,7 @@ describe('self check-in', () => {
   it('writes a row for a NEAR reading, unflagged', async () => {
     const result = await svc.selfCheckIn(db, actor, {
       employeeId: workerId,
-      siteLocationId: siteId,
+      siteKey: 'office:' + officeId,
       reading: NEAR,
     })
     expect(result.outcome).toBe('ok')
@@ -158,7 +174,7 @@ describe('self check-in', () => {
     epsilonId = second
     const result = await svc.selfCheckIn(db, actor, {
       employeeId: second,
-      siteLocationId: siteId,
+      siteKey: 'office:' + officeId,
       reading: FAR,
     })
     expect(result.outcome).toBe('far')
@@ -184,7 +200,7 @@ describe('self check-in', () => {
     )
     const result = await svc.selfCheckIn(db, actor, {
       employeeId: third,
-      siteLocationId: siteId,
+      siteKey: 'office:' + officeId,
       reading: FAR,
     })
     expect(result.outcome).toBe('far')
@@ -209,7 +225,7 @@ describe('self check-in', () => {
 
     const result = await svc.selfCheckIn(db, actor, {
       employeeId: fourth,
-      siteLocationId: siteId,
+      siteKey: 'office:' + officeId,
       reading: NEAR,
     })
     expect(result.outcome).toBe('ok')
@@ -225,7 +241,7 @@ describe('self check-in', () => {
 
   it('refuses a second check-in on the same day', async () => {
     await expect(
-      svc.selfCheckIn(db, actor, { employeeId: workerId, siteLocationId: siteId, reading: NEAR })
+      svc.selfCheckIn(db, actor, { employeeId: workerId, siteKey: 'office:' + officeId, reading: NEAR })
     ).rejects.toThrow(/already checked in/)
   })
 
@@ -241,7 +257,7 @@ describe('self check-in', () => {
     )
     const result = await svc.selfCheckIn(db, actor, {
       employeeId: seventh,
-      siteLocationId: siteId,
+      siteKey: 'office:' + officeId,
       reading: { lat: 0, lng: 0 },
     })
     expect(result.outcome).toBe('unavailable')
@@ -269,7 +285,7 @@ describe('self check-in', () => {
     )
     const noPosition = await svc.selfCheckIn(db, actor, {
       employeeId: eighth,
-      siteLocationId: siteId,
+      siteKey: 'office:' + officeId,
       reading: null, // denied prompt / dead GPS
     })
     expect(noPosition.outcome).toBe('unavailable')
@@ -281,7 +297,7 @@ describe('self check-in', () => {
     )
     const outOfRange = await svc.selfCheckIn(db, actor, {
       employeeId: ninth,
-      siteLocationId: siteId,
+      siteKey: 'office:' + officeId,
       reading: { lat: 999, lng: -4000 },
     })
     expect(outOfRange.outcome).toBe('unavailable')
@@ -300,10 +316,10 @@ describe('self check-in', () => {
 
   it('refuses BY NAME for a muster-excluded employee, on check-in and check-out alike', async () => {
     await expect(
-      svc.selfCheckIn(db, actor, { employeeId: excludedId, siteLocationId: siteId, reading: NEAR })
+      svc.selfCheckIn(db, actor, { employeeId: excludedId, siteKey: 'office:' + officeId, reading: NEAR })
     ).rejects.toThrow(/Fixture Excluded Owner/)
     await expect(
-      svc.selfCheckOut(db, actor, { employeeId: excludedId, siteLocationId: siteId, reading: NEAR })
+      svc.selfCheckOut(db, actor, { employeeId: excludedId, siteKey: 'office:' + officeId, reading: NEAR })
     ).rejects.toThrow(/Fixture Excluded Owner/)
   })
 })
@@ -316,10 +332,10 @@ describe('self check-out', () => {
       employeeInput({ fullName: 'Fixture Worker Theta', gender: 'female', fatherOrSpouseName: 'Fixture Parent Theta' })
     )
     thetaId = fifth
-    await svc.selfCheckIn(db, actor, { employeeId: fifth, siteLocationId: siteId, reading: NEAR })
+    await svc.selfCheckIn(db, actor, { employeeId: fifth, siteKey: 'office:' + officeId, reading: NEAR })
     const result = await svc.selfCheckOut(db, actor, {
       employeeId: fifth,
-      siteLocationId: siteId,
+      siteKey: 'office:' + officeId,
       reading: FAR, // left the site by end of day; far checkout is still recorded
     })
 
@@ -345,7 +361,7 @@ describe('self check-out', () => {
       employeeInput({ fullName: 'Fixture Worker Iota', gender: 'male', fatherOrSpouseName: 'Fixture Parent Iota' })
     )
     await expect(
-      svc.selfCheckOut(db, actor, { employeeId: sixth, siteLocationId: siteId, reading: NEAR })
+      svc.selfCheckOut(db, actor, { employeeId: sixth, siteKey: 'office:' + officeId, reading: NEAR })
     ).rejects.toThrow(/no check-in recorded/)
   })
 })
@@ -382,12 +398,21 @@ describe('muster exclusion is a write gate on the HR paths too', () => {
   })
 })
 
-describe('the HR far-flag day view', () => {
-  it('lists both flagged readings for the day, check-in and check-out', async () => {
-    const far = await q.farChecksOn(db, today())
-    const mine = far.filter((r) => [epsilonId, thetaId].includes(r.employee_id))
-    expect(mine.length).toBe(2)
-    expect(mine.map((r) => r.which).sort()).toEqual(['checkin', 'checkout'])
+describe('the HR day view', () => {
+  it('lists EVERY reading for the day with its flag, not only the far ones', async () => {
+    const all = await q.farChecksOn(db, today())
+    const mine = all.filter((r) => [epsilonId, thetaId].includes(r.employee_id))
+    // Epsilon checked in FAR; Theta checked in NEAR and checked out FAR.
+    expect(mine.length).toBe(3)
+    const epsilon = mine.find((r) => r.employee_id === epsilonId)
+    expect(epsilon?.flag).toBe('far')
+    const thetaIn = mine.find((r) => r.employee_id === thetaId && r.which === 'checkin')
+    const thetaOut = mine.find((r) => r.employee_id === thetaId && r.which === 'checkout')
+    expect(thetaIn?.flag).toBe('ok')
+    expect(thetaOut?.flag).toBe('far')
+    // Coordinates render as numbers the Maps link can interpolate.
+    expect(thetaIn?.lat).not.toBeNull()
+    expect(Number(thetaIn?.lat)).toBeCloseTo(NEAR.lat, 5)
   })
 })
 

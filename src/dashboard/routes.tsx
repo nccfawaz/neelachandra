@@ -340,16 +340,17 @@ async function checkinPanel(c: Context<AppEnv>) {
 
       {sites.length === 0 ? (
         <p class="ncc-muted">
-          No site locations carry coordinates yet; ask an administrator to set latitude and longitude on a location.
+          No check-in sites are configured yet: an office location of type "office" or an active project with
+          coordinates (projects.geo_lat / geo_lng) puts a site in this list.
         </p>
       ) : (
         <form method="post" action="/app/attendance/checkin" class="ncc-inline-form">
           <input type="hidden" name="nc_csrf" value={csrfToken} />
           <label>
             Site
-            <select name="siteLocationId">
+            <select name="siteKey">
               {sites.map((s) => (
-                <option value={String(s.id)}>{s.name}</option>
+                <option value={s.key}>{s.label}</option>
               ))}
             </select>
           </label>
@@ -364,14 +365,14 @@ async function checkinPanel(c: Context<AppEnv>) {
 }
 
 interface CheckPost {
-  siteLocationId: number
+  siteKey: string
   reading: { lat: number; lng: number } | null
 }
 
 async function checkPostOf(c: Context<AppEnv>): Promise<CheckPost> {
   const body = await readBody(c)
-  const siteLocationId = Number(body['siteLocationId'])
-  if (!Number.isInteger(siteLocationId) || siteLocationId < 1) {
+  const siteKey = typeof body['siteKey'] === 'string' ? body['siteKey'] : ''
+  if (!/^(office|project):\d+$/.test(siteKey)) {
     throw new UnprocessableError('Choose the site you are checking in at.')
   }
   // A missing, blank, or failed position ("0", "0,0", garbage) is a reading
@@ -388,7 +389,7 @@ async function checkPostOf(c: Context<AppEnv>): Promise<CheckPost> {
     rawLat === '' || rawLng === '' || Number.isNaN(lat) || Number.isNaN(lng)
       ? null
       : { lat, lng }
-  return { siteLocationId, reading }
+  return { siteKey, reading }
 }
 
 const employeeIdOf = async (c: Context<AppEnv>): Promise<number> => {
@@ -420,7 +421,7 @@ dashboard.post('/app/attendance/checkin', requirePermission(PERMISSIONS.DASHBOAR
   try {
     const result = await svc.selfCheckIn(c.get('db'), actorOf(c), {
       employeeId: await employeeIdOf(c),
-      siteLocationId: post.siteLocationId,
+      siteKey: post.siteKey,
       reading: post.reading,
     })
     return okRedirect(c, '/app', checkinMessage(result))
@@ -437,7 +438,7 @@ dashboard.post('/app/attendance/checkout', requirePermission(PERMISSIONS.DASHBOA
   try {
     const result = await svc.selfCheckOut(c.get('db'), actorOf(c), {
       employeeId: await employeeIdOf(c),
-      siteLocationId: post.siteLocationId,
+      siteKey: post.siteKey,
       reading: post.reading,
     })
     return okRedirect(c, '/app', checkoutMessage(result))

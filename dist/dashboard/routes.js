@@ -188,12 +188,12 @@ async function checkinPanel(c) {
     const [day, sites] = await Promise.all([q.selfDay(db, user.id), q.checkinSiteOptions(db)]);
     const checkedIn = day?.checkin_at != null;
     const checkedOut = day?.checkout_at != null;
-    return (_jsxs("section", { class: "ncc-card ncc-card--wide", children: [_jsxs("p", { class: "ncc-kpi__label", children: ["Site attendance \u2014 ", formatDateTime(new Date().toISOString())] }), checkedIn && checkedOut ? (_jsxs("p", { class: "ncc-list__item", children: ["Day complete: checked in at ", day?.checkin_at, ", checked out at ", day?.checkout_at, "."] })) : checkedIn ? (_jsx("p", { children: "You are checked in today. Check out when you leave the site." })) : (_jsx("p", { children: "You are not checked in yet today." })), _jsx("p", { class: "ncc-muted", children: "Location is recorded when you press check-in and check-out \u2014 at those two moments only. Your position is not tracked at any other time." }), sites.length === 0 ? (_jsx("p", { class: "ncc-muted", children: "No site locations carry coordinates yet; ask an administrator to set latitude and longitude on a location." })) : (_jsxs("form", { method: "post", action: "/app/attendance/checkin", class: "ncc-inline-form", children: [_jsx("input", { type: "hidden", name: "nc_csrf", value: csrfToken }), _jsxs("label", { children: ["Site", _jsx("select", { name: "siteLocationId", children: sites.map((s) => (_jsx("option", { value: String(s.id), children: s.name }))) })] }), _jsx("input", { type: "hidden", name: "lat", value: "" }), _jsx("input", { type: "hidden", name: "lng", value: "" }), !checkedIn ? _jsx("button", { type: "submit", children: "Check in" }) : null, checkedIn && !checkedOut ? _jsx("button", { type: "submit", formaction: "/app/attendance/checkout", children: "Check out" }) : null] }))] }));
+    return (_jsxs("section", { class: "ncc-card ncc-card--wide", children: [_jsxs("p", { class: "ncc-kpi__label", children: ["Site attendance \u2014 ", formatDateTime(new Date().toISOString())] }), checkedIn && checkedOut ? (_jsxs("p", { class: "ncc-list__item", children: ["Day complete: checked in at ", day?.checkin_at, ", checked out at ", day?.checkout_at, "."] })) : checkedIn ? (_jsx("p", { children: "You are checked in today. Check out when you leave the site." })) : (_jsx("p", { children: "You are not checked in yet today." })), _jsx("p", { class: "ncc-muted", children: "Location is recorded when you press check-in and check-out \u2014 at those two moments only. Your position is not tracked at any other time." }), sites.length === 0 ? (_jsx("p", { class: "ncc-muted", children: "No check-in sites are configured yet: an office location of type \"office\" or an active project with coordinates (projects.geo_lat / geo_lng) puts a site in this list." })) : (_jsxs("form", { method: "post", action: "/app/attendance/checkin", class: "ncc-inline-form", children: [_jsx("input", { type: "hidden", name: "nc_csrf", value: csrfToken }), _jsxs("label", { children: ["Site", _jsx("select", { name: "siteKey", children: sites.map((s) => (_jsx("option", { value: s.key, children: s.label }))) })] }), _jsx("input", { type: "hidden", name: "lat", value: "" }), _jsx("input", { type: "hidden", name: "lng", value: "" }), !checkedIn ? _jsx("button", { type: "submit", children: "Check in" }) : null, checkedIn && !checkedOut ? _jsx("button", { type: "submit", formaction: "/app/attendance/checkout", children: "Check out" }) : null] }))] }));
 }
 async function checkPostOf(c) {
     const body = await readBody(c);
-    const siteLocationId = Number(body['siteLocationId']);
-    if (!Number.isInteger(siteLocationId) || siteLocationId < 1) {
+    const siteKey = typeof body['siteKey'] === 'string' ? body['siteKey'] : '';
+    if (!/^(office|project):\d+$/.test(siteKey)) {
         throw new UnprocessableError('Choose the site you are checking in at.');
     }
     // A missing, blank, or failed position ("0", "0,0", garbage) is a reading
@@ -209,7 +209,7 @@ async function checkPostOf(c) {
     const reading = rawLat === '' || rawLng === '' || Number.isNaN(lat) || Number.isNaN(lng)
         ? null
         : { lat, lng };
-    return { siteLocationId, reading };
+    return { siteKey, reading };
 }
 const employeeIdOf = async (c) => {
     const employeeId = currentUser(c).employeeId;
@@ -233,7 +233,7 @@ dashboard.post('/app/attendance/checkin', requirePermission(PERMISSIONS.DASHBOAR
     try {
         const result = await svc.selfCheckIn(c.get('db'), actorOf(c), {
             employeeId: await employeeIdOf(c),
-            siteLocationId: post.siteLocationId,
+            siteKey: post.siteKey,
             reading: post.reading,
         });
         return okRedirect(c, '/app', checkinMessage(result));
@@ -250,7 +250,7 @@ dashboard.post('/app/attendance/checkout', requirePermission(PERMISSIONS.DASHBOA
     try {
         const result = await svc.selfCheckOut(c.get('db'), actorOf(c), {
             employeeId: await employeeIdOf(c),
-            siteLocationId: post.siteLocationId,
+            siteKey: post.siteKey,
             reading: post.reading,
         });
         return okRedirect(c, '/app', checkoutMessage(result));

@@ -983,14 +983,80 @@ export async function selfDay(db, userId) {
         .where('attendance.attendance_date', '=', new Date().toISOString().slice(0, 10))
         .executeTakeFirst());
 }
-/** Sites the check-in panel can offer: any active location that has coordinates. */
 export async function checkinSiteOptions(db) {
-    return db
+    const office = await db
         .selectFrom('locations')
         .select(['id', 'name', 'latitude', 'longitude'])
+        .where('location_type', '=', 'office')
         .where('is_active', '=', 1)
         .orderBy('name')
+        .limit(1)
         .execute();
+    const projects = await db
+        .selectFrom('projects')
+        .select(['id', 'code', 'name', 'geo_lat', 'geo_lng'])
+        .where('status', 'in', ['prospect', 'mobilising', 'in_progress', 'on_hold', 'snagging'])
+        .orderBy('name')
+        .execute();
+    const out = [];
+    for (const o of office) {
+        out.push({
+            key: `office:${o.id}`,
+            label: o.name,
+            lat: o.latitude === null ? null : Number(o.latitude),
+            lng: o.longitude === null ? null : Number(o.longitude),
+        });
+    }
+    for (const p of projects) {
+        out.push({
+            key: `project:${p.id}`,
+            label: `${p.code} — ${p.name}`,
+            lat: p.geo_lat === null ? null : Number(p.geo_lat),
+            lng: p.geo_lng === null ? null : Number(p.geo_lng),
+        });
+    }
+    return out;
+}
+/**
+ * Resolves a check-in option key to its coordinates.
+ *
+ * Keys are prefixed ('office:3', 'project:12') so the two sources can never
+ * collide on a bare id. A site with no coordinates resolves to null coords:
+ * the service records the check-in with an unavailable reading, which is the
+ * same treatment a worker's own failed GPS gets.
+ */
+export async function resolveCheckinSite(db, key) {
+    const [kind, rawId] = key.split(':');
+    const id = Number(rawId);
+    if ((kind !== 'office' && kind !== 'project') || !Number.isInteger(id) || id < 1)
+        return undefined;
+    if (kind === 'office') {
+        const row = await db
+            .selectFrom('locations')
+            .select(['name', 'latitude', 'longitude'])
+            .where('id', '=', id)
+            .where('location_type', '=', 'office')
+            .executeTakeFirst();
+        if (!row)
+            return undefined;
+        return {
+            name: row.name,
+            lat: row.latitude === null ? null : Number(row.latitude),
+            lng: row.longitude === null ? null : Number(row.longitude),
+        };
+    }
+    const row = await db
+        .selectFrom('projects')
+        .select(['name', 'geo_lat', 'geo_lng'])
+        .where('id', '=', id)
+        .executeTakeFirst();
+    if (!row)
+        return undefined;
+    return {
+        name: row.name,
+        lat: row.geo_lat === null ? null : Number(row.geo_lat),
+        lng: row.geo_lng === null ? null : Number(row.geo_lng),
+    };
 }
 export async function farChecksOn(db, date) {
     const rows = await db
@@ -1014,19 +1080,25 @@ export async function farChecksOn(db, date) {
         'attendance.checkout_far',
     ])
         .where('attendance.attendance_date', '=', date)
-        .where((eb) => eb.or([eb('attendance.checkin_far', '=', 1), eb('attendance.checkout_far', '=', 1)]))
+        .where((eb) => eb.or([
+        eb('attendance.checkin_at', 'is not', null),
+        eb('attendance.checkout_at', 'is not', null),
+    ]))
         .orderBy('employees.employee_code')
         .execute();
     const out = [];
     for (const r of rows) {
-        // A row flagged far carries far on exactly one side; a side that is not
-        // itself flagged (an on-site check-in beside a far check-out) is not a far
-        // reading and does not belong on Sushma's page, even though its columns
-        // are filled.
-        if (Number(r.checkin_far) === 1 &&
-            r.checkin_at !== null &&
-            r.checkin_lat !== null &&
-            r.checkin_lng !== null) {
+        // flagOf: 'ok'/'far' for a stored reading, 'unavailable' when the columns
+        // are NULL but the timestamp exists (the device failed), '' when that side
+        // of the day has not happened yet.
+        const flagOf = (at, lat, lng, far) => {
+            if (at === null)
+                return '';
+            if (lat === null || lng === null)
+                return 'unavailable';
+            return Number(far) === 1 ? 'far' : 'ok';
+        };
+        if (r.checkin_at !== null) {
             out.push({
                 attendance_id: Number(r.attendance_id),
                 employee_id: Number(r.employee_id),
@@ -1038,12 +1110,10 @@ export async function farChecksOn(db, date) {
                 at: String(r.checkin_at),
                 lat: r.checkin_lat,
                 lng: r.checkin_lng,
+                flag: flagOf(String(r.checkin_at), r.checkin_lat, r.checkin_lng, r.checkin_far),
             });
         }
-        if (Number(r.checkout_far) === 1 &&
-            r.checkout_at !== null &&
-            r.checkout_lat !== null &&
-            r.checkout_lng !== null) {
+        if (r.checkout_at !== null) {
             out.push({
                 attendance_id: Number(r.attendance_id),
                 employee_id: Number(r.employee_id),
@@ -1055,6 +1125,7 @@ export async function farChecksOn(db, date) {
                 at: String(r.checkout_at),
                 lat: r.checkout_lat,
                 lng: r.checkout_lng,
+                flag: flagOf(String(r.checkout_at), r.checkout_lat, r.checkout_lng, r.checkout_far),
             });
         }
     }

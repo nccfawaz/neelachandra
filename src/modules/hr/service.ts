@@ -6,6 +6,7 @@ import { ConflictError, ForbiddenError, NotFoundError, UnprocessableError } from
 import { resolveApprovalLimit } from '../../lib/permissions.js'
 import { applyPct, formatPaiseAsRupees, roundPaise } from '../../lib/money.js'
 import { distanceMeters, isFarFromSite, isValidReading, type LatLng } from '../../lib/geo.js'
+import { resolveCheckinSite } from './queries.js'
 import {
   addDays,
   datesBetween,
@@ -1006,7 +1007,8 @@ export async function approveAttendanceMonth(
 
 export interface SelfCheckInput {
   employeeId: number
-  siteLocationId: number
+  /** 'office:<locations.id>' or 'project:<projects.id>' (DECISIONS 31.9). */
+  siteKey: string
   /** null = the device supplied no position (denied prompt, no GPS, 0,0). */
   reading: LatLng | null
 }
@@ -1046,12 +1048,8 @@ export async function selfCheckIn(
   return db.transaction().execute(async (trx) => {
     await assertNotMusterExcluded(trx, input.employeeId)
 
-    const site = await trx
-      .selectFrom('locations')
-      .select(['id', 'name', 'latitude', 'longitude'])
-      .where('id', '=', input.siteLocationId)
-      .executeTakeFirst()
-    if (!site) throw new UnprocessableError('That site location no longer exists.')
+    const site = await resolveCheckinSite(trx, input.siteKey)
+    if (!site) throw new UnprocessableError('That site is no longer offered for check-in.')
 
     // An invalid reading is stored as NULL with the flag `unavailable`, never
     // as a coordinate: a 0,0 serialises plausible-looking but is the ocean off
@@ -1061,10 +1059,7 @@ export async function selfCheckIn(
     const reading: LatLng | null =
       input.reading !== null && isValidReading(input.reading) ? input.reading : null
 
-    const siteCoords: LatLng | null =
-      site.latitude === null || site.longitude === null
-        ? null
-        : { lat: Number(site.latitude), lng: Number(site.longitude) }
+    const siteCoords: LatLng | null = site.lat === null || site.lng === null ? null : { lat: site.lat, lng: site.lng }
     const far = reading !== null && isFarFromSite(reading, siteCoords)
     const distance =
       reading === null || siteCoords === null
@@ -1119,7 +1114,7 @@ export async function selfCheckIn(
       after: {
         employee_id: input.employeeId,
         date: day,
-        site_location_id: input.siteLocationId,
+        site_key: input.siteKey,
         distance_m: distance,
         far,
       },
@@ -1159,20 +1154,13 @@ export async function selfCheckOut(
     }
     if (prior.checkout_at !== null) throw new ConflictError('You are already checked out today.')
 
-    const site = await trx
-      .selectFrom('locations')
-      .select(['id', 'name', 'latitude', 'longitude'])
-      .where('id', '=', input.siteLocationId)
-      .executeTakeFirst()
-    if (!site) throw new UnprocessableError('That site location no longer exists.')
+    const site = await resolveCheckinSite(trx, input.siteKey)
+    if (!site) throw new UnprocessableError('That site is no longer offered for check-in.')
 
     const reading: LatLng | null =
       input.reading !== null && isValidReading(input.reading) ? input.reading : null
 
-    const siteCoords: LatLng | null =
-      site.latitude === null || site.longitude === null
-        ? null
-        : { lat: Number(site.latitude), lng: Number(site.longitude) }
+    const siteCoords: LatLng | null = site.lat === null || site.lng === null ? null : { lat: site.lat, lng: site.lng }
     const far = reading !== null && isFarFromSite(reading, siteCoords)
     const distance =
       reading === null || siteCoords === null
@@ -1200,7 +1188,7 @@ export async function selfCheckOut(
       after: {
         employee_id: input.employeeId,
         date: today(),
-        site_location_id: input.siteLocationId,
+        site_key: input.siteKey,
         distance_m: distance,
         far,
       },

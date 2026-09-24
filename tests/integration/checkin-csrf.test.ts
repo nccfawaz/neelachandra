@@ -44,6 +44,7 @@ const PASSWORD = 'Checkin-Csrf-1!'
 let userId = 0
 let employeeId = 0
 let siteId = 0
+let officeId = 0
 let roleId = 0
 
 function absorb(jar: string, res: Response): string {
@@ -154,6 +155,21 @@ beforeAll(async () => {
     .executeTakeFirstOrThrow()
   siteId = Number(site.insertId)
 
+  // The check-in site the tests resolve against: an OFFICE location (the
+  // option source is office + projects, not the inventory list).
+  await sql`delete from locations where code = 'FIXOFF-CS'`.execute(db)
+  const office = await db
+    .insertInto('locations')
+    .values({
+      code: 'FIXOFF-CS',
+      name: '[fixture] check-in csrf office',
+      location_type: 'office',
+      latitude: '12.900000',
+      longitude: '77.600000',
+    })
+    .executeTakeFirstOrThrow()
+  officeId = Number(office.insertId)
+
   const emp = await db
     .insertInto('employees')
     .values({
@@ -170,9 +186,10 @@ beforeAll(async () => {
 })
 
 afterAll(async () => {
-  // Detach children first: audit_log.user_id and users.employee_id both
-  // reference rows that must go before their parents.
+  // Detach children first: audit_log.user_id, user_sessions.user_id and
+  // users.employee_id all reference rows that must go before their parents.
   await sql`delete from audit_log where user_id = ${userId}`.execute(db)
+  await sql`delete from user_sessions where user_id = ${userId}`.execute(db)
   await sql`update users set employee_id = NULL where id = ${userId}`.execute(db)
   await sql`delete from attendance where employee_id = ${employeeId}`.execute(db)
   await sql`delete from employees where id = ${employeeId}`.execute(db)
@@ -212,7 +229,7 @@ describe('the check-in forms carry a valid CSRF token', () => {
     const token = html.match(/name="nc_csrf" value="([^"]+)"/)?.[1] ?? ''
     expect(token).not.toBe('')
 
-    const body = new URLSearchParams({ siteLocationId: String(siteId), lat: '12.9', lng: '77.6' })
+    const body = new URLSearchParams({ siteKey: 'office:' + officeId, lat: '12.9', lng: '77.6' })
 
     // WITHOUT the token: exactly the production failure.
     const refused = await app.request('/app/attendance/checkin', {
@@ -258,7 +275,7 @@ describe('the check-in forms carry a valid CSRF token', () => {
       method: 'POST',
       redirect: 'manual',
       headers: { 'content-type': 'application/x-www-form-urlencoded', cookie: jar },
-      body: new URLSearchParams({ siteLocationId: String(siteId), lat: '', lng: '', nc_csrf: token }).toString(),
+      body: new URLSearchParams({ siteKey: 'office:' + officeId, lat: '', lng: '', nc_csrf: token }).toString(),
     })
     expect(ok.status).toBe(303)
     expect(ok.headers.get('location') ?? '').toContain('unavailable')
@@ -287,7 +304,7 @@ describe('the check-in forms carry a valid CSRF token', () => {
       method: 'POST',
       redirect: 'manual',
       headers: { 'content-type': 'application/x-www-form-urlencoded', cookie: jar },
-      body: new URLSearchParams({ siteLocationId: String(siteId), lat: '0', lng: '0', nc_csrf: token }).toString(),
+      body: new URLSearchParams({ siteKey: 'office:' + officeId, lat: '0', lng: '0', nc_csrf: token }).toString(),
     })
     expect(ok.status).toBe(303)
     const row = await db
@@ -304,7 +321,7 @@ describe('the check-in forms carry a valid CSRF token', () => {
     await resetTodayRow()
     await svc.selfCheckIn(db, { userId, ip: '127.0.0.1' }, {
       employeeId,
-      siteLocationId: siteId,
+      siteKey: `office:${officeId}`,
       reading: { lat: 12.9, lng: 77.6 },
     })
     const jar = await login('', EMAIL)
@@ -320,7 +337,7 @@ describe('the check-in forms carry a valid CSRF token', () => {
       redirect: 'manual',
       headers: { 'content-type': 'application/x-www-form-urlencoded', cookie: jar },
       body: new URLSearchParams({
-        siteLocationId: String(siteId),
+        siteKey: 'office:' + officeId,
         lat: '12.9054',
         lng: '77.6',
         nc_csrf: token,

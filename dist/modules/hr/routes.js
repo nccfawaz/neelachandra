@@ -1779,28 +1779,46 @@ hr.get('/app/hr/recruiting', requirePermission(PERMISSIONS.HR_RECRUIT_MANAGE), a
 export default hr;
 /* Far-flag day view (DECISIONS 31) ---------------------------------------- */
 /**
- * The day view Sushma reviews: every check-in or check-out that read beyond
- * the 500 m threshold, plus the distance in metres beside each.
+ * The day view Sushma reviews: EVERY check-in and check-out of the date, in
+ * person order, with a marker on far and unavailable readings -- not only the
+ * far ones. (Renamed from "Far check-ins": a page of exceptions stopped
+ * showing the context the flags sit in, and the context is what a review
+ * needs.) Distances are recomputed against each row's own check-in site.
  *
- * No action button exists on this page, deliberately. DECISIONS 31 makes a far
- * reading a review item, not a correction queue -- the day always stands, so
- * there is nothing here to approve or refuse. What the page is for is the
- * conversation: who was far, how far, at which end of the day.
+ * No action button exists on this page, deliberately. DECISIONS 31 makes a
+ * far reading a review item, not a correction queue -- the day always stands,
+ * so there is nothing here to approve or refuse.
  */
 hr.get('/app/hr/attendance/far', requirePermission(PERMISSIONS.HR_ATTENDANCE_RECORD), async (c) => {
     const db = c.get('db');
     const date = dateParam(c, 'date');
     const rows = await q.farChecksOn(db, date);
+    const flagged = rows.filter((r) => r.flag === 'far' || r.flag === 'unavailable').length;
+    const flagBadge = (flag) => {
+        if (flag === 'far')
+            return _jsx("span", { class: "ncc-badge ncc-badge-danger", children: "FAR" });
+        if (flag === 'unavailable')
+            return _jsx("span", { class: "ncc-badge", children: "no reading" });
+        if (flag === '')
+            return _jsx("span", { class: "ncc-muted", children: "\u2014" });
+        return _jsx("span", { class: "ncc-badge ncc-badge-ok", children: "on site" });
+    };
+    const mapsLink = (r) => {
+        if (r.lat === null || r.lng === null)
+            return _jsx("span", { class: "ncc-muted", children: "no reading" });
+        return (_jsxs("a", { href: `https://www.google.com/maps?q=${r.lat},${r.lng}`, target: "_blank", rel: "noopener noreferrer", children: [Number(r.lat).toFixed(6), ", ", Number(r.lng).toFixed(6), " \u2197"] }));
+    };
     return page(c, {
-        title: 'Far check-ins',
+        title: 'Site check-ins',
         path: '/app/hr/attendance/far',
-        subtitle: `${date} — ${rows.length} far reading${rows.length === 1 ? '' : 's'} beyond 500 m`,
+        subtitle: `${date} — ${rows.length} reading${rows.length === 1 ? '' : 's'}, ${flagged} flagged`,
         actions: (_jsx("a", { class: "ncc-btn", href: "/app/hr/attendance", children: "Attendance entry" })),
-    }, _jsxs(_Fragment, { children: [banner(c), _jsx(Alert, { tone: "warn", children: "A far reading is recorded, never refused: the attendance always stands. This page exists so the flags get reviewed, and it shows nothing for a day with no far readings \u2014 including a day where a reading could not be compared because the site has no coordinates. on_duty_travel days are not exempt; they flag far like any other." }), _jsx(DataTable, { columns: [
+    }, _jsxs(_Fragment, { children: [banner(c), _jsx(Alert, { tone: "warn", children: "A far reading is recorded, never refused: the attendance always stands, and on_duty_travel days are not exempt. FAR marks a real position beyond the 500 m threshold; \"no reading\" marks a check-in whose device supplied no position. Both are review items, not corrections." }), _jsx(DataTable, { columns: [
                     { header: 'Employee', cell: (r) => (_jsxs(_Fragment, { children: [_jsx("strong", { children: r.full_name }), _jsxs("div", { class: "ncc-muted", children: [r.employee_code, r.designation_name ? ` · ${r.designation_name}` : ''] })] })) },
                     { header: 'Reading', cell: (r) => (r.which === 'checkin' ? 'Check-in' : 'Check-out') },
-                    { header: 'At', cell: (r) => r.at },
+                    { header: 'At', cell: (r) => r.at ?? _jsx("span", { class: "ncc-muted", children: "\u2014" }) },
                     { header: 'Status', cell: (r) => titleCase(r.status) },
-                    { header: 'Position', cell: (r) => `${r.lat}, ${r.lng}` },
-                ], rows: rows, empty: `No far readings on ${date}.` })] }));
+                    { header: 'Flag', cell: (r) => flagBadge(r.flag) },
+                    { header: 'Position', cell: (r) => mapsLink(r) },
+                ], rows: rows, empty: `No check-ins or check-outs recorded on ${date}.` })] }));
 });

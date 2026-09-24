@@ -5,6 +5,7 @@ import { ConflictError, ForbiddenError, NotFoundError, UnprocessableError } from
 import { resolveApprovalLimit } from '../../lib/permissions.js';
 import { applyPct, formatPaiseAsRupees, roundPaise } from '../../lib/money.js';
 import { distanceMeters, isFarFromSite, isValidReading } from '../../lib/geo.js';
+import { resolveCheckinSite } from './queries.js';
 import { addDays, datesBetween, daysBetween, financialYear, formatMonth, isWorkingDay, monthBounds, monthOf, nowSqlDateTime, today, workingDaysBetween, } from '../../lib/dates.js';
 import { attendanceMonthState, approvedLeaveMonth, blockerCount, employeeLoginId, exitBlockers, applicableRate, } from './queries.js';
 import { uomLabel, LEAVE_DAY_STATUSES } from './schemas.js';
@@ -776,22 +777,16 @@ export async function approveAttendanceMonth(db, actor, month) {
 export async function selfCheckIn(db, actor, input) {
     return db.transaction().execute(async (trx) => {
         await assertNotMusterExcluded(trx, input.employeeId);
-        const site = await trx
-            .selectFrom('locations')
-            .select(['id', 'name', 'latitude', 'longitude'])
-            .where('id', '=', input.siteLocationId)
-            .executeTakeFirst();
+        const site = await resolveCheckinSite(trx, input.siteKey);
         if (!site)
-            throw new UnprocessableError('That site location no longer exists.');
+            throw new UnprocessableError('That site is no longer offered for check-in.');
         // An invalid reading is stored as NULL with the flag `unavailable`, never
         // as a coordinate: a 0,0 serialises plausible-looking but is the ocean off
         // Ghana, and the first version stored it as a clean on-site reading
         // because the value was in range. The check-in itself always stands
         // (DECISIONS 31.1) -- what is judged here is the reading, not the worker.
         const reading = input.reading !== null && isValidReading(input.reading) ? input.reading : null;
-        const siteCoords = site.latitude === null || site.longitude === null
-            ? null
-            : { lat: Number(site.latitude), lng: Number(site.longitude) };
+        const siteCoords = site.lat === null || site.lng === null ? null : { lat: site.lat, lng: site.lng };
         const far = reading !== null && isFarFromSite(reading, siteCoords);
         const distance = reading === null || siteCoords === null
             ? null
@@ -843,7 +838,7 @@ export async function selfCheckIn(db, actor, input) {
             after: {
                 employee_id: input.employeeId,
                 date: day,
-                site_location_id: input.siteLocationId,
+                site_key: input.siteKey,
                 distance_m: distance,
                 far,
             },
@@ -876,17 +871,11 @@ export async function selfCheckOut(db, actor, input) {
         }
         if (prior.checkout_at !== null)
             throw new ConflictError('You are already checked out today.');
-        const site = await trx
-            .selectFrom('locations')
-            .select(['id', 'name', 'latitude', 'longitude'])
-            .where('id', '=', input.siteLocationId)
-            .executeTakeFirst();
+        const site = await resolveCheckinSite(trx, input.siteKey);
         if (!site)
-            throw new UnprocessableError('That site location no longer exists.');
+            throw new UnprocessableError('That site is no longer offered for check-in.');
         const reading = input.reading !== null && isValidReading(input.reading) ? input.reading : null;
-        const siteCoords = site.latitude === null || site.longitude === null
-            ? null
-            : { lat: Number(site.latitude), lng: Number(site.longitude) };
+        const siteCoords = site.lat === null || site.lng === null ? null : { lat: site.lat, lng: site.lng };
         const far = reading !== null && isFarFromSite(reading, siteCoords);
         const distance = reading === null || siteCoords === null
             ? null
@@ -910,7 +899,7 @@ export async function selfCheckOut(db, actor, input) {
             after: {
                 employee_id: input.employeeId,
                 date: today(),
-                site_location_id: input.siteLocationId,
+                site_key: input.siteKey,
                 distance_m: distance,
                 far,
             },

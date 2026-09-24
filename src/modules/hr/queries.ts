@@ -1364,22 +1364,113 @@ export async function selfDay(db: Queryable, userId: number): Promise<SelfDayRow
 }
 
 /** Sites the check-in panel can offer: any active location that has coordinates. */
-export async function checkinSiteOptions(db: Queryable) {
-  return db
+/**
+ * Where a person can check in: the head office, plus every active project.
+ *
+ * Deliberately NOT the inventory locations table, which the first version
+ * offered whole: that table lists places STOCK sits (central store, transit,
+ * site stores) and a person does not stand in it. Check-in sites are
+ * 31-scope: the office, and construction sites -- which live on the projects
+ * they belong to, carrying their own geo_lat/geo_lng. Inventory locations are
+ * untouched and remain what stock movement uses.
+ */
+export interface CheckinSiteOption {
+  key: string
+  label: string
+  lat: number | null
+  lng: number | null
+}
+
+export async function checkinSiteOptions(db: Queryable): Promise<CheckinSiteOption[]> {
+  const office = await db
     .selectFrom('locations')
     .select(['id', 'name', 'latitude', 'longitude'])
+    .where('location_type', '=', 'office')
     .where('is_active', '=', 1)
     .orderBy('name')
+    .limit(1)
     .execute()
+  const projects = await db
+    .selectFrom('projects')
+    .select(['id', 'code', 'name', 'geo_lat', 'geo_lng'])
+    .where('status', 'in', ['prospect', 'mobilising', 'in_progress', 'on_hold', 'snagging'])
+    .orderBy('name')
+    .execute()
+
+  const out: CheckinSiteOption[] = []
+  for (const o of office) {
+    out.push({
+      key: `office:${o.id}`,
+      label: o.name,
+      lat: o.latitude === null ? null : Number(o.latitude),
+      lng: o.longitude === null ? null : Number(o.longitude),
+    })
+  }
+  for (const p of projects) {
+    out.push({
+      key: `project:${p.id}`,
+      label: `${p.code} — ${p.name}`,
+      lat: p.geo_lat === null ? null : Number(p.geo_lat),
+      lng: p.geo_lng === null ? null : Number(p.geo_lng),
+    })
+  }
+  return out
 }
 
 /**
- * The HR far-flag day view: every reading beyond the 500 m threshold for a
- * given date, with the distance worked out in SQL's decimal-free absence.
+ * Resolves a check-in option key to its coordinates.
  *
- * Distances are recomputed here in JS (via the service's use of geo.ts on
- * write, and this query's callers re-deriving what they display) because SQL
- * haversine on DECIMAL(9,6) is where precision goes to die.
+ * Keys are prefixed ('office:3', 'project:12') so the two sources can never
+ * collide on a bare id. A site with no coordinates resolves to null coords:
+ * the service records the check-in with an unavailable reading, which is the
+ * same treatment a worker's own failed GPS gets.
+ */
+export async function resolveCheckinSite(
+  db: Queryable,
+  key: string
+): Promise<{ name: string; lat: number | null; lng: number | null } | undefined> {
+  const [kind, rawId] = key.split(':')
+  const id = Number(rawId)
+  if ((kind !== 'office' && kind !== 'project') || !Number.isInteger(id) || id < 1) return undefined
+
+  if (kind === 'office') {
+    const row = await db
+      .selectFrom('locations')
+      .select(['name', 'latitude', 'longitude'])
+      .where('id', '=', id)
+      .where('location_type', '=', 'office')
+      .executeTakeFirst()
+    if (!row) return undefined
+    return {
+      name: row.name,
+      lat: row.latitude === null ? null : Number(row.latitude),
+      lng: row.longitude === null ? null : Number(row.longitude),
+    }
+  }
+  const row = await db
+    .selectFrom('projects')
+    .select(['name', 'geo_lat', 'geo_lng'])
+    .where('id', '=', id)
+    .executeTakeFirst()
+  if (!row) return undefined
+  return {
+    name: row.name,
+    lat: row.geo_lat === null ? null : Number(row.geo_lat),
+    lng: row.geo_lng === null ? null : Number(row.geo_lng),
+  }
+}
+
+/**
+ * The HR day view: EVERY check-in and check-out of the date, not only the
+ * far ones -- Sushma reviews the whole day and needs the flagged rows to be
+ * visible IN CONTEXT, not siloed on a page of their own. Each side of the
+ * day (check-in, check-out) becomes one row; a person who did both appears
+ * twice, which is what "the day's readings" means.
+ *
+ * `flag` is what Sushma scans for: 'ok' (real reading, on site), 'far'
+ * (real reading, beyond the threshold), 'unavailable' (no reading stored --
+ * the device supplied nothing), or '' (no reading yet on that side, e.g. a
+ * person still on site at review time -- the row shows the check-in only).
  */
 export interface FarCheckRow {
   attendance_id: number
@@ -1389,9 +1480,10 @@ export interface FarCheckRow {
   designation_name: string | null
   status: string
   which: 'checkin' | 'checkout'
-  at: string
-  lat: string | number
-  lng: string | number
+  at: string | null
+  lat: string | number | null
+  lng: string | number | null
+  flag: 'ok' | 'far' | 'unavailable' | ''
 }
 
 export async function farChecksOn(db: Queryable, date: string): Promise<FarCheckRow[]> {
@@ -1417,23 +1509,30 @@ export async function farChecksOn(db: Queryable, date: string): Promise<FarCheck
     ])
     .where('attendance.attendance_date', '=', date)
     .where((eb) =>
-      eb.or([eb('attendance.checkin_far', '=', 1), eb('attendance.checkout_far', '=', 1)])
+      eb.or([
+        eb('attendance.checkin_at', 'is not', null),
+        eb('attendance.checkout_at', 'is not', null),
+      ])
     )
     .orderBy('employees.employee_code')
     .execute()
 
   const out: FarCheckRow[] = []
   for (const r of rows) {
-    // A row flagged far carries far on exactly one side; a side that is not
-    // itself flagged (an on-site check-in beside a far check-out) is not a far
-    // reading and does not belong on Sushma's page, even though its columns
-    // are filled.
-    if (
-      Number(r.checkin_far) === 1 &&
-      r.checkin_at !== null &&
-      r.checkin_lat !== null &&
-      r.checkin_lng !== null
-    ) {
+    // flagOf: 'ok'/'far' for a stored reading, 'unavailable' when the columns
+    // are NULL but the timestamp exists (the device failed), '' when that side
+    // of the day has not happened yet.
+    const flagOf = (
+      at: string | null,
+      lat: string | number | null,
+      lng: string | number | null,
+      far: string | number | null
+    ): 'ok' | 'far' | 'unavailable' | '' => {
+      if (at === null) return ''
+      if (lat === null || lng === null) return 'unavailable'
+      return Number(far) === 1 ? 'far' : 'ok'
+    }
+    if (r.checkin_at !== null) {
       out.push({
         attendance_id: Number(r.attendance_id),
         employee_id: Number(r.employee_id),
@@ -1445,14 +1544,10 @@ export async function farChecksOn(db: Queryable, date: string): Promise<FarCheck
         at: String(r.checkin_at),
         lat: r.checkin_lat,
         lng: r.checkin_lng,
+        flag: flagOf(String(r.checkin_at), r.checkin_lat, r.checkin_lng, r.checkin_far),
       })
     }
-    if (
-      Number(r.checkout_far) === 1 &&
-      r.checkout_at !== null &&
-      r.checkout_lat !== null &&
-      r.checkout_lng !== null
-    ) {
+    if (r.checkout_at !== null) {
       out.push({
         attendance_id: Number(r.attendance_id),
         employee_id: Number(r.employee_id),
@@ -1464,6 +1559,7 @@ export async function farChecksOn(db: Queryable, date: string): Promise<FarCheck
         at: String(r.checkout_at),
         lat: r.checkout_lat,
         lng: r.checkout_lng,
+        flag: flagOf(String(r.checkout_at), r.checkout_lat, r.checkout_lng, r.checkout_far),
       })
     }
   }
