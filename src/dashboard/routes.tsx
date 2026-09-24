@@ -313,6 +313,7 @@ async function checkinPanel(c: Context<AppEnv>) {
   const user = currentUser(c)
   const db = c.get('db')
   if (user.employeeId === null) return null
+  const csrfToken = currentSession(c).csrfToken
 
   const [day, sites] = await Promise.all([q.selfDay(db, user.id), q.checkinSiteOptions(db)])
   const checkedIn = day?.checkin_at != null
@@ -342,6 +343,7 @@ async function checkinPanel(c: Context<AppEnv>) {
         </p>
       ) : (
         <form method="post" action="/app/attendance/checkin" class="ncc-inline-form">
+          <input type="hidden" name="nc_csrf" value={csrfToken} />
           <label>
             Site
             <select name="siteLocationId">
