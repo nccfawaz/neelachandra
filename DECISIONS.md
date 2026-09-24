@@ -7182,3 +7182,24 @@ un-exclude.
 The runtime service (`assertNotMusterExcluded`) is unchanged and already
 correct: it reads the employee row's stored flag, which is now written from
 the role. Nothing in src/ ever referenced a code.
+
+### 31.8 The unpushed-work tripwire (2026-09-24)
+
+Five commits — the entire site check-in feature — sat on local main while
+batch reports said "pushed; origin/main = <hash>". The claim was wrong
+because it was not measured: the reporting habit copied the last verified
+parity state instead of running `git fetch` and comparing, and every gate was
+green because the gates test the working tree, which does not know what the
+remote holds.
+
+The fix is structural, not procedural: `tests/unit/unpushed-work.test.ts`
+makes unpushed work a GATE FAILURE. It runs `git rev-list --count
+origin/main..HEAD` and fails while main is ahead, then asserts
+`origin/main === HEAD` outright, so parity is measured on every `npm test`.
+Deliberate limits: it fetches nothing (deterministic, offline-safe — the
+fetch is part of the report procedure, as the push is), it skips rather than
+fails when no origin/main ref exists (fresh clone, bare CI checkout), and it
+measures AHEAD only — origin ahead of HEAD is a pull, and failing on it
+would push people towards force-pushes. Red-proven on 8207358: detached
+five commits behind, the gate fails with the commit counts and both hashes
+in the message.
