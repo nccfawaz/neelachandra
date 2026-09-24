@@ -1484,6 +1484,9 @@ export interface FarCheckRow {
   lat: string | number | null
   lng: string | number | null
   flag: 'ok' | 'far' | 'unavailable' | ''
+  /** Test-mode rows (DECISIONS 31.10) display a TEST badge and never count
+   *  toward the flagged total. */
+  test: boolean
 }
 
 export async function farChecksOn(db: Queryable, date: string): Promise<FarCheckRow[]> {
@@ -1506,6 +1509,7 @@ export async function farChecksOn(db: Queryable, date: string): Promise<FarCheck
       'attendance.checkout_lat',
       'attendance.checkout_lng',
       'attendance.checkout_far',
+      'attendance.checkin_test',
     ])
     .where('attendance.attendance_date', '=', date)
     .where((eb) =>
@@ -1532,6 +1536,7 @@ export async function farChecksOn(db: Queryable, date: string): Promise<FarCheck
       if (lat === null || lng === null) return 'unavailable'
       return Number(far) === 1 ? 'far' : 'ok'
     }
+    const test = Number(r.checkin_test) === 1
     if (r.checkin_at !== null) {
       out.push({
         attendance_id: Number(r.attendance_id),
@@ -1545,6 +1550,7 @@ export async function farChecksOn(db: Queryable, date: string): Promise<FarCheck
         lat: r.checkin_lat,
         lng: r.checkin_lng,
         flag: flagOf(String(r.checkin_at), r.checkin_lat, r.checkin_lng, r.checkin_far),
+        test,
       })
     }
     if (r.checkout_at !== null) {
@@ -1560,8 +1566,104 @@ export async function farChecksOn(db: Queryable, date: string): Promise<FarCheck
         lat: r.checkout_lat,
         lng: r.checkout_lng,
         flag: flagOf(String(r.checkout_at), r.checkout_lat, r.checkout_lng, r.checkout_far),
+        test,
       })
     }
   }
   return out
+}
+
+/**
+ * Whether the employee's row carries checkin_test_mode (DECISIONS 31.10).
+ *
+ * A missing row is false, not an error: the caller's refusal paths name the
+ * problem better than this lookup would.
+ */
+export async function isCheckinTestMode(db: Queryable, employeeId: number): Promise<boolean> {
+  const row = await db
+    .selectFrom('employees')
+    .select('checkin_test_mode')
+    .where('id', '=', employeeId)
+    .executeTakeFirst()
+  return row !== undefined && Number(row.checkin_test_mode) === 1
+}
+
+/**
+ * Who is in, who is missing, on a date (DECISIONS 31.10's plain-language
+ * summary for the HR day view).
+ *
+ * "On the roster" is the muster roll's rule: joined on or before the date,
+ * not exited before it, not muster-excluded. Test-mode employees appear as a
+ * separate TEST line so their repeated check-ins never read as attendance.
+ */
+export interface DaySummaryRow {
+  employee_id: number
+  employee_code: string
+  full_name: string
+  checkin_at: string | null
+  checkout_at: string | null
+  flagged: boolean
+  test: boolean
+}
+
+export async function dayAttendanceSummary(
+  db: Queryable,
+  date: string
+): Promise<{ inToday: DaySummaryRow[]; missing: DaySummaryRow[] }> {
+  const roster = await db
+    .selectFrom('employees')
+    .select(['id', 'employee_code', 'full_name', 'checkin_test_mode'])
+    .where('muster_excluded', '=', 0)
+    .where('date_of_joining', '<=', date)
+    .where((eb) => eb.or([eb('date_of_exit', 'is', null), eb('date_of_exit', '>=', date)]))
+    .orderBy('employee_code')
+    .execute()
+
+  const readings = await db
+    .selectFrom('attendance')
+    .select([
+      'employee_id',
+      'checkin_at',
+      'checkout_at',
+      'checkin_far',
+      'checkout_far',
+      'checkin_lat',
+      'checkin_lng',
+      'checkout_lat',
+      'checkout_lng',
+      'checkin_test',
+    ])
+    .where('attendance_date', '=', date)
+    .execute()
+  const byEmployee = new Map(readings.map((r) => [Number(r.employee_id), r]))
+
+  const inToday: DaySummaryRow[] = []
+  const missing: DaySummaryRow[] = []
+  for (const p of roster) {
+    const r = byEmployee.get(Number(p.id))
+    const row: DaySummaryRow = {
+      employee_id: Number(p.id),
+      employee_code: p.employee_code,
+      full_name: p.full_name,
+      checkin_at: r?.checkin_at === null || r?.checkin_at === undefined ? null : String(r.checkin_at),
+      checkout_at: r?.checkout_at === null || r?.checkout_at === undefined ? null : String(r.checkout_at),
+      flagged:
+        r !== undefined &&
+        Number(r.checkin_test) !== 1 &&
+        ((r.checkin_at !== null &&
+          ((r.checkin_lat === null && true) || Number(r.checkin_far) === 1)) ||
+          (r.checkout_at !== null &&
+            ((r.checkout_lat === null && true) || Number(r.checkout_far) === 1))),
+      test: r !== undefined && Number(r.checkin_test) === 1,
+    }
+    // A test-mode employee with no row is still a TEST roster line, not a
+    // missing worker.
+    if (Number(p.checkin_test_mode) === 1 && !row.test) {
+      inToday.push({ ...row, test: true })
+      continue
+    }
+    if (r !== undefined && r.checkin_at !== null) inToday.push(row)
+    else missing.push({ ...row, checkout_at: null })
+  }
+  return { inToday, missing }
 }

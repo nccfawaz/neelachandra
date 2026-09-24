@@ -323,20 +323,6 @@ async function checkinPanel(c: Context<AppEnv>) {
   return (
     <section class="ncc-card ncc-card--wide">
       <p class="ncc-kpi__label">Site attendance — {formatDateTime(new Date().toISOString())}</p>
-      {checkedIn && checkedOut ? (
-        <p class="ncc-list__item">
-          Day complete: checked in at {day?.checkin_at}, checked out at {day?.checkout_at}.
-        </p>
-      ) : checkedIn ? (
-        <p>You are checked in today. Check out when you leave the site.</p>
-      ) : (
-        <p>You are not checked in yet today.</p>
-      )}
-
-      <p class="ncc-muted">
-        Location is recorded when you press check-in and check-out — at those two moments only.
-        Your position is not tracked at any other time.
-      </p>
 
       {sites.length === 0 ? (
         <p class="ncc-muted">
@@ -346,20 +332,42 @@ async function checkinPanel(c: Context<AppEnv>) {
       ) : (
         <form method="post" action="/app/attendance/checkin" class="ncc-inline-form">
           <input type="hidden" name="nc_csrf" value={csrfToken} />
-          <label>
-            Site
-            <select name="siteKey">
-              {sites.map((s) => (
-                <option value={s.key}>{s.label}</option>
-              ))}
-            </select>
-          </label>
           <input type="hidden" name="lat" value="" />
           <input type="hidden" name="lng" value="" />
-          {!checkedIn ? <button type="submit">Check in</button> : null}
-          {checkedIn && !checkedOut ? <button type="submit" formaction="/app/attendance/checkout">Check out</button> : null}
+          {/* Exactly one action shows at a time (DECISIONS 31.11): the button
+              is the whole screen, and two equal buttons invite the wrong
+              press. The check-in time, once it exists, is the status line. */}
+          {checkedIn ? (
+            <p class="ncc-checkin-time">
+              Checked in at {day?.checkin_at}
+              {checkedOut ? <> · checked out at {day?.checkout_at}</> : null}
+            </p>
+          ) : (
+            <label class="ncc-field">
+              Site
+              <select name="siteKey">
+                {sites.map((s) => (
+                  <option value={s.key}>{s.label}</option>
+                ))}
+              </select>
+            </label>
+          )}
+          {checkedOut ? null : checkedIn ? (
+            <button type="submit" class="ncc-checkin-btn" formaction="/app/attendance/checkout">
+              Check out
+            </button>
+          ) : (
+            <button type="submit" class="ncc-checkin-btn">
+              Check in
+            </button>
+          )}
         </form>
       )}
+
+      <p class="ncc-checkin-note">
+        Location is recorded when you press the button — at check-in and check-out only.
+        Your position is not tracked at any other time.
+      </p>
     </section>
   )
 }

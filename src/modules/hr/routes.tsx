@@ -3843,13 +3843,15 @@ hr.get('/app/hr/attendance/far', requirePermission(PERMISSIONS.HR_ATTENDANCE_REC
   const db = c.get('db')
   const date = dateParam(c, 'date')
 
-  const rows = await q.farChecksOn(db, date)
-  const flagged = rows.filter((r) => r.flag === 'far' || r.flag === 'unavailable').length
+  const [rows, summary] = await Promise.all([q.farChecksOn(db, date), q.dayAttendanceSummary(db, date)])
+  // Test rows never count toward the flagged total (DECISIONS 31.10).
+  const flagged = rows.filter((r) => !r.test && (r.flag === 'far' || r.flag === 'unavailable')).length
 
-  const flagBadge = (flag: (typeof rows)[number]['flag']) => {
-    if (flag === 'far') return <span class="ncc-badge ncc-badge-danger">FAR</span>
-    if (flag === 'unavailable') return <span class="ncc-badge">no reading</span>
-    if (flag === '') return <span class="ncc-muted">—</span>
+  const flagBadge = (r: (typeof rows)[number]) => {
+    if (r.test) return <span class="ncc-badge ncc-badge-muted">TEST</span>
+    if (r.flag === 'far') return <span class="ncc-badge ncc-badge-danger">FAR</span>
+    if (r.flag === 'unavailable') return <span class="ncc-badge ncc-badge-warn">no reading</span>
+    if (r.flag === '') return <span class="ncc-muted">—</span>
     return <span class="ncc-badge ncc-badge-ok">on site</span>
   }
 
@@ -3871,7 +3873,7 @@ hr.get('/app/hr/attendance/far', requirePermission(PERMISSIONS.HR_ATTENDANCE_REC
     {
       title: 'Site check-ins',
       path: '/app/hr/attendance/far',
-      subtitle: `${date} — ${rows.length} reading${rows.length === 1 ? '' : 's'}, ${flagged} flagged`,
+      subtitle: `${date} — ${summary.inToday.length} checked in · ${summary.missing.length} missing · ${flagged} need a look`,
       actions: (
         <a class="ncc-btn" href="/app/hr/attendance">
           Attendance entry
@@ -3880,28 +3882,65 @@ hr.get('/app/hr/attendance/far', requirePermission(PERMISSIONS.HR_ATTENDANCE_REC
     },
     <>
       {banner(c)}
-      <Alert tone="warn">
-        A far reading is recorded, never refused: the attendance always stands, and on_duty_travel days are
-        not exempt. FAR marks a real position beyond the 500 m threshold; "no reading" marks a check-in
-        whose device supplied no position. Both are review items, not corrections.
-      </Alert>
-      <DataTable
-        columns={[
-          { header: 'Employee', cell: (r: (typeof rows)[number]) => (
-            <>
-              <strong>{r.full_name}</strong>
-              <div class="ncc-muted">{r.employee_code}{r.designation_name ? ` · ${r.designation_name}` : ''}</div>
-            </>
-          ) },
-          { header: 'Reading', cell: (r) => (r.which === 'checkin' ? 'Check-in' : 'Check-out') },
-          { header: 'At', cell: (r) => r.at ?? <span class="ncc-muted">—</span> },
-          { header: 'Status', cell: (r) => titleCase(r.status) },
-          { header: 'Flag', cell: (r) => flagBadge(r.flag) },
-          { header: 'Position', cell: (r) => mapsLink(r) },
-        ]}
-        rows={rows}
-        empty={`No check-ins or check-outs recorded on ${date}.`}
-      />
+      <Panel title="Who is in today">
+        <DataTable
+          columns={[
+            { header: 'Person', cell: (r: q.DaySummaryRow) => (
+              <>
+                <strong>{r.full_name}</strong>
+                <div class="ncc-muted">{r.employee_code}{r.test ? ' · TEST' : ''}</div>
+              </>
+            ) },
+            { header: 'Checked in at', cell: (r) => r.checkin_at ?? <span class="ncc-muted">—</span> },
+            { header: 'Checked out at', cell: (r) => r.checkout_at ?? <span class="ncc-muted">still on site</span> },
+            { header: 'Needs a look', cell: (r) =>
+              r.test ? <span class="ncc-badge ncc-badge-muted">TEST</span>
+              : r.flagged ? <span class="ncc-badge ncc-badge-danger">YES</span>
+              : <span class="ncc-badge ncc-badge-ok">no</span> },
+          ]}
+          rows={summary.inToday}
+          empty={`Nobody has checked in yet on ${date}.`}
+        />
+      </Panel>
+      <Panel title="Missing — no check-in today">
+        <DataTable
+          columns={[
+            { header: 'Person', cell: (r: q.DaySummaryRow) => (
+              <>
+                <strong>{r.full_name}</strong>
+                <div class="ncc-muted">{r.employee_code}</div>
+              </>
+            ) },
+          ]}
+          rows={summary.missing}
+          empty={`Everyone on the roster has checked in on ${date}.`}
+        />
+      </Panel>
+      <Panel title="Every reading — the detail">
+        <Alert tone="warn">
+          A far reading is recorded, never refused: the attendance always stands, and on_duty_travel days are
+          not exempt. FAR marks a real position beyond the 500 m threshold; "no reading" marks a check-in
+          whose device supplied no position. Both are review items, not corrections. TEST rows were written
+          in test mode and never count here.
+        </Alert>
+        <DataTable
+          columns={[
+            { header: 'Employee', cell: (r: (typeof rows)[number]) => (
+              <>
+                <strong>{r.full_name}</strong>
+                <div class="ncc-muted">{r.employee_code}{r.designation_name ? ` · ${r.designation_name}` : ''}</div>
+              </>
+            ) },
+            { header: 'Reading', cell: (r) => (r.which === 'checkin' ? 'Check-in' : 'Check-out') },
+            { header: 'At', cell: (r) => r.at ?? <span class="ncc-muted">—</span> },
+            { header: 'Status', cell: (r) => titleCase(r.status) },
+            { header: 'Flag', cell: (r) => flagBadge(r) },
+            { header: 'Position', cell: (r) => mapsLink(r) },
+          ]}
+          rows={rows}
+          empty={`No check-ins or check-outs recorded on ${date}.`}
+        />
+      </Panel>
     </>
   )
 })

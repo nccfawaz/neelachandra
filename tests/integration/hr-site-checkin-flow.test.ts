@@ -245,6 +245,73 @@ describe('self check-in', () => {
     ).rejects.toThrow(/already checked in/)
   })
 
+  it('a NORMAL employee still gets one row per day — the second check-in is refused', async () => {
+    // The guard test-mode must not weaken: a worker without the flag is
+    // refused on the second attempt, and the first row is untouched.
+    const before = await db
+      .selectFrom('attendance')
+      .select(['id'])
+      .where('employee_id', '=', workerId)
+      .execute()
+    await expect(
+      svc.selfCheckIn(db, actor, {
+        employeeId: workerId,
+        siteKey: `office:${officeId}`,
+        reading: FAR,
+      })
+    ).rejects.toThrow(/already checked in/)
+    const after = await db
+      .selectFrom('attendance')
+      .select(['id', 'checkin_at'])
+      .where('employee_id', '=', workerId)
+      .execute()
+    expect(after.length).toBe(before.length)
+    expect(after.length).toBe(1)
+  })
+
+  it('TEST MODE: a flagged employee may check in and out repeatedly — each attempt overwrites, rows are marked checkin_test', async () => {
+    const tester = await svc.createEmployee(
+      db,
+      actor,
+      employeeInput({ fullName: 'Fixture Tester Omega', gender: 'male', fatherOrSpouseName: 'Fixture Parent Omega' })
+    )
+    await db
+      .updateTable('employees')
+      .set({ checkin_test_mode: 1 })
+      .where('id', '=', tester)
+      .execute()
+
+    // First check-in on site, first check-out far.
+    await svc.selfCheckIn(db, actor, { employeeId: tester, siteKey: `office:${officeId}`, reading: NEAR })
+    await svc.selfCheckOut(db, actor, { employeeId: tester, siteKey: `office:${officeId}`, reading: FAR })
+
+    // Second round: both would be refused without the flag.
+    await svc.selfCheckIn(db, actor, { employeeId: tester, siteKey: `office:${officeId}`, reading: FAR })
+    await svc.selfCheckOut(db, actor, { employeeId: tester, siteKey: `office:${officeId}`, reading: NEAR })
+
+    const rows = await db
+      .selectFrom('attendance')
+      .select(['id', 'checkin_at', 'checkin_far', 'checkout_far', 'checkin_test'])
+      .where('employee_id', '=', tester)
+      .where('attendance_date', '=', today())
+      .execute()
+    // ONE row for the day, overwritten, not four.
+    expect(rows.length).toBe(1)
+    expect(Number(rows[0].checkin_test)).toBe(1)
+    // The last attempt won: check-in far (overwrote the on-site one),
+    // check-out near (overwrote the far one).
+    expect(Number(rows[0].checkin_far)).toBe(1)
+    expect(Number(rows[0].checkout_far)).toBe(0)
+
+    // And a normal employee's row carries checkin_test = 0.
+    const normal = await db
+      .selectFrom('attendance')
+      .select(['checkin_test'])
+      .where('employee_id', '=', workerId)
+      .executeTakeFirstOrThrow()
+    expect(Number(normal.checkin_test)).toBe(0)
+  })
+
   it('a 0,0 reading is stored as NULL/unavailable, never as an unflagged on-site position', async () => {
     // The production failure: (0, 0) is in range, so the first version
     // computed a plausible distance from it and recorded the worker in the

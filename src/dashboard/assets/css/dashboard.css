@@ -726,3 +726,45 @@ code {
     padding: 1.1rem 1rem 2.5rem;
   }
 }
+
+/*
+ * Site check-in panel (DECISIONS 31.11).
+ *
+ * The button is the whole point of the screen: full width of its card and at
+ * least 48 px tall, because it is pressed on a phone at a gate, often with
+ * gloves on. Brand orange #F48120 rather than the token --ncc-accent
+ * (#e8650a): the owner specified the exact colour for this one control.
+ */
+.ncc-checkin-btn {
+  display: block;
+  width: 100%;
+  min-height: 48px;
+  min-width: 48px;
+  padding: 0.75rem 1rem;
+  font: inherit;
+  font-size: 1.05rem;
+  font-weight: 600;
+  color: #ffffff;
+  background: #f48120;
+  border: 1px solid #f48120;
+  border-radius: var(--ncc-radius-sm);
+  cursor: pointer;
+  text-align: center;
+}
+
+.ncc-checkin-btn:hover {
+  background: #d96f15;
+  border-color: #d96f15;
+}
+
+.ncc-checkin-time {
+  margin: 0.5rem 0 0;
+  font-size: 0.95rem;
+  color: var(--ncc-text);
+}
+
+.ncc-checkin-note {
+  margin: 0.75rem 0 0;
+  font-size: 0.8rem;
+  color: var(--ncc-text-muted);
+}

@@ -24,6 +24,12 @@ const DECLARATIONS: [string, string][] = [
   ['f5f7fa', 'sidebar background #f5f7fa'],
   ['span.ncc-navlink', 'disabled items get the block nav-item rule'],
   ['.ncc-sidebar__lockup', 'logo lockup sizing rule'],
+  // The check-in button (DECISIONS 31.11): brand orange, phone-sized.
+  ['.ncc-checkin-btn', 'the check-in button rule exists'],
+  ['min-height:48px', 'the check-in button is at least 48px tall'],
+  ['background:#f48120', 'the check-in button is brand orange #F48120'],
+  ['width:100%', 'the check-in button is full width'],
+  ['.ncc-checkin-note', 'the location notice is its own small muted rule'],
 ]
 
 describe('the app layout serves its stylesheet with the required declarations', () => {

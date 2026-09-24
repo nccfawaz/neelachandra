@@ -124,7 +124,7 @@ export interface AttendanceTable {
   checkout_lat: Generated<number | null>
   checkout_lng: Generated<number | null>
   checkout_far: Generated<number>
-  on_behalf_by: Generated<number | null>
+  checkin_test: Generated<number>
   marked_by: number
   marked_at: SqlDateGen
   approved_by: Generated<number | null>
@@ -513,11 +513,11 @@ export interface EmployeesTable {
   bank_ifsc: Generated<string | null>
   status: Generated<'active' | 'on_notice' | 'on_leave' | 'suspended' | 'exited'>
   muster_excluded: Generated<number>
+  checkin_test_mode: Generated<number>
   created_by: Generated<number | null>
   updated_by: Generated<number | null>
   created_at: SqlDateGen
   updated_at: SqlDateGen
-  is_muster_excluded: Generated<number>
 }
 
 export interface EnquiriesTable {

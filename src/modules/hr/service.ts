@@ -6,7 +6,7 @@ import { ConflictError, ForbiddenError, NotFoundError, UnprocessableError } from
 import { resolveApprovalLimit } from '../../lib/permissions.js'
 import { applyPct, formatPaiseAsRupees, roundPaise } from '../../lib/money.js'
 import { distanceMeters, isFarFromSite, isValidReading, type LatLng } from '../../lib/geo.js'
-import { resolveCheckinSite } from './queries.js'
+import { isCheckinTestMode, resolveCheckinSite } from './queries.js'
 import {
   addDays,
   datesBetween,
@@ -1069,6 +1069,7 @@ export async function selfCheckIn(
       reading === null ? 'unavailable' : far ? 'far' : 'ok'
     const now = nowSqlDateTime()
     const day = today()
+    const testMode = (await isCheckinTestMode(trx, input.employeeId)) ?? false
 
     const prior = await trx
       .selectFrom('attendance')
@@ -1077,8 +1078,14 @@ export async function selfCheckIn(
       .where('attendance_date', '=', day)
       .executeTakeFirst()
 
+    // Test mode (DECISIONS 31.10): the row is marked checkin_test = 1 at the
+    // write, so the HR day view can hold it out of the flagged counts and the
+    // muster can ignore it. The marking lives on the ROW, not in a session --
+    // a report built tomorrow from a row written today still knows.
     if (prior) {
-      if (prior.checkin_at !== null) throw new ConflictError('You are already checked in today.')
+      if (prior.checkin_at !== null && !testMode) {
+        throw new ConflictError('You are already checked in today.')
+      }
       await trx
         .updateTable('attendance')
         .set({
@@ -1086,6 +1093,7 @@ export async function selfCheckIn(
           checkin_lat: reading?.lat ?? null,
           checkin_lng: reading?.lng ?? null,
           checkin_far: far ? 1 : 0,
+          checkin_test: testMode ? 1 : 0,
         })
         .where('id', '=', Number(prior.id))
         .execute()
@@ -1102,6 +1110,7 @@ export async function selfCheckIn(
           checkin_lat: reading?.lat ?? null,
           checkin_lng: reading?.lng ?? null,
           checkin_far: far ? 1 : 0,
+          checkin_test: testMode ? 1 : 0,
         })
         .execute()
     }
@@ -1143,6 +1152,8 @@ export async function selfCheckOut(
   return db.transaction().execute(async (trx) => {
     await assertNotMusterExcluded(trx, input.employeeId)
 
+    const testMode = (await isCheckinTestMode(trx, input.employeeId)) ?? false
+
     const prior = await trx
       .selectFrom('attendance')
       .select(['id', 'checkin_at', 'checkout_at'])
@@ -1152,7 +1163,9 @@ export async function selfCheckOut(
     if (!prior || prior.checkin_at === null) {
       throw new UnprocessableError('You have no check-in recorded today, so there is nothing to check out of.')
     }
-    if (prior.checkout_at !== null) throw new ConflictError('You are already checked out today.')
+    if (prior.checkout_at !== null && !testMode) {
+      throw new ConflictError('You are already checked out today.')
+    }
 
     const site = await resolveCheckinSite(trx, input.siteKey)
     if (!site) throw new UnprocessableError('That site is no longer offered for check-in.')
@@ -1176,6 +1189,9 @@ export async function selfCheckOut(
         checkout_lat: reading?.lat ?? null,
         checkout_lng: reading?.lng ?? null,
         checkout_far: far ? 1 : 0,
+        // Test rows stay marked through check-out: one flag on the row for
+        // the whole day, whatever the readings on it.
+        checkin_test: testMode ? 1 : 0,
       })
       .where('id', '=', Number(prior.id))
       .execute()
