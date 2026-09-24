@@ -132,7 +132,7 @@ describe('self check-in', () => {
       siteLocationId: siteId,
       reading: NEAR,
     })
-    expect(result.far).toBe(false)
+    expect(result.outcome).toBe('ok')
 
     const row = await db
       .selectFrom('attendance')
@@ -161,7 +161,7 @@ describe('self check-in', () => {
       siteLocationId: siteId,
       reading: FAR,
     })
-    expect(result.far).toBe(true)
+    expect(result.outcome).toBe('far')
     expect(result.distanceM ?? 0).toBeGreaterThan(SITE_FAR_THRESHOLD_M)
 
     const row = await db
@@ -187,7 +187,7 @@ describe('self check-in', () => {
       siteLocationId: siteId,
       reading: FAR,
     })
-    expect(result.far).toBe(true)
+    expect(result.outcome).toBe('far')
   })
 
   it('upserts onto a day the supervisor already marked, preserving the status', async () => {
@@ -212,7 +212,7 @@ describe('self check-in', () => {
       siteLocationId: siteId,
       reading: NEAR,
     })
-    expect(result.far).toBe(false)
+    expect(result.outcome).toBe('ok')
     const row = await db
       .selectFrom('attendance')
       .select(['status', 'checkin_at'])
@@ -227,6 +227,75 @@ describe('self check-in', () => {
     await expect(
       svc.selfCheckIn(db, actor, { employeeId: workerId, siteLocationId: siteId, reading: NEAR })
     ).rejects.toThrow(/already checked in/)
+  })
+
+  it('a 0,0 reading is stored as NULL/unavailable, never as an unflagged on-site position', async () => {
+    // The production failure: (0, 0) is in range, so the first version
+    // computed a plausible distance from it and recorded the worker in the
+    // ocean with a clean on-site bill of health. The service must treat it as
+    // a failed reading: NULLs and the unavailable flag, attendance standing.
+    const seventh = await svc.createEmployee(
+      db,
+      actor,
+      employeeInput({ fullName: 'Fixture Worker Kappa', gender: 'male', fatherOrSpouseName: 'Fixture Parent Kappa' })
+    )
+    const result = await svc.selfCheckIn(db, actor, {
+      employeeId: seventh,
+      siteLocationId: siteId,
+      reading: { lat: 0, lng: 0 },
+    })
+    expect(result.outcome).toBe('unavailable')
+    expect(result.far).toBe(false)
+    expect(result.distanceM).toBeNull()
+
+    const row = await db
+      .selectFrom('attendance')
+      .select(['checkin_at', 'checkin_lat', 'checkin_lng', 'checkin_far', 'status'])
+      .where('employee_id', '=', seventh)
+      .where('attendance_date', '=', today())
+      .executeTakeFirstOrThrow()
+    expect(row.checkin_at).not.toBeNull() // the attendance stands
+    expect(row.checkin_lat).toBeNull()
+    expect(row.checkin_lng).toBeNull()
+    expect(Number(row.checkin_far)).toBe(0)
+    expect(String(row.status)).toBe('present')
+  })
+
+  it('a null reading and an out-of-range reading are also stored as NULL/unavailable', async () => {
+    const eighth = await svc.createEmployee(
+      db,
+      actor,
+      employeeInput({ fullName: 'Fixture Worker Lambda', gender: 'female', fatherOrSpouseName: 'Fixture Parent Lambda' })
+    )
+    const noPosition = await svc.selfCheckIn(db, actor, {
+      employeeId: eighth,
+      siteLocationId: siteId,
+      reading: null, // denied prompt / dead GPS
+    })
+    expect(noPosition.outcome).toBe('unavailable')
+
+    const ninth = await svc.createEmployee(
+      db,
+      actor,
+      employeeInput({ fullName: 'Fixture Worker Mu', gender: 'male', fatherOrSpouseName: 'Fixture Parent Mu' })
+    )
+    const outOfRange = await svc.selfCheckIn(db, actor, {
+      employeeId: ninth,
+      siteLocationId: siteId,
+      reading: { lat: 999, lng: -4000 },
+    })
+    expect(outOfRange.outcome).toBe('unavailable')
+
+    for (const id of [eighth, ninth]) {
+      const row = await db
+        .selectFrom('attendance')
+        .select(['checkin_lat', 'checkin_lng'])
+        .where('employee_id', '=', id)
+        .where('attendance_date', '=', today())
+        .executeTakeFirstOrThrow()
+      expect(row.checkin_lat).toBeNull()
+      expect(row.checkin_lng).toBeNull()
+    }
   })
 
   it('refuses BY NAME for a muster-excluded employee, on check-in and check-out alike', async () => {
@@ -254,7 +323,7 @@ describe('self check-out', () => {
       reading: FAR, // left the site by end of day; far checkout is still recorded
     })
 
-    expect(result.far).toBe(true)
+    expect(result.outcome).toBe('far')
     const row = await db
       .selectFrom('attendance')
       .select(['checkin_lat', 'checkin_far', 'checkout_at', 'checkout_lat', 'checkout_far'])

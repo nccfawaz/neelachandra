@@ -40,3 +40,26 @@ export function isFarFromSite(reading, site) {
         return false;
     return distanceMeters(reading, site) > SITE_FAR_THRESHOLD_M;
 }
+/**
+ * Whether a reading is a real position, not a failure wearing coordinates.
+ *
+ * (0, 0) is the Atlantic off Ghana and also what a GPS failure, a denied
+ * permission prompt, or an unset form field serialises to -- which is exactly
+ * why a 0,0 row passed every check in the first version: it is in range, so it
+ * computed a plausible distance and flagged false, recording a worker in the
+ * ocean with a clean on-site bill of health. Range bounds are strict
+ * latitudes (-90, 90) and longitudes (-180, 180); anything outside them is
+ * garbage, not a position.
+ *
+ * The caller's contract for an invalid reading is DECISIONS 31's: store NULL,
+ * set the flag to unavailable, and let the check-in stand. This function
+ * judges the reading, never the worker.
+ */
+export function isValidReading(reading) {
+    const { lat, lng } = reading;
+    if (!Number.isFinite(lat) || !Number.isFinite(lng))
+        return false;
+    if (lat === 0 && lng === 0)
+        return false;
+    return Math.abs(lat) <= 90 && Math.abs(lng) <= 180;
+}

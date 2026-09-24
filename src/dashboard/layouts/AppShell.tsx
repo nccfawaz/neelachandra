@@ -19,7 +19,7 @@ import type { CurrentUser } from '../../types.js'
  * `public/assets/js/<name>.js`; adding a component means adding a member here,
  * which is also the list of them.
  */
-export type ClientComponent = 'attendance-grid'
+export type ClientComponent = 'attendance-grid' | 'checkin-geo'
 
 export interface AppShellProps {
   title: string

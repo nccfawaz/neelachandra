@@ -5,6 +5,7 @@ import { getDb } from '../../src/db/kysely.js'
 import { closePool } from '../../src/db/pool.js'
 import { sweepFixtures, fixtureEmail } from './fixture-markers.js'
 import { hashSync } from '@node-rs/argon2'
+import * as svc from '../../src/modules/hr/service.js'
 
 /*
  * The check-in forms carry a valid CSRF token, and the POSTs succeed with it
@@ -68,6 +69,12 @@ async function tokenOf(res: Response): Promise<string> {
 }
 
 const stripSid = (j: string) => j.split('; ').filter((p) => !p.startsWith('ncc_sid=')).join('; ')
+
+/** One employee row per user (uq_emp_user), so the failure-path tests reset
+ *  today's attendance row between attempts instead of minting employees. */
+async function resetTodayRow(): Promise<void> {
+  await sql`delete from attendance where employee_id = ${employeeId}`.execute(db)
+}
 
 async function login(jar: string, email: string): Promise<string> {
   const r1 = await app.request('/login')
@@ -163,8 +170,9 @@ beforeAll(async () => {
 })
 
 afterAll(async () => {
-  // Detach the link first: users.employee_id is a FK to employees, so the
-  // employee row cannot go while the user still points at it.
+  // Detach children first: audit_log.user_id and users.employee_id both
+  // reference rows that must go before their parents.
+  await sql`delete from audit_log where user_id = ${userId}`.execute(db)
   await sql`update users set employee_id = NULL where id = ${userId}`.execute(db)
   await sql`delete from attendance where employee_id = ${employeeId}`.execute(db)
   await sql`delete from employees where id = ${employeeId}`.execute(db)
@@ -234,7 +242,71 @@ describe('the check-in forms carry a valid CSRF token', () => {
     expect(Number(row.checkin_far)).toBe(0)
   })
 
+  it('a post with EMPTY lat/lng (failed geolocation) stores NULL and the attendance stands — never 0,0', async () => {
+    // The production defect: the panel shipped static hidden inputs with no
+    // geolocation script, so every real post carried empty strings -- which
+    // the first server stored as 0,0, a valid-looking on-site position in the
+    // ocean. Empty now means unavailable: NULLs, attendance standing.
+    await resetTodayRow()
+    const jar = await login('', EMAIL)
+    const page = await app.request('/app', { headers: { cookie: jar }, redirect: 'manual' })
+    const html = await page.text()
+    const token = html.match(/name="nc_csrf" value="([^"]+)"/)?.[1] ?? ''
+    expect(token).not.toBe('')
+
+    const ok = await app.request('/app/attendance/checkin', {
+      method: 'POST',
+      redirect: 'manual',
+      headers: { 'content-type': 'application/x-www-form-urlencoded', cookie: jar },
+      body: new URLSearchParams({ siteLocationId: String(siteId), lat: '', lng: '', nc_csrf: token }).toString(),
+    })
+    expect(ok.status).toBe(303)
+    expect(ok.headers.get('location') ?? '').toContain('unavailable')
+
+    const row = await db
+      .selectFrom('attendance')
+      .select(['checkin_at', 'checkin_lat', 'checkin_lng', 'checkin_far'])
+      .where('employee_id', '=', employeeId)
+      .executeTakeFirstOrThrow()
+    expect(row.checkin_at).not.toBeNull()
+    expect(row.checkin_lat).toBeNull()
+    expect(row.checkin_lng).toBeNull()
+    expect(Number(row.checkin_far)).toBe(0)
+  })
+
+  it('a post with 0,0 also stores NULL — the Atlantic is not a site', async () => {
+    await resetTodayRow()
+    const jar = await login('', EMAIL)
+    const page = await app.request('/app', { headers: { cookie: jar }, redirect: 'manual' })
+    const html = await page.text()
+    const token = html.match(/name="nc_csrf" value="([^"]+)"/)?.[1] ?? ''
+
+    // 0,0 comes through the same route as a real reading would; the service
+    // must refuse to store it as a coordinate.
+    const ok = await app.request('/app/attendance/checkin', {
+      method: 'POST',
+      redirect: 'manual',
+      headers: { 'content-type': 'application/x-www-form-urlencoded', cookie: jar },
+      body: new URLSearchParams({ siteLocationId: String(siteId), lat: '0', lng: '0', nc_csrf: token }).toString(),
+    })
+    expect(ok.status).toBe(303)
+    const row = await db
+      .selectFrom('attendance')
+      .select(['checkin_lat', 'checkin_lng', 'checkin_far'])
+      .where('employee_id', '=', employeeId)
+      .executeTakeFirstOrThrow()
+    expect(row.checkin_lat).toBeNull()
+    expect(row.checkin_lng).toBeNull()
+    expect(Number(row.checkin_far)).toBe(0)
+  })
+
   it('after check-in, the check-out form renders and POSTs with the token', async () => {
+    await resetTodayRow()
+    await svc.selfCheckIn(db, { userId, ip: '127.0.0.1' }, {
+      employeeId,
+      siteLocationId: siteId,
+      reading: { lat: 12.9, lng: 77.6 },
+    })
     const jar = await login('', EMAIL)
     const page = await app.request('/app', { headers: { cookie: jar }, redirect: 'manual' })
     const html = await page.text()

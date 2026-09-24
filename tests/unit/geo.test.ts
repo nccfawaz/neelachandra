@@ -1,5 +1,28 @@
 import { describe, expect, it } from 'vitest'
-import { SITE_FAR_THRESHOLD_M, distanceMeters, isFarFromSite } from '../../src/lib/geo.js'
+import { SITE_FAR_THRESHOLD_M, distanceMeters, isFarFromSite, isValidReading } from '../../src/lib/geo.js'
+
+describe('isValidReading', () => {
+  it('accepts a real position', () => {
+    expect(isValidReading({ lat: 12.9716, lng: 77.5946 })).toBe(true)
+  })
+
+  it('rejects 0,0 — a GPS failure serialises there, and it is the ocean off Ghana', () => {
+    expect(isValidReading({ lat: 0, lng: 0 })).toBe(false)
+  })
+
+  it('rejects out-of-range and non-finite values', () => {
+    expect(isValidReading({ lat: 91, lng: 0 })).toBe(false)
+    expect(isValidReading({ lat: 0, lng: 181 })).toBe(false)
+    expect(isValidReading({ lat: Number.NaN, lng: 0 })).toBe(false)
+    expect(isValidReading({ lat: Number.POSITIVE_INFINITY, lng: 0 })).toBe(false)
+  })
+
+  it('accepts legitimate non-zero edge coordinates (0 latitude is real)', () => {
+    // Quito sits on the equator: lat 0 with a real longitude is valid. Only
+    // the (0,0) PAIR is the failure signature.
+    expect(isValidReading({ lat: 0, lng: -78.4678 })).toBe(true)
+  })
+})
 
 describe('distanceMeters', () => {
   it('is zero for the same point', () => {

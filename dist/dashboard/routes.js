@@ -79,7 +79,7 @@ dashboard.get('/app', requirePermission(PERMISSIONS.DASHBOARD_VIEW_OWN_KPI), asy
         .executeTakeFirst();
     const unreadCount = Number(unread?.n ?? 0);
     const checkinPanelHtml = await checkinPanel(c);
-    return c.html(_jsxs(AppShell, { title: "Dashboard", user: user, perms: perms, csrfToken: session.csrfToken, path: "/app", subtitle: greeting(user.fullName), children: [unreadCount > 0 ? (_jsxs(Alert, { tone: "warn", children: ["You have ", unreadCount, " unread ", unreadCount === 1 ? 'notification' : 'notifications', ".", ' ', _jsx("a", { href: "/app/notifications", children: "Open them" }), "."] })) : null, defs.length === 0 ? (_jsx(Alert, { tone: "warn", children: "Your account has no dashboard permissions yet. An administrator needs to assign you a role." })) : null, kpis.length > 0 ? (_jsx("div", { class: "ncc-grid ncc-grid--kpi", children: kpis.map((r) => (_jsx(Widget, { def: r.def, data: r.data }))) })) : null, panels.length > 0 ? (_jsx("div", { class: "ncc-grid ncc-grid--2", children: panels.map((r) => (_jsx(Widget, { def: r.def, data: r.data }))) })) : null, checkinPanelHtml] }));
+    return c.html(_jsxs(AppShell, { title: "Dashboard", user: user, perms: perms, csrfToken: session.csrfToken, path: "/app", clients: checkinPanelHtml ? ['checkin-geo'] : undefined, subtitle: greeting(user.fullName), children: [unreadCount > 0 ? (_jsxs(Alert, { tone: "warn", children: ["You have ", unreadCount, " unread ", unreadCount === 1 ? 'notification' : 'notifications', ".", ' ', _jsx("a", { href: "/app/notifications", children: "Open them" }), "."] })) : null, defs.length === 0 ? (_jsx(Alert, { tone: "warn", children: "Your account has no dashboard permissions yet. An administrator needs to assign you a role." })) : null, kpis.length > 0 ? (_jsx("div", { class: "ncc-grid ncc-grid--kpi", children: kpis.map((r) => (_jsx(Widget, { def: r.def, data: r.data }))) })) : null, panels.length > 0 ? (_jsx("div", { class: "ncc-grid ncc-grid--2", children: panels.map((r) => (_jsx(Widget, { def: r.def, data: r.data }))) })) : null, checkinPanelHtml] }));
 });
 function greeting(name) {
     const first = name.trim().split(/\s+/)[0] ?? name;
@@ -193,19 +193,23 @@ async function checkinPanel(c) {
 async function checkPostOf(c) {
     const body = await readBody(c);
     const siteLocationId = Number(body['siteLocationId']);
-    const lat = Number(body['lat']);
-    const lng = Number(body['lng']);
     if (!Number.isInteger(siteLocationId) || siteLocationId < 1) {
         throw new UnprocessableError('Choose the site you are checking in at.');
     }
-    // A missing or stale browser position is a reading of "unavailable", not a
-    // refusal: DECISIONS 31 means the check-in stands and the flag says what the
-    // device could not supply. The browser fills these via geolocation when it
-    // can; without it the row carries NULLs and the far view notes the gap.
-    if (Number.isNaN(lat) || Number.isNaN(lng)) {
-        throw new UnprocessableError('No position was supplied. Press the button again to retry, or continue and the reading will be flagged.');
-    }
-    return { siteLocationId, reading: { lat, lng } };
+    // A missing, blank, or failed position ("0", "0,0", garbage) is a reading
+    // of "unavailable", not a refusal and not a coordinate: the client script
+    // fills these from navigator.geolocation when the worker grants it, and a
+    // denied prompt or a dead GPS submits empty strings. The service stores
+    // NULL and the row's flag records the gap (DECISIONS 31); the check-in
+    // itself always stands.
+    const rawLat = typeof body['lat'] === 'string' ? body['lat'].trim() : '';
+    const rawLng = typeof body['lng'] === 'string' ? body['lng'].trim() : '';
+    const lat = Number(rawLat);
+    const lng = Number(rawLng);
+    const reading = rawLat === '' || rawLng === '' || Number.isNaN(lat) || Number.isNaN(lng)
+        ? null
+        : { lat, lng };
+    return { siteLocationId, reading };
 }
 const employeeIdOf = async (c) => {
     const employeeId = currentUser(c).employeeId;
@@ -214,6 +218,16 @@ const employeeIdOf = async (c) => {
     }
     return employeeId;
 };
+const checkinMessage = (r) => r.outcome === 'unavailable'
+    ? 'Checked in. No position was available from your device, so the reading is marked unavailable — your attendance stands.'
+    : r.outcome === 'far'
+        ? 'Checked in. The reading was far from the site, so it has been flagged for HR review — your attendance stands.'
+        : 'Checked in.';
+const checkoutMessage = (r) => r.outcome === 'unavailable'
+    ? 'Checked out. No position was available from your device, so the reading is marked unavailable — your attendance stands.'
+    : r.outcome === 'far'
+        ? 'Checked out. The reading was far from the site, so it has been flagged for HR review — your attendance stands.'
+        : 'Checked out.';
 dashboard.post('/app/attendance/checkin', requirePermission(PERMISSIONS.DASHBOARD_VIEW_OWN_KPI), async (c) => {
     const post = await checkPostOf(c);
     try {
@@ -222,7 +236,7 @@ dashboard.post('/app/attendance/checkin', requirePermission(PERMISSIONS.DASHBOAR
             siteLocationId: post.siteLocationId,
             reading: post.reading,
         });
-        return okRedirect(c, '/app', result.far ? 'Checked in. The reading was far from the site, so it has been flagged for HR review — your attendance stands.' : 'Checked in.');
+        return okRedirect(c, '/app', checkinMessage(result));
     }
     catch (err) {
         if (err instanceof UnprocessableError || err instanceof ConflictError) {
@@ -239,7 +253,7 @@ dashboard.post('/app/attendance/checkout', requirePermission(PERMISSIONS.DASHBOA
             siteLocationId: post.siteLocationId,
             reading: post.reading,
         });
-        return okRedirect(c, '/app', result.far ? 'Checked out. The reading was far from the site, so it has been flagged for HR review — your attendance stands.' : 'Checked out.');
+        return okRedirect(c, '/app', checkoutMessage(result));
     }
     catch (err) {
         if (err instanceof UnprocessableError || err instanceof ConflictError) {

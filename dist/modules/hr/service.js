@@ -4,7 +4,7 @@ import { nextNumber, sequenceCode } from '../../lib/numbering.js';
 import { ConflictError, ForbiddenError, NotFoundError, UnprocessableError } from '../../lib/errors.js';
 import { resolveApprovalLimit } from '../../lib/permissions.js';
 import { applyPct, formatPaiseAsRupees, roundPaise } from '../../lib/money.js';
-import { distanceMeters, isFarFromSite } from '../../lib/geo.js';
+import { distanceMeters, isFarFromSite, isValidReading } from '../../lib/geo.js';
 import { addDays, datesBetween, daysBetween, financialYear, formatMonth, isWorkingDay, monthBounds, monthOf, nowSqlDateTime, today, workingDaysBetween, } from '../../lib/dates.js';
 import { attendanceMonthState, approvedLeaveMonth, blockerCount, employeeLoginId, exitBlockers, applicableRate, } from './queries.js';
 import { uomLabel, LEAVE_DAY_STATUSES } from './schemas.js';
@@ -783,11 +783,20 @@ export async function selfCheckIn(db, actor, input) {
             .executeTakeFirst();
         if (!site)
             throw new UnprocessableError('That site location no longer exists.');
+        // An invalid reading is stored as NULL with the flag `unavailable`, never
+        // as a coordinate: a 0,0 serialises plausible-looking but is the ocean off
+        // Ghana, and the first version stored it as a clean on-site reading
+        // because the value was in range. The check-in itself always stands
+        // (DECISIONS 31.1) -- what is judged here is the reading, not the worker.
+        const reading = input.reading !== null && isValidReading(input.reading) ? input.reading : null;
         const siteCoords = site.latitude === null || site.longitude === null
             ? null
             : { lat: Number(site.latitude), lng: Number(site.longitude) };
-        const far = isFarFromSite(input.reading, siteCoords);
-        const distance = siteCoords === null ? null : Math.round(distanceMeters(input.reading, siteCoords));
+        const far = reading !== null && isFarFromSite(reading, siteCoords);
+        const distance = reading === null || siteCoords === null
+            ? null
+            : Math.round(distanceMeters(reading, siteCoords));
+        const outcome = reading === null ? 'unavailable' : far ? 'far' : 'ok';
         const now = nowSqlDateTime();
         const day = today();
         const prior = await trx
@@ -803,8 +812,8 @@ export async function selfCheckIn(db, actor, input) {
                 .updateTable('attendance')
                 .set({
                 checkin_at: now,
-                checkin_lat: input.reading.lat,
-                checkin_lng: input.reading.lng,
+                checkin_lat: reading?.lat ?? null,
+                checkin_lng: reading?.lng ?? null,
                 checkin_far: far ? 1 : 0,
             })
                 .where('id', '=', Number(prior.id))
@@ -820,8 +829,8 @@ export async function selfCheckIn(db, actor, input) {
                 overtime_hours: 0,
                 marked_by: actor.userId,
                 checkin_at: now,
-                checkin_lat: input.reading.lat,
-                checkin_lng: input.reading.lng,
+                checkin_lat: reading?.lat ?? null,
+                checkin_lng: reading?.lng ?? null,
                 checkin_far: far ? 1 : 0,
             })
                 .execute();
@@ -840,7 +849,7 @@ export async function selfCheckIn(db, actor, input) {
             },
             ip: actor.ip,
         });
-        return { far, distanceM: distance };
+        return { outcome, far, distanceM: distance };
     });
 }
 /**
@@ -874,17 +883,21 @@ export async function selfCheckOut(db, actor, input) {
             .executeTakeFirst();
         if (!site)
             throw new UnprocessableError('That site location no longer exists.');
+        const reading = input.reading !== null && isValidReading(input.reading) ? input.reading : null;
         const siteCoords = site.latitude === null || site.longitude === null
             ? null
             : { lat: Number(site.latitude), lng: Number(site.longitude) };
-        const far = isFarFromSite(input.reading, siteCoords);
-        const distance = siteCoords === null ? null : Math.round(distanceMeters(input.reading, siteCoords));
+        const far = reading !== null && isFarFromSite(reading, siteCoords);
+        const distance = reading === null || siteCoords === null
+            ? null
+            : Math.round(distanceMeters(reading, siteCoords));
+        const outcome = reading === null ? 'unavailable' : far ? 'far' : 'ok';
         await trx
             .updateTable('attendance')
             .set({
             checkout_at: nowSqlDateTime(),
-            checkout_lat: input.reading.lat,
-            checkout_lng: input.reading.lng,
+            checkout_lat: reading?.lat ?? null,
+            checkout_lng: reading?.lng ?? null,
             checkout_far: far ? 1 : 0,
         })
             .where('id', '=', Number(prior.id))
@@ -903,7 +916,7 @@ export async function selfCheckOut(db, actor, input) {
             },
             ip: actor.ip,
         });
-        return { far, distanceM: distance };
+        return { outcome, far, distanceM: distance };
     });
 }
 /**
