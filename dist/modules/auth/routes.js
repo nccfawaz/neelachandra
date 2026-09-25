@@ -47,8 +47,8 @@ function issuePreSessionToken(c) {
 function verifyPreSessionToken(c, body) {
     verifyToken(getCookie(c, PRE_SESSION_COOKIE), body['nc_csrf']);
 }
-function setSessionCookie(c, cookieValue) {
-    setCookie(c, COOKIE_NAME, cookieValue, cookieOptions(isProd));
+function setSessionCookie(c, cookieValue, ttlSeconds) {
+    setCookie(c, COOKIE_NAME, cookieValue, cookieOptions(isProd, ttlSeconds));
     deleteCookie(c, PRE_SESSION_COOKIE, { path: '/' });
 }
 /* Login ------------------------------------------------------------------ */
@@ -78,7 +78,7 @@ auth.post('/login', async (c) => {
         // not cache the response as a successful page.
         return c.html(_jsx(LoginPage, { csrfToken: issuePreSessionToken(c), email: parsed.data.email, next: parsed.data.next ? safeNext(parsed.data.next) : undefined, error: outcome.message }), outcome.kind === 'locked' ? 429 : 401);
     }
-    setSessionCookie(c, outcome.cookieValue);
+    setSessionCookie(c, outcome.cookieValue, outcome.ttlSeconds);
     // The session is half authenticated at this point. requireAuth sends the
     // user to /2fa/verify or /app/account/password as needed, so this redirect
     // does not have to know the order of those gates.
@@ -129,14 +129,14 @@ auth.post('/2fa/verify', async (c) => {
         return c.html(_jsx(TotpVerifyPage, { csrfToken: session.csrfToken, error: fieldErrors(parsed.error)['code'] }), 400);
     }
     try {
-        const { cookieValue } = await service.verifyTotp({
+        const { cookieValue, ttlSeconds } = await service.verifyTotp({
             userId: user.id,
             sessionId: session.id,
             code: parsed.data.code,
             ip: c.get('clientIp'),
             userAgent: c.req.header('user-agent') ?? null,
         });
-        setSessionCookie(c, cookieValue);
+        setSessionCookie(c, cookieValue, ttlSeconds);
         return c.redirect('/app', 302);
     }
     catch (err) {
@@ -176,7 +176,7 @@ auth.post('/2fa/enrol', async (c) => {
             ip: c.get('clientIp'),
             userAgent: c.req.header('user-agent') ?? null,
         });
-        setSessionCookie(c, result.cookieValue);
+        setSessionCookie(c, result.cookieValue, result.ttlSeconds);
         // Shown once and never again: the codes exist only as argon2 hashes from
         // here on, so there is no route that can redisplay them (spec 4.5).
         return c.html(_jsx(RecoveryCodesPage, { codes: result.recoveryCodes }));
@@ -272,7 +272,7 @@ account.post('/password', async (c) => {
         return shell(_jsx(ChangePasswordForm, { csrfToken: session.csrfToken, needsCurrent: needsCurrent, fieldError: fieldErrors(parsed.error) }), 400);
     }
     try {
-        const { cookieValue } = await service.changeOwnPassword({
+        const { cookieValue, ttlSeconds } = await service.changeOwnPassword({
             userId: user.id,
             sessionId: session.id,
             current: parsed.data.current,
@@ -280,7 +280,7 @@ account.post('/password', async (c) => {
             ip: c.get('clientIp'),
             userAgent: c.req.header('user-agent') ?? null,
         });
-        setCookie(c, COOKIE_NAME, cookieValue, cookieOptions(isProd));
+        setCookie(c, COOKIE_NAME, cookieValue, cookieOptions(isProd, ttlSeconds));
         return c.redirect('/app/account/password?saved=1', 302);
     }
     catch (err) {
