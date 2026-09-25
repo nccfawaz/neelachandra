@@ -188,7 +188,7 @@ export function DataTable<T>(props: {
     return <div class="ncc-empty">{props.empty ?? 'Nothing to show yet.'}</div>
   }
   return (
-    <div style="overflow-x:auto">
+    <div class="ncc-table-scroll">
       <table class="ncc-table">
         {props.caption ? <caption class="ncc-hint">{props.caption}</caption> : null}
         <thead>

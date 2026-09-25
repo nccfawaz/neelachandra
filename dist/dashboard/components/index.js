@@ -95,7 +95,7 @@ export function DataTable(props) {
     if (props.rows.length === 0) {
         return _jsx("div", { class: "ncc-empty", children: props.empty ?? 'Nothing to show yet.' });
     }
-    return (_jsx("div", { style: "overflow-x:auto", children: _jsxs("table", { class: "ncc-table", children: [props.caption ? _jsx("caption", { class: "ncc-hint", children: props.caption }) : null, _jsx("thead", { children: _jsx("tr", { children: props.columns.map((col) => (_jsx("th", { scope: "col", class: col.numeric ? 'ncc-num' : undefined, children: col.header }))) }) }), _jsx("tbody", { children: props.rows.map((row) => (_jsx("tr", { children: props.columns.map((col) => (_jsx("td", { class: col.numeric ? 'ncc-num' : undefined, children: col.cell(row) }))) }))) })] }) }));
+    return (_jsx("div", { class: "ncc-table-scroll", children: _jsxs("table", { class: "ncc-table", children: [props.caption ? _jsx("caption", { class: "ncc-hint", children: props.caption }) : null, _jsx("thead", { children: _jsx("tr", { children: props.columns.map((col) => (_jsx("th", { scope: "col", class: col.numeric ? 'ncc-num' : undefined, children: col.header }))) }) }), _jsx("tbody", { children: props.rows.map((row) => (_jsx("tr", { children: props.columns.map((col) => (_jsx("td", { class: col.numeric ? 'ncc-num' : undefined, children: col.cell(row) }))) }))) })] }) }));
 }
 /* Widgets ---------------------------------------------------------------- */
 export function KpiCard(props) {

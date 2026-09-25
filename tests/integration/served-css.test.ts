@@ -30,6 +30,17 @@ const DECLARATIONS: [string, string][] = [
   ['background:#f48120', 'the check-in button is brand orange #F48120'],
   ['width:100%', 'the check-in button is full width'],
   ['.ncc-checkin-note', 'the location notice is its own small muted rule'],
+  // The attendance matrix is the one table allowed to scroll sideways
+  // (DECISIONS 37.4); its sideways scroll must not be an invisible
+  // affordance. These prove the shared scroll wrapper and the CSS-only
+  // edge-shadow reach the browser.
+  ['.ncc-table-scroll', 'the shared DataTable scroll wrapper has its own rule'],
+  ['overflow-x:auto', 'the scroll wrapper clips overflow to a sideways scroll'],
+  ['radial-gradient', 'the matrix carries the edge-shadow gradient layers'],
+  [
+    'background-attachment:local,local,scroll,scroll',
+    'the matrix shadow is the pure-CSS local/scroll layering (visible only while more table is hidden)',
+  ],
 ]
 
 describe('the app layout serves its stylesheet with the required declarations', () => {

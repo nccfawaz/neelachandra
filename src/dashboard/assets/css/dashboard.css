@@ -165,6 +165,16 @@ code {
   background: var(--ncc-surface);
 }
 
+/*
+ * The shared scroll wrapper every DataTable renders around its table (one
+ * class, so a single rule reaches all of them). On its own it just clips the
+ * overflow; the visible scroll affordance is added only where a table is
+ * allowed to scroll sideways — the attendance matrix, below.
+ */
+.ncc-table-scroll {
+  overflow-x: auto;
+}
+
 .ncc-table th,
 .ncc-table td {
   text-align: left;
@@ -709,6 +719,31 @@ code {
 .ncc-matrix .ncc-table select.is-dirty {
   outline: 2px solid var(--ncc-accent);
   outline-offset: -1px;
+}
+
+/*
+ * The matrix is the one table allowed to scroll sideways instead of stacking
+ * (DECISIONS 37.4), so on a phone the sideways scroll must not be an invisible
+ * affordance: an edge shadow appears the moment there is more table hidden
+ * that way, and disappears at the end of the scroll. Pure CSS, no JS — the
+ * Komarov/Verou background-attachment technique. Two surface-coloured "cover"
+ * layers are attached `local`, so they travel with the content and sit over
+ * the shadow at each end; two `radial-gradient` shadow layers are attached
+ * `scroll`, fixed to the scroll box, so they show through only while content
+ * is hidden past that edge. The right-edge shadow is the operative one — the
+ * left edge sits under the sticky employee column, which is opaque by design.
+ */
+.ncc-matrix .ncc-table-scroll {
+  background-color: var(--ncc-surface);
+  background-image:
+    linear-gradient(to right, var(--ncc-surface), rgba(255, 255, 255, 0)),
+    linear-gradient(to left, var(--ncc-surface), rgba(255, 255, 255, 0)),
+    radial-gradient(farthest-side at 0 50%, #14181f38, #14181f00),
+    radial-gradient(farthest-side at 100% 50%, #14181f38, #14181f00);
+  background-position: 0 0, 100% 0, 0 0, 100% 0;
+  background-size: 28px 100%, 28px 100%, 16px 100%, 16px 100%;
+  background-repeat: no-repeat;
+  background-attachment: local, local, scroll, scroll;
 }
 
 @media (max-width: 900px) {

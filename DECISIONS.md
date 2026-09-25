@@ -7340,6 +7340,35 @@ Stage 2 is the "Site check-ins — every reading" table (six columns), chosen
 because at six columns it is unusable at 390px today and is the exact screen a
 supervisor opens on a phone.
 
+A table that scrolls sideways on a phone must SHOW that it does — a sideways
+scroll with no edge is an invisible affordance, and the user cannot know to
+swipe. The exception therefore carries a visible edge shadow, and it is
+pure CSS (no JS — the same no-JS rule the forms hold): the Komarov/Verou
+`background-attachment` technique layered on the shared scroll wrapper. The
+wrapper `DataTable` renders around every table now has its own class
+(`.ncc-table-scroll`, replacing an inline `overflow-x:auto` style) so a single
+rule can reach it; the shadow rule is scoped to `.ncc-matrix .ncc-table-scroll`
+alone, so no stacked table pays for it. Two surface-coloured cover layers are
+attached `local` (they travel with the content and hide the shadow at each
+end); two `radial-gradient` shadow layers are attached `scroll` (fixed to the
+scroll box), so a shadow shows only while more table is hidden past that edge.
+The right edge is the operative one — the left sits under the opaque sticky
+employee column by design.
+
+Computed evidence, Chromium at 390×844 (matrix-scroll.test.ts, which renders
+the REAL `DataTable` inside a real `.ncc-matrix` form and reads back
+`getComputedStyle`): the wrapper computes `overflow-x: auto` and genuinely
+overflows — `scrollWidth` 817 against `clientWidth` 358 — so there is real
+hidden content to point at; `background-image` computes the two
+`linear-gradient` covers plus two `radial-gradient` shadows; `background-attachment`
+computes `local, local, scroll, scroll`; `background-size` `28px 100%, 28px 100%,
+16px 100%, 16px 100%`; and the wrapper's `scrollLeft` moves off 0 when driven,
+so the scroll is live, not decorative. That the same CSS reaches the browser
+byte-for-byte is held by served-css.test.ts, which fetches the stylesheet
+through the real router and asserts `.ncc-table-scroll`, `overflow-x:auto`,
+`radial-gradient`, and `background-attachment:local,local,scroll,scroll` in the
+served (minified) bytes.
+
 ### 37.5 Minimum tap target: 48 × 48 px
 
 The minimum interactive target is **48 × 48 px**, held as a token
