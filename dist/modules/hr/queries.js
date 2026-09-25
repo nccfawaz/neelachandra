@@ -978,6 +978,10 @@ export async function selfDay(db, userId) {
         'attendance.status',
         'attendance.checkin_at',
         'attendance.checkout_at',
+        'attendance.checkin_lat',
+        'attendance.checkin_lng',
+        'attendance.checkout_lat',
+        'attendance.checkout_lng',
     ])
         .where('users.id', '=', userId)
         .where('attendance.attendance_date', '=', new Date().toISOString().slice(0, 10))

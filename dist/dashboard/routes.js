@@ -188,7 +188,21 @@ async function checkinPanel(c) {
     const [day, sites] = await Promise.all([q.selfDay(db, user.id), q.checkinSiteOptions(db)]);
     const checkedIn = day?.checkin_at != null;
     const checkedOut = day?.checkout_at != null;
-    return (_jsxs("section", { class: "ncc-card ncc-card--wide", children: [_jsxs("p", { class: "ncc-kpi__label", children: ["Site attendance \u2014 ", formatDateTime(new Date().toISOString())] }), sites.length === 0 ? (_jsx("p", { class: "ncc-muted", children: "No check-in sites are configured yet: an office location of type \"office\" or an active project with coordinates (projects.geo_lat / geo_lng) puts a site in this list." })) : (_jsxs("form", { method: "post", action: "/app/attendance/checkin", class: "ncc-inline-form", children: [_jsx("input", { type: "hidden", name: "nc_csrf", value: csrfToken }), _jsx("input", { type: "hidden", name: "lat", value: "" }), _jsx("input", { type: "hidden", name: "lng", value: "" }), checkedIn ? (_jsxs("p", { class: "ncc-checkin-time", children: ["Checked in at ", day?.checkin_at, checkedOut ? _jsxs(_Fragment, { children: [" \u00B7 checked out at ", day?.checkout_at] }) : null] })) : (_jsxs("label", { class: "ncc-field", children: ["Site", _jsx("select", { name: "siteKey", children: sites.map((s) => (_jsx("option", { value: s.key, children: s.label }))) })] })), checkedOut ? null : checkedIn ? (_jsx("button", { type: "submit", class: "ncc-checkin-btn", formaction: "/app/attendance/checkout", children: "Check out" })) : (_jsx("button", { type: "submit", class: "ncc-checkin-btn", children: "Check in" }))] })), _jsx("p", { class: "ncc-checkin-note", children: "Location is recorded when you press the button \u2014 at check-in and check-out only. Your position is not tracked at any other time." })] }));
+    /* The plain-language confirmation of the LAST press (DECISIONS 31.13).
+     * A stored coordinate means "Location recorded" with the time of that
+     * press; a timestamp with NULLs means the device gave nothing, so the
+     * line says so and the attendance stands. The handlers set ?loc= from
+     * what they stored; without it the line stays off (a first visit, a
+     * no-JS post, an error redirect). */
+    const loc = new URL(c.req.url).searchParams.get('loc');
+    let locConfirmHtml = null;
+    if (checkedIn && loc === 'stored' && day?.checkin_lat != null && day?.checkin_lng != null) {
+        locConfirmHtml = (_jsxs("p", { class: "ncc-checkin-confirm", role: "status", children: ["Location recorded at ", formatDateTime(day.checkin_at)] }));
+    }
+    else if (loc === 'unavailable') {
+        locConfirmHtml = (_jsxs("p", { class: "ncc-checkin-confirm", role: "status", children: [checkedOut ? 'Checked out' : 'Checked in', " \u2014 location unavailable. Your attendance stands; the row is marked so HR can follow up if the site matters."] }));
+    }
+    return (_jsxs("section", { class: "ncc-card ncc-card--wide", children: [_jsxs("p", { class: "ncc-kpi__label", children: ["Site attendance \u2014 ", formatDateTime(new Date().toISOString())] }), sites.length === 0 ? (_jsx("p", { class: "ncc-muted", children: "No check-in sites are configured yet: an office location of type \"office\" or an active project with coordinates (projects.geo_lat / geo_lng) puts a site in this list." })) : (_jsxs("form", { method: "post", action: "/app/attendance/checkin", class: "ncc-inline-form", children: [_jsx("input", { type: "hidden", name: "nc_csrf", value: csrfToken }), _jsx("input", { type: "hidden", name: "lat", value: "" }), _jsx("input", { type: "hidden", name: "lng", value: "" }), checkedIn ? (_jsxs("p", { class: "ncc-checkin-time", children: ["Checked in at ", day?.checkin_at, checkedOut ? _jsxs(_Fragment, { children: [" \u00B7 checked out at ", day?.checkout_at] }) : null] })) : (_jsxs("label", { class: "ncc-field", children: ["Site", _jsx("select", { name: "siteKey", children: sites.map((s) => (_jsx("option", { value: s.key, children: s.label }))) })] })), checkedOut ? null : checkedIn ? (_jsx("button", { type: "submit", class: "ncc-checkin-btn", formaction: "/app/attendance/checkout", children: "Check out" })) : (_jsx("button", { type: "submit", class: "ncc-checkin-btn", children: "Check in" })), locConfirmHtml] })), _jsx("p", { class: "ncc-checkin-note", children: "Location is recorded when you press the button \u2014 at check-in and check-out only. Your position is not tracked at any other time." })] }));
 }
 async function checkPostOf(c) {
     const body = await readBody(c);
@@ -226,6 +240,10 @@ const checkinMessage = (r) => r.outcome === 'unavailable'
     : r.outcome === 'far'
         ? 'Checked in. The reading was far from the site, so it has been flagged for HR review — your attendance stands.'
         : 'Checked in.';
+/* Which of the two things the worker needs to know happened (31.13): the
+ * reading was stored, or it was not. Travels as ?loc= so the panel itself
+ * can render the confirmation beside the button, where the eye already is. */
+const locParamOf = (r) => (r.outcome === 'unavailable' ? 'unavailable' : 'stored');
 const checkoutMessage = (r) => r.outcome === 'unavailable'
     ? 'Checked out. No position was available from your device, so the reading is marked unavailable — your attendance stands.'
     : r.outcome === 'far'
@@ -242,7 +260,7 @@ dashboard.post('/app/attendance/checkin', requirePermission(PERMISSIONS.DASHBOAR
             siteKey: post.siteKey,
             reading: post.reading,
         });
-        return okRedirect(c, '/app', checkinMessage(result));
+        return okRedirect(c, `/app?loc=${locParamOf(result)}`, checkinMessage(result));
     }
     catch (err) {
         if (err instanceof UnprocessableError || err instanceof ConflictError) {
@@ -258,7 +276,7 @@ dashboard.post('/app/attendance/checkout', requirePermission(PERMISSIONS.DASHBOA
             employeeId: await employeeIdOf(c),
             reading: post.reading,
         });
-        return okRedirect(c, '/app', checkoutMessage(result));
+        return okRedirect(c, `/app?loc=${locParamOf(result)}`, checkoutMessage(result));
     }
     catch (err) {
         if (err instanceof UnprocessableError || err instanceof ConflictError) {
