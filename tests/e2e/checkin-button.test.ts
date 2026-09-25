@@ -23,23 +23,22 @@ import { renderToString } from 'hono/jsx/dom/server'
 
 const ROOT = path.resolve(__dirname, '../..')
 
-function panelHtml(action: 'checkin' | 'checkout', withScript = true): string {
+/* geo: 'success' answers instantly, 'denied' errors instantly, 'slow' answers
+ * after ~1.5 s (so the in-flight state can be asserted), 'timeout' never
+ * answers (so the script's own 10.5 s deadline governs). */
+function panelHtml(action: 'checkin' | 'checkout', withScript = true, geo: 'success' | 'denied' | 'slow' | 'timeout' = 'success'): string {
   const buttonText = action === 'checkin' ? 'Check in' : 'Check out'
   const formAction = action === 'checkin' ? '/app/attendance/checkin' : '/app/attendance/checkout'
+  const stub = {
+    success: "Object.defineProperty(navigator, 'geolocation', { value: { getCurrentPosition: function (ok) { setTimeout(function () { ok({ coords: { latitude: 9.9312, longitude: 76.2673 } }) }, 0) } }, configurable: true })",
+    denied: "Object.defineProperty(navigator, 'geolocation', { value: { getCurrentPosition: function (ok, err) { setTimeout(function () { err({ code: 1, message: 'denied' }) }, 0) } }, configurable: true })",
+    slow: "Object.defineProperty(navigator, 'geolocation', { value: { getCurrentPosition: function (ok) { setTimeout(function () { ok({ coords: { latitude: 9.9312, longitude: 76.2673 } }) }, 1500) } }, configurable: true })",
+    timeout: "Object.defineProperty(navigator, 'geolocation', { value: { getCurrentPosition: function () { /* never answers */ } }, configurable: true })",
+  }[geo]
   return `<!doctype html><html lang="en"><head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
 <link rel="stylesheet" href="/assets/css/dashboard.css">
-<script>
-  // A fixed fake position, installed before any page script can ask.
-  Object.defineProperty(navigator, 'geolocation', {
-    value: {
-      getCurrentPosition: function (ok) {
-        setTimeout(function () { ok({ coords: { latitude: 9.9312, longitude: 76.2673 } }) }, 0)
-      },
-    },
-    configurable: true,
-  })
-</script></head>
+<script>${stub}</script></head>
 <body><main style="max-width:430px;margin:0 auto;padding:1rem">
 <section class="ncc-card ncc-card--wide">
   <p class="ncc-kpi__label">Site attendance</p>
@@ -59,10 +58,10 @@ const CONTENT_TYPES: Record<string, string> = {
   '.css': 'text/css; charset=utf-8',
 }
 
-function startServer(): Promise<{ server: Server; origin: string }> {
+function startServer(geo: 'success' | 'denied' | 'slow' | 'timeout' = 'success'): Promise<{ server: Server; origin: string }> {
   const pages = new Map<string, string>([
-    ['/', panelHtml('checkin')],
-    ['/checkout', panelHtml('checkout')],
+    ['/', panelHtml('checkin', true, geo)],
+    ['/checkout', panelHtml('checkout', true, geo)],
   ])
   const server = createServer(async (req, res) => {
     const url = new URL(req.url ?? '/', 'http://localhost')
@@ -80,6 +79,19 @@ function startServer(): Promise<{ server: Server; origin: string }> {
       } catch {
         res.writeHead(404).end('not found')
       }
+      return
+    }
+    if (req.method === 'POST') {
+      // The intercepted submit lands here. Read the body so the test can
+      // assert WHAT was posted (coords vs empty fields) and how many times.
+      let chunks: Buffer[] = []
+      req.on('data', (c) => chunks.push(c))
+      req.on('end', () => {
+        const body = Buffer.concat(chunks).toString()
+        chunks = []
+        res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
+        res.end(`<script>window.__posts = window.__posts || []; window.__posts.push(${JSON.stringify(body)})</script><p>ok</p>`)
+      })
       return
     }
     res.writeHead(404).end('not found')
@@ -171,35 +183,65 @@ describe('the check-in button as Chromium computes it on a phone', () => {
     }
   })
 
-  /* DECISIONS 31.12 (execution-order bug): on production the fields never
-   * filled even though the form and inputs were in the DOM. The script used
-   * to query the DOM immediately from a deferred head script and exit
-   * silently on a miss. These tests execute the REAL served script against
-   * the mirrored panel and assert the hidden inputs actually receive the
-   * device's position -- and that a formless page logs a warning instead of
-   * failing silently. */
-  it('fills the lat/lng hidden inputs from the served script (geolocation stubbed)', async () => {
-    const { server, origin } = await startServer()
+  /* DECISIONS 31.12/31.13: the capture happens AT THE PRESS. The script
+   * intercepts the submit, disables the button with "Getting your
+   * location…", asks once with high accuracy, and submits whether the
+   * reading arrives, the user denies, or the device times out. These tests
+   * execute the REAL served script against the mirrored panel with the
+   * geolocation stub in three moods, and the test server records the POST
+   * that must eventually leave. */
+  it('SUCCESS path: press disables the button, fills fields, submits once with the reading', async () => {
+    const { server, origin } = await startServer('slow')
     const page = await browser.newPage({ viewport: { width: 390, height: 844 } })
-    const consoleLines: string[] = []
-    page.on('console', (m) => consoleLines.push(m.text()))
     try {
       await page.goto(origin + '/', { waitUntil: 'networkidle' })
-      await page.waitForFunction(
-        () => {
-          const lat = document.querySelector('input[name="lat"]') as HTMLInputElement | null
-          const lng = document.querySelector('input[name="lng"]') as HTMLInputElement | null
-          return !!lat && !!lng && lat.value !== '' && lng.value !== ''
-        },
-        undefined,
-        { timeout: 5000 },
-      )
-      const values = await page.evaluate(() => ({
-        lat: (document.querySelector('input[name="lat"]') as HTMLInputElement).value,
-        lng: (document.querySelector('input[name="lng"]') as HTMLInputElement).value,
-      }))
-      expect(values).toEqual({ lat: '9.9312', lng: '76.2673' })
-      expect(consoleLines.some((l) => l.includes('[checkin-geo]'))).toBe(false)
+      await page.click('.ncc-checkin-btn')
+      // In flight: disabled, asking, and a second press does nothing.
+      expect(await page.$eval('.ncc-checkin-btn', (el: HTMLButtonElement) => el.disabled)).toBe(true)
+      expect(await page.textContent('.ncc-checkin-btn')).toBe('Getting your location…')
+      await page.click('.ncc-checkin-btn', { force: true }).catch(() => {})
+      // The reading arrives, the fields are filled, the submit leaves
+      // exactly once with the coordinates.
+      await page.waitForFunction(() => (window as any).__posts?.length === 1, undefined, { timeout: 10000 })
+      await page.waitForTimeout(300)
+      expect((await page.evaluate(() => (window as any).__posts?.length)) as number).toBe(1)
+      expect((await page.evaluate(() => (window as any).__posts?.[0])) as string).toMatch(/lat=9\.9312&lng=76\.2673/)
+    } finally {
+      server.close()
+      await page.close()
+    }
+  })
+
+  it('DENIAL path: press submits anyway with empty fields — attendance never refused on location', async () => {
+    const { server, origin } = await startServer('denied')
+    const page = await browser.newPage({ viewport: { width: 390, height: 844 } })
+    try {
+      await page.goto(origin + '/', { waitUntil: 'networkidle' })
+      // The stub denies instantly; the submit must leave regardless, with
+      // empty fields (the server stores NULL/unavailable).
+      await page.click('.ncc-checkin-btn')
+      await page.waitForFunction(() => (window as any).__posts?.length === 1, undefined, { timeout: 5000 })
+      const body = (await page.evaluate(() => (window as any).__posts?.[0])) as string
+      expect(body).toContain('lat=&lng=')
+    } finally {
+      server.close()
+      await page.close()
+    }
+  })
+
+  it('TIMEOUT path: the device never answers; the submit still leaves after the 10s cap', async () => {
+    const { server, origin } = await startServer('timeout')
+    const page = await browser.newPage({ viewport: { width: 390, height: 844 } })
+    try {
+      await page.goto(origin + '/', { waitUntil: 'networkidle' })
+      await page.click('.ncc-checkin-btn')
+      // Button held disabled while the device is being asked.
+      await page.waitForTimeout(500)
+      expect(await page.$eval('.ncc-checkin-btn', (el: HTMLButtonElement) => el.disabled)).toBe(true)
+      // The script's own 10 s timeout fires, the error branch submits.
+      await page.waitForFunction(() => (window as any).__posts?.length === 1, undefined, { timeout: 15000 })
+      const body = (await page.evaluate(() => (window as any).__posts?.[0])) as string
+      expect(body).toContain('lat=&lng=')
     } finally {
       server.close()
       await page.close()

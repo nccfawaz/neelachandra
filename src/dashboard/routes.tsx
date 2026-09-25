@@ -3,6 +3,7 @@ import type { AppEnv } from '../types.js'
 import { currentUser, currentSession, currentScope } from '../types.js'
 import { AppShell } from './layouts/AppShell.js'
 import type { Context } from 'hono'
+import type { Child } from 'hono/jsx'
 import { Alert, DataTable, KpiCard, Panel, type Column } from './components/index.js'
 import { requirePermission } from '../middleware/requirePermission.js'
 import { PERMISSIONS } from '../lib/permissions.js'
@@ -320,6 +321,29 @@ async function checkinPanel(c: Context<AppEnv>) {
   const checkedIn = day?.checkin_at != null
   const checkedOut = day?.checkout_at != null
 
+  /* The plain-language confirmation of the LAST press (DECISIONS 31.13).
+   * A stored coordinate means "Location recorded" with the time of that
+   * press; a timestamp with NULLs means the device gave nothing, so the
+   * line says so and the attendance stands. The handlers set ?loc= from
+   * what they stored; without it the line stays off (a first visit, a
+   * no-JS post, an error redirect). */
+  const loc = new URL(c.req.url).searchParams.get('loc')
+  let locConfirmHtml: Child | null = null
+  if (checkedIn && loc === 'stored' && day?.checkin_lat != null && day?.checkin_lng != null) {
+    locConfirmHtml = (
+      <p class="ncc-checkin-confirm" role="status">
+        Location recorded at {formatDateTime(day.checkin_at)}
+      </p>
+    )
+  } else if (loc === 'unavailable') {
+    locConfirmHtml = (
+      <p class="ncc-checkin-confirm" role="status">
+        {checkedOut ? 'Checked out' : 'Checked in'} — location unavailable. Your attendance stands;
+        the row is marked so HR can follow up if the site matters.
+      </p>
+    )
+  }
+
   return (
     <section class="ncc-card ncc-card--wide">
       <p class="ncc-kpi__label">Site attendance — {formatDateTime(new Date().toISOString())}</p>
@@ -352,6 +376,11 @@ async function checkinPanel(c: Context<AppEnv>) {
               </select>
             </label>
           )}
+          {/* Which thing actually happened at the last press (31.13): the
+              reading either landed or it did not. `?loc=` is set by the
+              check-in/check-out handlers from the outcome they stored, so
+              the worker knows without asking anyone. A plain ?ok= flash
+              (e.g. from a no-JS post without the param) is unaffected. */}
           {checkedOut ? null : checkedIn ? (
             <button type="submit" class="ncc-checkin-btn" formaction="/app/attendance/checkout">
               Check out
@@ -361,6 +390,7 @@ async function checkinPanel(c: Context<AppEnv>) {
               Check in
             </button>
           )}
+          {locConfirmHtml}
         </form>
       )}
 
@@ -420,6 +450,11 @@ const checkinMessage = (r: ReturnType<typeof svc.selfCheckIn> extends Promise<in
       ? 'Checked in. The reading was far from the site, so it has been flagged for HR review — your attendance stands.'
       : 'Checked in.'
 
+/* Which of the two things the worker needs to know happened (31.13): the
+ * reading was stored, or it was not. Travels as ?loc= so the panel itself
+ * can render the confirmation beside the button, where the eye already is. */
+const locParamOf = (r: { outcome: string }): string => (r.outcome === 'unavailable' ? 'unavailable' : 'stored')
+
 const checkoutMessage = (r: Awaited<ReturnType<typeof svc.selfCheckOut>>): string =>
   r.outcome === 'unavailable'
     ? 'Checked out. No position was available from your device, so the reading is marked unavailable — your attendance stands.'
@@ -438,7 +473,7 @@ dashboard.post('/app/attendance/checkin', requirePermission(PERMISSIONS.DASHBOAR
       siteKey: post.siteKey,
       reading: post.reading,
     })
-    return okRedirect(c, '/app', checkinMessage(result))
+    return okRedirect(c, `/app?loc=${locParamOf(result)}`, checkinMessage(result))
   } catch (err) {
     if (err instanceof UnprocessableError || err instanceof ConflictError) {
       return errRedirect(c, '/app', err.message)
@@ -454,7 +489,7 @@ dashboard.post('/app/attendance/checkout', requirePermission(PERMISSIONS.DASHBOA
       employeeId: await employeeIdOf(c),
       reading: post.reading,
     })
-    return okRedirect(c, '/app', checkoutMessage(result))
+    return okRedirect(c, `/app?loc=${locParamOf(result)}`, checkoutMessage(result))
   } catch (err) {
     if (err instanceof UnprocessableError || err instanceof ConflictError) {
       return errRedirect(c, '/app', err.message)

@@ -249,7 +249,7 @@ describe('the check-in forms carry a valid CSRF token', () => {
       body: body.toString() + `&nc_csrf=${encodeURIComponent(token)}`,
     })
     expect(ok.status).toBe(303)
-    expect(ok.headers.get('location')).toMatch(/^\/app(\?|$)/)
+    expect(ok.headers.get('location') ?? '').toMatch(/^\/app\?loc=stored(&|$)/)
 
     const row = await db
       .selectFrom('attendance')
@@ -279,7 +279,12 @@ describe('the check-in forms carry a valid CSRF token', () => {
       body: new URLSearchParams({ siteKey: 'office:' + officeId, lat: '', lng: '', nc_csrf: token }).toString(),
     })
     expect(ok.status).toBe(303)
-    expect(ok.headers.get('location') ?? '').toContain('unavailable')
+    expect(ok.headers.get('location') ?? '').toContain('loc=unavailable')
+
+    // The panel the redirect lands on states which of the two things
+    // happened (31.13): no coordinate stored, attendance standing.
+    const after = await app.request('/app?loc=unavailable', { headers: { cookie: jar } })
+    expect(await after.text()).toContain('location unavailable')
 
     const row = await db
       .selectFrom('attendance')

@@ -5,50 +5,36 @@
  * FOCUS AND COUNTS. IT DOES NOT KNOW A BUSINESS RULE. Nothing here computes
  * distance, decides what "far" means, or judges whether a reading is good
  * enough -- the server does all of that. What this file does is the one thing
- * only the browser can do: ask the device for its position and put the answer
- * in the form fields the server rendered.
+ * only the browser can do: ask the device for its position at the moment the
+ * button is pressed and put the answer in the form fields the server
+ * rendered.
  *
- * The first version of the panel shipped static hidden inputs and no script,
- * so every post carried empty lat/lng -- which the service then recorded as
- * 0,0, a plausible-looking coordinate that is actually the ocean off Ghana.
- * The server now treats an empty or invalid reading as "unavailable" and
- * stores NULL; this script is what makes the common case carry a real
- * position instead.
+ * Behaviour (DECISIONS 31.13, capture at the press):
  *
- * Behaviour:
+ *   - The button press is intercepted, the button is disabled and shows
+ *     "Getting your location…", and ONE getCurrentPosition runs with
+ *     enableHighAccuracy and a 10 s timeout.
+ *   - Success: fields are filled and the form submits.
+ *   - Timeout or denial: the form submits anyway with empty fields. The
+ *     server stores NULL, the row says unavailable, and the attendance
+ *     stands (DECISIONS 31.1) -- attendance is never refused on location.
+ *   - The button stays disabled until the submit leaves, so a double press
+ *     cannot fire two posts.
  *
- *   - Asked on page load, once. The prompt is the browser's own; denying it
- *     is fine -- the fields stay empty, the server stores NULL/unavailable,
- *     and the attendance stands (DECISIONS 31.1).
- *   - Written into the hidden inputs just before submit, not continuously.
- *     DECISIONS 31.3: location is captured at check-in and check-out only.
- *     A position fetched at page load could be minutes stale by the time the
- *     worker presses the button, so the fields are refreshed on submit -- and
- *     if the reading arrives after the form has gone, the post simply carries
- *     the stale-empty value and the row says unavailable. Honesty beats
- *     latency.
- *   - (0, 0) is never submitted. A failed GPS can serialise to exactly zero
- *     on both axes; the server would store NULL for it anyway, but the
- *     client does not send known-garbage.
+ * Execution order: the tag arrives with `defer` in <head> (AppShell), so the
+ * DOM walk waits for DOMContentLoaded and the submit hook is a DELEGATED
+ * listener on document -- a missed form retries for ~3 s and then logs a
+ * [checkin-geo] warning instead of vanishing silently.
  *
- * Execution order (hardened after a production report where the fields
- * never filled despite the form being in the DOM): the tag arrives with
- * `defer` in <head> (AppShell), which usually runs after parsing -- but the
- * first version queried the DOM immediately and exited silently when it
- * missed. Now the DOM walk waits for DOMContentLoaded, the submit hook is a
- * DELEGATED listener on document (so it survives the form being re-rendered
- * by a future htmx swap), and a short retry covers any host that strips or
- * reorders the defer. A missed form logs a console warning instead of
- * vanishing.
+ * A no-JavaScript browser is untouched: the intercept only exists when this
+ * script runs, so the plain form post still works and simply carries empty
+ * fields.
  */
 (function () {
   'use strict'
 
   var FORM_SELECTOR = 'form[action="/app/attendance/checkin"]'
 
-  var latInput = null
-  var lngInput = null
-  var latest = null
   var bound = false
 
   function isGarbage(p) {
@@ -57,56 +43,63 @@
       typeof p.lat !== 'number' || typeof p.lng !== 'number'
   }
 
-  function setFields(pos) {
-    latest = { lat: pos.coords.latitude, lng: pos.coords.longitude }
-    if (latInput) latInput.value = String(latest.lat)
-    if (lngInput) lngInput.value = String(latest.lng)
-  }
-
-  function clearFields() {
-    latest = null
-    if (latInput) latInput.value = ''
-    if (lngInput) lngInput.value = ''
-  }
-
-  function askForPosition(timeoutMs) {
-    if (!navigator.geolocation) return
-    navigator.geolocation.getCurrentPosition(
-      function (pos) {
-        if (!isGarbage({ lat: pos.coords.latitude, lng: pos.coords.longitude })) setFields(pos)
-      },
-      function () { clearFields() },
-      { enableHighAccuracy: true, timeout: timeoutMs, maximumAge: 30000 }
-    )
-  }
-
   function bind(form) {
     if (bound) return
-    latInput = form.querySelector('input[name="lat"]')
-    lngInput = form.querySelector('input[name="lng"]')
-    if (!latInput || !lngInput) {
-      console.warn('[checkin-geo] form found but lat/lng inputs missing')
+    var latInput = form.querySelector('input[name="lat"]')
+    var lngInput = form.querySelector('input[name="lng"]')
+    var button = form.querySelector('.ncc-checkin-btn')
+    if (!latInput || !lngInput || !button) {
+      console.warn('[checkin-geo] form found but lat/lng inputs or button missing')
       return
     }
     bound = true
+
     // Delegated on document, not on the form node: an htmx swap that
     // replaces the panel must not silently unhook the submit hook.
     document.addEventListener('submit', function (e) {
       var target = e.target
       if (!target || target !== form || !target.matches(FORM_SELECTOR)) return
-      if (latest && !isGarbage(latest)) {
-        // Refresh at the moment of the press (DECISIONS 31.3: the capture
-        // is this press, not the page load). Fire-and-forget: if the device
-        // answers after the form is already gone, the post carries what it
-        // had and the row says so.
-        navigator.geolocation.getCurrentPosition(setFields, clearFields, {
-          enableHighAccuracy: true, timeout: 4000, maximumAge: 5000,
-        })
+
+      // No geolocation at all (very old browser): let the plain post go
+      // through with empty fields -- the server stores NULL/unavailable.
+      if (!navigator.geolocation) return
+
+      // The capture is this press (DECISIONS 31.3), not the page load:
+      // intercept, disable, ask, then submit with whatever arrived.
+      e.preventDefault()
+      button.disabled = true
+      button.textContent = 'Getting your location…'
+
+      var settled = false
+      function go() {
+        if (settled) return
+        settled = true
+        clearTimeout(deadline)
+        form.submit() // bypasses the intercept: this IS the submit
       }
-      // Empty or garbage fields are left as they are: the server stores
-      // NULL/unavailable and the attendance stands.
+
+      // Our own deadline, not just the API's timeout option: a device or
+      // wrapper that never calls back must not leave the button disabled
+      // forever. The worker submits with empty fields instead.
+      var deadline = setTimeout(go, 10500)
+
+      navigator.geolocation.getCurrentPosition(
+        function (pos) {
+          var reading = { lat: pos.coords.latitude, lng: pos.coords.longitude }
+          if (!isGarbage(reading)) {
+            latInput.value = String(reading.lat)
+            lngInput.value = String(reading.lng)
+          }
+          go()
+        },
+        function () {
+          // Denial or timeout: submit anyway with empty fields. The server
+          // stores NULL and the row says unavailable; attendance stands.
+          go()
+        },
+        { enableHighAccuracy: true, timeout: 10000, maximumAge: 5000 }
+      )
     })
-    askForPosition(10000)
   }
 
   function tryBind() {

@@ -757,6 +757,21 @@ code {
   border-color: #d96f15;
 }
 
+/* The press result, in words (DECISIONS 31.13): "Location recorded at
+ * HH:MM" or "Checked in — location unavailable". role=status so a screen
+ * reader announces it. Sits beside the button, where the eye already is. */
+.ncc-checkin-confirm {
+  margin: 0.75rem 0 0;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--ncc-text);
+}
+
+.ncc-checkin-btn:disabled {
+  opacity: 0.7;
+  cursor: progress;
+}
+
 .ncc-checkin-time {
   margin: 0.5rem 0 0;
   font-size: 0.95rem;

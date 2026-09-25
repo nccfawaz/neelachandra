@@ -1336,6 +1336,11 @@ export interface SelfDayRow {
   status: string | null
   checkin_at: string | null
   checkout_at: string | null
+  /** NULL with a timestamp means that reading was unavailable (31.13). */
+  checkin_lat: number | string | null
+  checkin_lng: number | string | null
+  checkout_lat: number | string | null
+  checkout_lng: number | string | null
 }
 
 export async function selfDay(db: Queryable, userId: number): Promise<SelfDayRow | undefined> {
@@ -1357,6 +1362,10 @@ export async function selfDay(db: Queryable, userId: number): Promise<SelfDayRow
       'attendance.status',
       'attendance.checkin_at',
       'attendance.checkout_at',
+      'attendance.checkin_lat',
+      'attendance.checkin_lng',
+      'attendance.checkout_lat',
+      'attendance.checkout_lng',
     ])
     .where('users.id', '=', userId)
     .where('attendance.attendance_date', '=', new Date().toISOString().slice(0, 10))
