@@ -6,7 +6,7 @@ import { UnprocessableError } from '../../lib/errors.js'
 import { inviteEmail, lockoutAlertEmail, resetEmail, send } from '../../lib/mailer.js'
 import { assertPasswordPolicy, burnVerify, hashPassword, verifyPassword } from '../../lib/password.js'
 import { RULES, clearBucket, hit } from '../../lib/ratelimit.js'
-import { createSession, destroyAllUserSessions, rotateSession } from '../../lib/session.js'
+import { createSession, destroyAllUserSessions, rotateSession, isStaffSession, ttlFor } from '../../lib/session.js'
 import {
   consumeRecoveryCode,
   decryptSecret,
@@ -40,7 +40,7 @@ const LONG_WINDOW_LIMIT = 10
 const LONG_LOCK_HOURS = 24
 
 export type LoginOutcome =
-  | { kind: 'ok'; cookieValue: string; userId: number; needsTotp: boolean; mustChangePassword: boolean }
+  | { kind: 'ok'; cookieValue: string; ttlSeconds: number; userId: number; needsTotp: boolean; mustChangePassword: boolean }
   | { kind: 'failed'; message: string }
   | { kind: 'locked'; message: string }
 
@@ -161,12 +161,19 @@ export async function login(opts: {
   await q.recordAttempt(db, { email: opts.email, ip: opts.ip, succeeded: true })
   await q.markLoginSuccess(db, user.id, opts.ip)
 
+  // Flavour from roles (DECISIONS 34.1): the field roles get the 30-day
+  // rolling session, the office roles the absolute 12 h. Read here, at the
+  // moment the session is born, so no per-user flag ever has to be kept in
+  // step with the role editor.
+  const staff = isStaffSession(await userRoleKeys(db, user.id))
+
   const session = await createSession(db, {
     userId: user.id,
     ip: opts.ip,
     userAgent: opts.userAgent,
     // Half authenticated until TOTP passes (spec 6.1).
     totpVerified: false,
+    isStaff: staff,
   })
 
   await db.transaction().execute(async (trx) => {
@@ -182,6 +189,9 @@ export async function login(opts: {
   return {
     kind: 'ok',
     cookieValue: session.cookieValue,
+    // The cookie's max-age must match the row's flavour (34.1): 30 days for
+    // staff, 12 hours absolute for office.
+    ttlSeconds: ttlFor(staff),
     userId: user.id,
     needsTotp: user.totp_confirmed_at !== null,
     mustChangePassword: user.must_change_password === 1,
@@ -343,7 +353,7 @@ export async function changeOwnPassword(opts: {
   password: string
   ip: string | null
   userAgent: string | null
-}): Promise<{ cookieValue: string }> {
+}): Promise<{ cookieValue: string; ttlSeconds: number }> {
   const db = getDb()
   const user = await q.findUserById(db, opts.userId)
   if (!user) throw new UnprocessableError('Account not found.')
@@ -364,6 +374,8 @@ export async function changeOwnPassword(opts: {
     const rotated = await rotateSession(trx, opts.sessionId, {
       ip: opts.ip,
       userAgent: opts.userAgent,
+      // Password change: flavour recomputed from current roles (34.1).
+      isStaff: isStaffSession(await userRoleKeys(trx, opts.userId)),
     })
     await destroyAllUserSessions(trx, opts.userId, rotated.sessionId)
     await writeAudit(trx, {
@@ -373,11 +385,22 @@ export async function changeOwnPassword(opts: {
       entityId: opts.userId,
       ip: opts.ip,
     })
-    return { cookieValue: rotated.cookieValue }
+    return { cookieValue: rotated.cookieValue, ttlSeconds: ttlFor(rotated.isStaffFlavour) }
   })
 }
 
 /* TOTP ------------------------------------------------------------------- */
+
+/** The role keys a user holds right now -- the session-flavour input (34.1). */
+async function userRoleKeys(db: Db, userId: number): Promise<string[]> {
+  const rows = await db
+    .selectFrom('user_roles')
+    .innerJoin('roles', 'roles.id', 'user_roles.role_id')
+    .select('roles.key as roleKey')
+    .where('user_roles.user_id', '=', userId)
+    .execute()
+  return rows.map((r) => String(r.roleKey))
+}
 
 export interface EnrolmentOffer {
   secret: string
@@ -411,7 +434,7 @@ export async function confirmEnrolment(opts: {
   code: string
   ip: string | null
   userAgent: string | null
-}): Promise<{ recoveryCodes: string[]; cookieValue: string }> {
+}): Promise<{ recoveryCodes: string[]; cookieValue: string; ttlSeconds: number }> {
   const db = getDb()
   const user = await q.findUserById(db, opts.userId)
   if (!user || user.totp_secret === null) {
@@ -425,14 +448,17 @@ export async function confirmEnrolment(opts: {
 
   const codes = generateRecoveryCodes(10)
 
-  const cookieValue = await db.transaction().execute(async (trx) => {
+  const txResult = await db.transaction().execute(async (trx) => {
     await q.setTotpSecret(trx, opts.userId, user.totp_secret, true)
     await storeRecoveryCodes(trx, opts.userId, codes)
     const rotated = await rotateSession(trx, opts.sessionId, {
       totpVerified: true,
       ip: opts.ip,
       userAgent: opts.userAgent,
+      // Flavour recomputed from roles at the moment of rotation (34.1).
+      isStaff: isStaffSession(await userRoleKeys(trx, opts.userId)),
     })
+    const ttlSeconds = ttlFor(rotated.isStaffFlavour)
     await writeAudit(trx, {
       userId: opts.userId,
       action: 'auth.totp_enrolled',
@@ -440,10 +466,10 @@ export async function confirmEnrolment(opts: {
       entityId: opts.userId,
       ip: opts.ip,
     })
-    return rotated.cookieValue
+    return { recoveryCodes: codes, cookieValue: rotated.cookieValue, ttlSeconds }
   })
 
-  return { recoveryCodes: codes, cookieValue }
+  return txResult
 }
 
 export async function verifyTotp(opts: {
@@ -452,7 +478,7 @@ export async function verifyTotp(opts: {
   code: string
   ip: string | null
   userAgent: string | null
-}): Promise<{ cookieValue: string }> {
+}): Promise<{ cookieValue: string; ttlSeconds: number }> {
   const db = getDb()
 
   const limited = await hit(db, RULES.totpByUser(opts.userId))
@@ -492,6 +518,8 @@ export async function verifyTotp(opts: {
       totpVerified: true,
       ip: opts.ip,
       userAgent: opts.userAgent,
+      // Flavour recomputed from roles at the moment of rotation (34.1).
+      isStaff: isStaffSession(await userRoleKeys(trx, opts.userId)),
     })
     await writeAudit(trx, {
       userId: opts.userId,
@@ -500,6 +528,6 @@ export async function verifyTotp(opts: {
       entityId: opts.userId,
       ip: opts.ip,
     })
-    return { cookieValue: rotated.cookieValue }
+    return { cookieValue: rotated.cookieValue, ttlSeconds: ttlFor(rotated.isStaffFlavour) }
   })
 }

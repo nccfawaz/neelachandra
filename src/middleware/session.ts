@@ -1,7 +1,16 @@
 import type { MiddlewareHandler } from 'hono'
-import { getCookie, deleteCookie } from 'hono/cookie'
+import { getCookie, deleteCookie, setCookie } from 'hono/cookie'
 import { getDb } from '../db/kysely.js'
-import { COOKIE_NAME, loadSession, touchSession, cookieOptions } from '../lib/session.js'
+import {
+  COOKIE_NAME,
+  loadSession,
+  touchSession,
+  extendSession,
+  dueForRenewal,
+  isStaffSession,
+  STAFF_SESSION_TTL_SECONDS,
+  cookieOptions,
+} from '../lib/session.js'
 import { loadEffectivePermissions } from '../lib/permissions.js'
 import { randomToken } from '../lib/crypto.js'
 import { isProd } from '../env.js'
@@ -34,6 +43,7 @@ function readClientIp(c: Parameters<MiddlewareHandler<AppEnv>>[0]): string | nul
 // screen and keeps the write rate off the hot path.
 const TOUCH_INTERVAL_MS = 60_000
 const lastTouched = new Map<string, number>()
+const lastRenewal = new Map<string, number>()
 
 export function sessionMiddleware(): MiddlewareHandler<AppEnv> {
   return async (c, next) => {
@@ -113,6 +123,31 @@ export function sessionMiddleware(): MiddlewareHandler<AppEnv> {
       lastTouched.set(session.id, now)
       if (lastTouched.size > 500) lastTouched.clear()
       await touchSession(db, session.id)
+    }
+
+    /* Sliding renewal (DECISIONS 34.1): ONLY for the staff flavour, ONLY
+     * once the session is past half its 30-day life. The office flavour
+     * keeps its absolute 12 h -- the shared-computer risk the original spec
+     * cites. The flavour is recomputed from the SAME roles this middleware
+     * already loaded, so no extra query and no stored flag to keep in step:
+     * a role change takes effect on the very next request. Below half left,
+     * push expires_at a fresh 30 days and rewrite the cookie so the
+     * BROWSER's clock extends too (a DB row that outlives its cookie would
+     * log the worker out anyway). At most one renewal per ~15 days per
+     * active session, so this stays off the hot path. */
+    const staff = isStaffSession(effective.roleKeys)
+    if (
+      staff &&
+      dueForRenewal(session.expiresAtMs, STAFF_SESSION_TTL_SECONDS, now) &&
+      now - (lastRenewal.get(session.id) ?? 0) > TOUCH_INTERVAL_MS
+    ) {
+      const expiresAt = await extendSession(db, session.id, STAFF_SESSION_TTL_SECONDS)
+      lastRenewal.set(session.id, now)
+      if (lastRenewal.size > 500) lastRenewal.clear()
+      setCookie(c, COOKIE_NAME, cookie, {
+        ...cookieOptions(isProd, STAFF_SESSION_TTL_SECONDS),
+        expires: new Date(expiresAt.replace(' ', 'T') + '+05:30'),
+      })
     }
 
     return next()

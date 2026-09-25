@@ -62,6 +62,18 @@ for (const file of [
         return found ?? c.notFound();
     });
 }
+/* The /app service worker (34.2). Served at the root with
+ * Service-Worker-Allowed: / because a script under /assets/ may otherwise
+ * claim only a scope inside /assets/, and Chrome needs the worker to cover
+ * /app for the install prompt. Caches nothing (the file itself is
+ * network-only); the day cache is fine for the script bytes. */
+publicSite.get('/app-sw.js', async (c) => {
+    const found = await serve(c, '/public/assets/app-sw.js', ASSET_CACHE);
+    if (!found)
+        return c.notFound();
+    c.header('Service-Worker-Allowed', '/');
+    return found;
+});
 /* The twelve error documents ---------------------------------------------- */
 // Served at their extensionless URL, as the ErrorDocument lines in .htaccess
 // name them, from the same built files the error handler reads. They are

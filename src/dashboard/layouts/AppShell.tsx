@@ -67,6 +67,14 @@ export function AppShell(props: AppShellProps) {
           rel="stylesheet"
         />
         <link rel="stylesheet" href="/assets/css/dashboard.css" />
+        {/* Installable to a phone home screen (DECISIONS 34.2): the manifest
+            makes Chrome offer "Add to home screen" with standalone display
+            and the brand theme; the service worker registration (below, at
+            the end of body) is what turns that offer into a full install.
+            The public site keeps its own site.webmanifest, untouched. */}
+        <link rel="manifest" href="/assets/app-manifest.webmanifest" />
+        <meta name="theme-color" content="#f48120" />
+        <link rel="apple-touch-icon" href="/assets/icons/icon-180.png" />
         <script src="/assets/vendor/htmx.min.js" defer></script>
         {/* BEFORE Alpine and also deferred, which is load bearing. This build
             of Alpine does not wait for DOMContentLoaded: its module tail calls
@@ -165,6 +173,15 @@ export function AppShell(props: AppShellProps) {
             </main>
           </div>
         </div>
+        {/* Service worker for installability only (DECISIONS 34.2): it caches
+            NOTHING -- app pages must never be served stale. Registration sits
+            at the end of body so it never delays first paint. */}
+        <script
+          dangerouslySetInnerHTML={{
+            __html:
+              "if ('serviceWorker' in navigator) { window.addEventListener('load', function () { navigator.serviceWorker.register('/app-sw.js', { scope: '/' }) }) }",
+          }}
+        />
       </body>
     </html>
   )
