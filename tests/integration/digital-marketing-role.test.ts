@@ -83,4 +83,46 @@ describe('the digital_marketing role (35.1)', () => {
     const approvals = rows.rows.filter((r) => /approv|pay|write_off|invoice_|payment/.test(r.key))
     expect(approvals, `approval-shaped grants found: ${approvals.map((f) => f.key).join(', ')}`).toEqual([])
   })
+
+  it('has a designation row, following the 029 pattern (35.2)', async () => {
+    const rows = await sql<{ code: string; name: string }>`
+      select dn.code, dn.name from designations dn
+      where dn.code = 'MKT-EXEC'
+    `.execute(db)
+    expect(rows.rows, 'migration 035 must add the MKT-EXEC designation').toHaveLength(1)
+    expect(rows.rows[0]!.name).toBe('Digital Marketing Executive')
+  })
+
+  it('every system role resolves to at least one plausible designation department', async () => {
+    /* The 35.2 audit: every role minted by a migration must have a matching
+     * designation NAME (exact or alias) so an HR operator creating the
+     * employee behind that role can pick a truthful title. This is the test
+     * that would have caught 034 shipping without its designation. */
+    const alias: Record<string, string[]> = {
+      owner: ['Founder'],
+      admin: ['Operations Analyst', 'Technical Advisor', 'Founder'],
+      ops_manager: ['Operations Analyst'],
+      project_manager: ['Project Manager'],
+      site_supervisor: ['Site Supervisor'],
+      accounts_manager: ['Accounts Manager'],
+      hr_manager: ['HR Manager'],
+      sales_exec: ['Sales Executive'],
+      site_engineer: ['Site Engineer'],
+      architect: ['Architect'],
+      procurement_executive: ['Procurement Executive', 'Procurement Lead', 'Storekeeper'],
+      qa_qc: ['QA/QC/QS'],
+      digital_marketing: ['Digital Marketing Executive'],
+    }
+    const desigs = await sql<{ code: string; name: string }>`select code, name from designations`.execute(db)
+    const names = desigs.rows.map((d) => d.name)
+    const roles = await sql<{ key: string }>`select \`key\` as \`key\` from roles where is_system = 1`.execute(db)
+    for (const role of roles.rows) {
+      const expected = alias[role.key]
+      expect(expected, `role ${role.key} must appear in the alias table`).toBeDefined()
+      expect(
+        expected!.some((n) => names.includes(n)),
+        `role ${role.key} has no designation row among ${JSON.stringify(expected)}`,
+      ).toBe(true)
+    }
+  })
 })
