@@ -21,6 +21,19 @@
  *   - The button stays disabled until the submit leaves, so a double press
  *     cannot fire two posts.
  *
+ * WHICH ENDPOINT (36.2, the production check-out failure): the panel is ONE
+ * form whose action is the CHECK-IN endpoint; the check-out button overrides
+ * it with formaction. form.submit() ignores formaction entirely -- it posts
+ * the form's own action -- so a check-out press captured by the old code
+ * posted to .../checkin, and the two requests raced: the browser cancelled
+ * the in-flight one (shown as "(canceled)" in the network tab) and the page
+ * reloaded with nothing saved. The fix routes the programmatic submit
+ * THROUGH the pressed button: form.requestSubmit(button), which honours
+ * formaction exactly as a real click would. The listener also guards on the
+ * event's submitter, so the re-entrant submit event the requestSubmit fires
+ * is recognized as ours and released -- one press, one POST, to the right
+ * endpoint.
+ *
  * Execution order: the tag arrives with `defer` in <head> (AppShell), so the
  * DOM walk waits for DOMContentLoaded and the submit hook is a DELEGATED
  * listener on document -- a missed form retries for ~3 s and then logs a
@@ -60,6 +73,11 @@
       var target = e.target
       if (!target || target !== form || !target.matches(FORM_SELECTOR)) return
 
+      // Our own re-entrant submit (fired by requestSubmit below) carries a
+      // marker property on the submitter: release it untouched so exactly
+      // one POST leaves, to the endpoint the pressed button names.
+      if (e.submitter && e.submitter.__nccGeoSubmit) return
+
       // No geolocation at all (very old browser): let the plain post go
       // through with empty fields -- the server stores NULL/unavailable.
       if (!navigator.geolocation) return
@@ -67,15 +85,27 @@
       // The capture is this press (DECISIONS 31.3), not the page load:
       // intercept, disable, ask, then submit with whatever arrived.
       e.preventDefault()
-      button.disabled = true
-      button.textContent = 'Getting your location…'
+      // Remember WHICH button the worker pressed: the check-out button's
+      // formaction must decide the endpoint, not the form's action.
+      var submitter = e.submitter === button ? button : e.submitter || button
+      submitter.disabled = true
+      submitter.textContent = 'Getting your location…'
 
       var settled = false
       function go() {
         if (settled) return
         settled = true
         clearTimeout(deadline)
-        form.submit() // bypasses the intercept: this IS the submit
+        // requestSubmit, not submit: it fires a NEW submit event (with the
+        // submitter attached, and our marker on the button so this handler
+        // releases it) and HONOURS the button's formaction -- which plain
+        // form.submit() silently ignores. That mismatch is exactly why the
+        // production check-out posted to the check-in endpoint and raced
+        // itself into "(canceled)".
+        if (submitter.__nccGeoSubmit === undefined) {
+          try { submitter.__nccGeoSubmit = true } catch (err) { /* frozen */ }
+        }
+        form.requestSubmit(submitter)
       }
 
       // Our own deadline, not just the API's timeout option: a device or

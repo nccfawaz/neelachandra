@@ -28,7 +28,8 @@ const ROOT = path.resolve(__dirname, '../..')
  * answers (so the script's own 10.5 s deadline governs). */
 function panelHtml(action: 'checkin' | 'checkout', withScript = true, geo: 'success' | 'denied' | 'slow' | 'timeout' = 'success'): string {
   const buttonText = action === 'checkin' ? 'Check in' : 'Check out'
-  const formAction = action === 'checkin' ? '/app/attendance/checkin' : '/app/attendance/checkout'
+  // 36.2: mirror the REAL panel — one form, action always the check-in
+  // endpoint, and the check-out button overriding it with formaction.
   const stub = {
     success: "Object.defineProperty(navigator, 'geolocation', { value: { getCurrentPosition: function (ok) { setTimeout(function () { ok({ coords: { latitude: 9.9312, longitude: 76.2673 } }) }, 0) } }, configurable: true })",
     denied: "Object.defineProperty(navigator, 'geolocation', { value: { getCurrentPosition: function (ok, err) { setTimeout(function () { err({ code: 1, message: 'denied' }) }, 0) } }, configurable: true })",
@@ -42,11 +43,11 @@ function panelHtml(action: 'checkin' | 'checkout', withScript = true, geo: 'succ
 <body><main style="max-width:430px;margin:0 auto;padding:1rem">
 <section class="ncc-card ncc-card--wide">
   <p class="ncc-kpi__label">Site attendance</p>
-  <form method="post" action="${formAction}" class="ncc-inline-form">
+  <form method="post" action="/app/attendance/checkin" class="ncc-inline-form">
     <input type="hidden" name="nc_csrf" value="fixture">
     <input type="hidden" name="lat" value=""><input type="hidden" name="lng" value="">
     ${action === 'checkin' ? '<label class="ncc-field">Site<select name="siteKey"><option>OFFICE — Head office</option></select></label>' : '<p class="ncc-checkin-time">Checked in at 2026-09-24 08:12:44</p>'}
-    <button type="submit" class="ncc-checkin-btn">${buttonText}</button>
+    ${action === 'checkin' ? '<button type="submit" class="ncc-checkin-btn">Check in</button>' : '<button type="submit" class="ncc-checkin-btn" formaction="/app/attendance/checkout">Check out</button>'}
   </form>
   <p class="ncc-checkin-note">Location is recorded when you press the button — at check-in and check-out only. Your position is not tracked at any other time.</p>
 </section>
@@ -90,7 +91,7 @@ function startServer(geo: 'success' | 'denied' | 'slow' | 'timeout' = 'success')
         const body = Buffer.concat(chunks).toString()
         chunks = []
         res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
-        res.end(`<script>window.__posts = window.__posts || []; window.__posts.push(${JSON.stringify(body)})</script><p>ok</p>`)
+        res.end(`<script>window.__posts = window.__posts || []; window.__posts.push(${JSON.stringify(url.pathname + ' ' + body)})</script><p>ok</p>`)
       })
       return
     }
@@ -242,6 +243,39 @@ describe('the check-in button as Chromium computes it on a phone', () => {
       await page.waitForFunction(() => (window as any).__posts?.length === 1, undefined, { timeout: 15000 })
       const body = (await page.evaluate(() => (window as any).__posts?.[0])) as string
       expect(body).toContain('lat=&lng=')
+    } finally {
+      server.close()
+      await page.close()
+    }
+  })
+
+  /* 36.2 (the production check-out failure): the panel is ONE form whose
+   * action is the CHECK-IN endpoint; the check-out button overrides it with
+   * formaction. form.submit() ignores formaction, so the old code posted the
+   * check-out press to .../checkin and the two requests raced — the browser
+   * cancelled the in-flight one ("(canceled)") and nothing saved. This test
+   * presses the CHECK-OUT button and asserts exactly ONE POST leaves AND
+   * that it went to the checkout endpoint, not the form's default action. */
+  it('CHECK-OUT path: one POST per press, and it lands on the checkout endpoint (formaction honoured)', async () => {
+    const { server, origin } = await startServer('slow')
+    const page = await browser.newPage({ viewport: { width: 390, height: 844 } })
+    const postTargets: string[] = []
+    try {
+      page.on('request', (req) => {
+        if (req.method() === 'POST' && req.url().includes('/app/attendance')) postTargets.push(req.url())
+      })
+      await page.goto(origin + '/checkout', { waitUntil: 'networkidle' })
+      await page.click('.ncc-checkin-btn')
+      expect(await page.textContent('.ncc-checkin-btn')).toBe('Getting your location…')
+      await page.waitForFunction(() => (window as any).__posts?.length === 1, undefined, { timeout: 10000 })
+      await page.waitForTimeout(300)
+      // One POST total — a second would have cancelled the first in flight.
+      expect((await page.evaluate(() => (window as any).__posts?.length)) as number).toBe(1)
+      // And it went to CHECKOUT, not the form's action (checkin).
+      expect(postTargets).toHaveLength(1)
+      expect(postTargets[0]).toContain('/app/attendance/checkout')
+      const recorded = (await page.evaluate(() => (window as any).__posts?.[0])) as string
+      expect(recorded.startsWith('/app/attendance/checkout'), 'the POST must land on the checkout endpoint, not the form\'s checkin action').toBe(true)
     } finally {
       server.close()
       await page.close()
