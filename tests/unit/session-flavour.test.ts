@@ -66,12 +66,14 @@ describe('sliding renewal at half-life (34.1)', () => {
     expect(dueForRenewal(now + STAFF_SESSION_TTL_SECONDS * 1000, STAFF_SESSION_TTL_SECONDS, now)).toBe(false)
   })
 
-  it('a 12-hour office session is never due -- the check uses the STAFF ttl', () => {
-    // Even with only 2 hours left (well past half of 12h), an office session
-    // compared against the 30-day staff TTL is far inside half-life and the
-    // middleware only ever calls the check with the staff TTL. This pins the
-    // pairing that keeps the office flavour absolute.
-    expect(dueForRenewal(now + 2 * 60 * 60 * 1000, STAFF_SESSION_TTL_SECONDS, now)).toBe(false)
+  it('an office session near expiry is excluded by the staff guard, not the clock', () => {
+    // The middleware renews only when isStaffSession(roleKeys) is true; the
+    // clock check alone is flavour-blind (2h left is well inside half of
+    // 30 days). The integration suite pins that the OFFICE session's row is
+    // never extended; this pins that an office role key is what gates it.
+    expect(isStaffSession(['admin'])).toBe(false)
+    // And the clock, had it been a staff session, WOULD be due:
+    expect(dueForRenewal(now + 2 * 60 * 60 * 1000, STAFF_SESSION_TTL_SECONDS, now)).toBe(true)
   })
 
   it('an unparsable expiry never renews (fail closed)', () => {

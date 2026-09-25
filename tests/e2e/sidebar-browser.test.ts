@@ -57,6 +57,18 @@ function startServer(): Promise<{ server: Server; origin: string }> {
       res.end(html)
       return
     }
+    // /app-sw.js mirrors the production root route (Service-Worker-Allowed
+    // is not needed here -- the fixture server has no scope restriction).
+    if (url.pathname === '/app-sw.js') {
+      try {
+        const body = await readFile(path.join(ROOT, 'public/assets/app-sw.js'))
+        res.writeHead(200, { 'content-type': 'text/javascript; charset=utf-8' })
+        res.end(body)
+      } catch {
+        res.writeHead(404).end('not found')
+      }
+      return
+    }
     if (url.pathname.startsWith('/assets/') || url.pathname === '/favicon.ico') {
       try {
         const file = path.join(ROOT, 'public', url.pathname.replace(/^\/+/, ''))
