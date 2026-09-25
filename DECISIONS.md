@@ -7203,3 +7203,196 @@ measures AHEAD only — origin ahead of HEAD is a pull, and failing on it
 would push people towards force-pushes. Red-proven on 8207358: detached
 five commits behind, the gate fails with the commit counts and both hashes
 in the message.
+
+**Amendment (2026-09-25):** the comparison was against `origin/main`
+specifically. That is correct only while work happens on main; on a feature
+branch a local branch is always ahead of origin/main by construction, so the
+gate went red for every branch and the only way to green it would have been
+to waive it — which defeats the tripwire. The gate now follows the branch's
+OWN upstream: `git rev-list --count @{upstream}..HEAD` and `@{upstream} ===
+HEAD`, resolved via `git rev-parse --abbrev-ref --symbolic-full-name
+@{upstream}`. The guarantee is unchanged and now holds at every width —
+every gate-green commit has been pushed to the branch it belongs to. On main
+`@{upstream}` IS origin/main, so nothing changes there. The skip condition
+moves with it: it skips when the branch has no upstream configured (never
+pushed, detached HEAD, fresh clone) — the same legitimate-state carve-out,
+and the fix for a skip (`git push -u`) is the very act the gate enforces.
+Everything else is unchanged: fetches nothing, measures ahead only. Re-proven
+red on branch `mobile-redesign` by an unpushed throwaway commit (ahead 1),
+then green after `git push -u`. The current behaviour is held by
+`tests/unit/unpushed-work.test.ts`.
+
+### 31.10 Check-in test mode is a per-employee flag on the row (2026-09-24)
+
+Testing a GPS fence needs repeated check-ins on one day, which the one-row-per-
+day rule refuses. The switch is a BOOLEAN ON THE EMPLOYEE ROW
+(employees.checkin_test_mode), not an env var and not a hardcoded email: who
+is testing is a property of the person HR sets, it survives redeploys, and it
+works on a phone hotspot where env vars do not reach. Under the flag, each
+attempt overwrites the previous reading instead of being refused; every row
+written under it carries attendance.checkin_test = 1, so the marking lives on
+the row itself and a report built tomorrow still knows. Test rows are held
+out of the day view's flagged counts and shown with a TEST badge. A worker
+without the flag gets exactly one row per day — pinned by test.
+
+### 31.11 The check-in button, and a day view for a person (2026-09-24)
+
+The button is full width of its card, at least 48 px tall, brand orange
+#F48120, pressed on a phone at a gate. Exactly one action shows at a time —
+Check in before, Check out after — with the check-in time as the status line
+once marked. The location notice sits below in small muted text. Computed
+values are asserted in Chromium (tests/e2e/checkin-button.test.ts) and the
+declarations are asserted against the SERVED stylesheet
+(served-css.test.ts), per the 29.60 rule that a markup test alone proves
+nothing about what the browser downloads.
+
+The HR day view is renamed "Site check-ins" and answers three questions in
+plain language: who is in today (with times), who is missing (no check-in
+yet), and which readings need a look (FAR and no-reading badges, Google Maps
+links on every stored position). Test rows show a TEST badge and never count
+as flagged.
+
+## 37. The mobile pass: phone-first rules, decided before any screen is touched, 2026-09-25
+
+This section is a DECISION, not a description of behaviour: nothing below is
+built yet, so there is no test to cite (§19.1's rule). It is the record the
+Stage-2 screens are held to. The discipline the owner asked for is one pattern
+per problem, applied in ONE place so it reaches every screen — every rule here
+either lives in the shared stylesheet or in a shared component
+(`src/dashboard/components/index.tsx`), never per module, for the same reason
+29.59 gives: a convention nobody can find gets reimplemented eight ways.
+
+The design and test reference width is **390 × 844** (an iPhone-class phone),
+the width the existing browser suites (`checkin-button.test.ts`,
+`sidebar-browser.test.ts`) already read computed values at. Every size or
+colour claim in Stage 2 is reported from Chromium at that viewport, per 29.60:
+a markup test proves nothing about what a browser downloads or lays out.
+
+### 37.1 One breakpoint, at 768px
+
+There is a single breakpoint: `max-width: 768px` is "compact" (phone), above it
+is the unchanged desktop layout. It REPLACES the lone `max-width: 900px` rule in
+`dashboard.css` — two arbitrary widths are two patterns, and the discipline is
+one. 768px is where a persistent 232px sidebar beside real content stops fitting;
+tablets between 768 and 900 keep the two-column desktop layout, which is correct
+there. No tablet-specific tier is introduced: a middle breakpoint is a third
+pattern earning its keep only if a screen actually breaks between the two, and
+none is known to. If Stage 2 finds one, it is added as a named exception with the
+screen that forced it, not pre-emptively.
+
+### 37.2 The nineteen-item sidebar becomes a CSS-only off-canvas drawer
+
+On compact the sidebar is hidden off the left edge and slid in by a menu button
+in the topbar; a full-screen backdrop closes it. The mechanism is the
+**checkbox hack**, not JavaScript: a visually-hidden `<input type="checkbox"
+id="ncc-nav-toggle">` at the top of the shell, a `<label for="ncc-nav-toggle">`
+styled as the topbar menu button, and `#ncc-nav-toggle:checked ~ .ncc-sidebar`
+carrying the open transform. This is load-bearing against the non-negotiable
+no-JS constraint: the drawer opens, closes and every link inside it works with
+JavaScript disabled, because a checkbox and a label are HTML, not script. Alpine,
+if present, is not required and is not used here.
+
+The nav MARKUP does not change. It is the same server-rendered `visibleNav(perms)`
+list in the same DOM; only CSS repositions it below 768px. On desktop the
+checkbox and label are `display:none` and the sidebar is the normal grid column,
+so there is one nav definition and one rendered tree at every width. The menu
+`<label>` carries `aria-label="Menu"`; `aria-expanded` cannot be driven without
+JS and is deliberately omitted rather than faked — the control is a real
+focusable checkbox with a visible label, which is the honest no-JS affordance.
+
+Proven in Stage 2 by extending `sidebar-browser.test.ts` (it already renders the
+REAL `AppShell` in Chromium): at 390px the sidebar's left edge is off-screen by
+default and within the viewport once the checkbox is checked.
+
+### 37.3 Nav is NOT filtered by role on mobile — it is already filtered by permission
+
+No mobile-only nav filter is added. `visibleNav(perms)` already drops every item
+the user's permission set does not admit (nav.ts, 29.55), so a site_engineer
+already sees a short list — check-in on the dashboard plus the handful of screens
+their role grants — with no phone-specific code. Adding a second, viewport-
+dependent filter would break the nav invariant 29.55 rests on (a visible link is
+a reachable route, and a reachable route has a link to find it): a link present on
+desktop but hidden on a phone is a feature the phone user cannot reach, which
+"looks like a bug to the user." If a site engineer's list still feels long on a
+phone, the correction is that role's PERMISSIONS, in one place, not a mobile
+special case. Same nav, every viewport.
+
+### 37.4 The wide-table rule: stack to labelled cards, in the shared component, with one exception
+
+Below 768px a data table stops being a grid and becomes a stack of labelled
+cards: each row is a card, and each cell shows its column header inline. It is
+implemented ONCE, in the shared `DataTable` (`components/index.tsx`) — since
+"modules never render their own table," one change reaches every table in the
+app. `DataTable` emits `data-label={col.header}` on every `<td>`; the compact CSS
+sets the `table/thead/tbody/tr/td` to `display:block`, visually hides the
+`<thead>`, and renders the label with `td::before { content: attr(data-label) }`.
+On a 390px screen a row then reads as `Header: value` lines with no horizontal
+scroll and no truncation. Right-aligned numeric cells (`.ncc-num`) are reset to
+left in stacked mode so the label and value sit together.
+
+The single, named EXCEPTION is the attendance matrix (`.ncc-matrix`): it is
+genuinely two-dimensional (employees × 31 day-columns) and already scrolls
+sideways with a sticky name column (see the existing `.ncc-matrix` rules).
+Stacking a calendar into cards is nonsense, so the matrix keeps
+`overflow-x:auto` and opts out of the stack. That is the only table in the app
+that scrolls on a phone; every other one stacks. The reference implementation in
+Stage 2 is the "Site check-ins — every reading" table (six columns), chosen
+because at six columns it is unusable at 390px today and is the exact screen a
+supervisor opens on a phone.
+
+### 37.5 Minimum tap target: 48 × 48 px
+
+The minimum interactive target is **48 × 48 px**, held as a token
+`--ncc-tap: 48px`. It is the check-in button's existing height (31.11) and
+Material's 48dp; it is the stricter of that and Apple's 44pt, and since the app
+already ships 48 for its most-pressed control, 48 is the one number. On compact
+it applies to nav links (today ~30px), every `.ncc-btn`, the topbar menu and
+backdrop-close controls, pager links, and form controls. Reported as computed
+`height`/`min-height` from Chromium at 390px in Stage 2.
+
+### 37.6 Type scale anchored at 16px, and the iOS-zoom guard
+
+The type scale is rem-based off the root so everything scales from one place. On
+compact the root/body base is **16px** (up from 15px). The load-bearing rule,
+independent of width: **form inputs, selects and textareas are never below 16px**
+— iOS Safari auto-zooms the viewport when a focused field's text is under 16px,
+which is itself a "not usable on a phone" failure, so `.ncc-field` controls are
+pinned to 16px at every width (cheap, and it removes a whole class of jump). The
+scale, in rem against a 16px root: body 1rem, hint/small 0.875rem (14px), h3
+1.0625rem (17px), h2 1.25rem (20px), h1 1.5rem (24px). No new font; DM Sans
+stays.
+
+### 37.7 Colour, and one open question for the owner
+
+Every colour or size claim in Stage 2 is a Chromium-computed value at 390 × 844,
+and brand orange is **#F48120** — the value the check-in button and the
+`theme-color` meta already use.
+
+Open question, not silently decided: the shared accent token `--ncc-accent` is
+**#e8650a**, a slightly different orange, and it drives the primary buttons,
+active nav indicator, tab underline and progress bar across the whole app.
+Re-hueing that token to #F48120 is a one-line change but it repaints desktop too,
+which is beyond a mobile pass. So this pass REUSES existing tokens and does not
+touch the palette; #F48120 stays the owner-specified literal for the check-in
+button and theme-color only. If the owner wants the whole accent unified to
+#F48120, that is a separate, deliberate token change — flagged here rather than
+folded in.
+
+### 37.8 How this is proven (the testing contract for Stage 2)
+
+Per the five-defects-shipped-green lesson: an assertion counts only if it goes
+through the real rendered page. Concretely for this work:
+
+- CSS claims are asserted against the SERVED stylesheet by extending
+  `served-css.test.ts`'s `DECLARATIONS` list (never bypassed): the 768px media
+  block, the drawer transform, `attr(data-label)`, `--ncc-tap`/48px min-heights,
+  and the 16px input rule must appear in what the router serves, which means
+  `vite build` must have run (the build sits between source and browser, 29.60).
+- Layout and computed values are read in Chromium at 390 × 844 by the browser
+  suites, which render the REAL components (`sidebar-browser.test.ts` builds the
+  real `AppShell`; the table suite renders the real `DataTable`), so there is no
+  fixture to drift. Where a hand-written fixture is unavoidable it must mirror
+  the real panel byte-for-byte, and the served-CSS test is the cross-check that
+  catches drift.
+- Every form still posts with JavaScript disabled; the nav drawer is a checkbox,
+  not a script, for the same reason.
