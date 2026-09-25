@@ -1160,7 +1160,7 @@ const QUOTE_PRINT_CSS = `
   h2 { font-size: 11pt; margin: 6mm 0 2mm; text-transform: uppercase; letter-spacing: .04em; }
   .muted { color: #5b6472; }
   .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
-  .head { display: flex; justify-content: space-between; gap: 8mm; border-bottom: 1.5pt solid #e8650a; padding-bottom: 3mm; }
+  .head { display: flex; justify-content: space-between; gap: 8mm; border-bottom: 1.5pt solid #f48120; padding-bottom: 3mm; }
   .head .co { font-size: 10pt; }
   .ref { text-align: right; font-size: 10pt; }
   .two { display: flex; gap: 8mm; margin-top: 5mm; }

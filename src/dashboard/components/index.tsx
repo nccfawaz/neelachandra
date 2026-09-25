@@ -204,7 +204,9 @@ export function DataTable<T>(props: {
           {props.rows.map((row) => (
             <tr>
               {props.columns.map((col) => (
-                <td class={col.numeric ? 'ncc-num' : undefined}>{col.cell(row)}</td>
+                <td class={col.numeric ? 'ncc-num' : undefined} data-label={col.header}>
+                  {col.cell(row)}
+                </td>
               ))}
             </tr>
           ))}

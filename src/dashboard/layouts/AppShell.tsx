@@ -98,6 +98,13 @@ export function AppShell(props: AppShellProps) {
           with no form fields is still protected (lib/csrf extractToken). */}
       <body hx-headers={JSON.stringify({ 'x-csrf-token': props.csrfToken })}>
         <div class="ncc-shell">
+          {/* 37.2 off-canvas nav, no JavaScript: a visually-hidden but
+              focusable checkbox holds the open/closed state, the menu button
+              in the topbar is its <label>, and the backdrop is a second label
+              that closes it. The CSS slides .ncc-sidebar in on :checked. The
+              checkbox is the first child so its ~ selectors reach both the
+              sidebar and the backdrop. */}
+          <input type="checkbox" id="ncc-nav-toggle" class="ncc-nav-toggle" aria-label="Menu" />
           <nav class="ncc-sidebar" aria-label="Main">
             <a class="ncc-sidebar__brand" href="/app">
               {/* Full lockup (29.57, corrected): the un-cropped logo.svg —
@@ -140,8 +147,18 @@ export function AppShell(props: AppShellProps) {
             ))}
           </nav>
 
+          {/* Closes the drawer when the darkened area beside it is tapped.
+              display:none until the checkbox is checked (compact only). */}
+          <label for="ncc-nav-toggle" class="ncc-nav-backdrop" aria-hidden="true"></label>
+
           <div class="ncc-main">
             <header class="ncc-topbar">
+              {/* The drawer's open control. A <label>, not a <button>, so it
+                  toggles the checkbox with no script; display:none above the
+                  breakpoint where the sidebar is always visible. */}
+              <label for="ncc-nav-toggle" class="ncc-nav-btn" aria-label="Menu">
+                ☰
+              </label>
               <h1 class="ncc-topbar__title">{props.title}</h1>
               <form class="ncc-topbar__search" action="/app" method="get" role="search">
                 <input

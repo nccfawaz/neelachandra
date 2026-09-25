@@ -24,10 +24,15 @@ const DECLARATIONS: [string, string][] = [
   ['f5f7fa', 'sidebar background #f5f7fa'],
   ['span.ncc-navlink', 'disabled items get the block nav-item rule'],
   ['.ncc-sidebar__lockup', 'logo lockup sizing rule'],
-  // The check-in button (DECISIONS 31.11): brand orange, phone-sized.
+  // The check-in button (DECISIONS 31.11): brand orange, phone-sized. After
+  // the 37.7 accent unification it no longer hard-codes the orange or 48 —
+  // both flow from the tokens, so we assert the tokens AND that the button
+  // consumes them, which is what proves the unification actually reaches it.
   ['.ncc-checkin-btn', 'the check-in button rule exists'],
-  ['min-height:48px', 'the check-in button is at least 48px tall'],
-  ['background:#f48120', 'the check-in button is brand orange #F48120'],
+  ['--ncc-accent: #f48120', 'the accent token is brand orange #F48120 (one orange, 37.7)'],
+  ['--ncc-tap: 48px', 'the tap-target token is 48px (37.5)'],
+  ['background:var(--ncc-accent)', 'the check-in button paints from the accent token'],
+  ['min-height:var(--ncc-tap)', 'the check-in button is at least one tap-target tall'],
   ['width:100%', 'the check-in button is full width'],
   ['.ncc-checkin-note', 'the location notice is its own small muted rule'],
   // The attendance matrix is the one table allowed to scroll sideways
@@ -41,6 +46,13 @@ const DECLARATIONS: [string, string][] = [
     'background-attachment:local,local,scroll,scroll',
     'the matrix shadow is the pure-CSS local/scroll layering (visible only while more table is hidden)',
   ],
+  // Stage 2 (DECISIONS 37.8): the single compact breakpoint and the two
+  // behaviours a phone layout stands on — the JS-free off-canvas drawer
+  // (37.2) and the wide-table card rule (37.4) — must reach the browser.
+  ['@media(max-width:768px)', 'the single compact breakpoint replaces the old 900px rule'],
+  ['.ncc-nav-toggle:checked', 'the drawer open state is the checkbox, no JS'],
+  ['transform:translate(-100%)', 'the drawer sits off-canvas until opened'],
+  ['attr(data-label)', 'stacked cards label each cell from its column header'],
 ]
 
 describe('the app layout serves its stylesheet with the required declarations', () => {

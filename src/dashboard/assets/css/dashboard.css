@@ -5,13 +5,22 @@
  * Phase 2 lays the shared tokens and primitives. The AppShell, nav and
  * dashboard widgets land with the /app shell later in this phase and module
  * phases extend this file. Tokens follow the staff login page design donor:
- * DM Sans with the #e8650a accent.
+ * DM Sans with the #F48120 accent.
+ *
+ * Accent unified to brand orange #F48120 in the mobile pass (DECISIONS 37.7,
+ * owner decision 2026-09-25): there is ONE orange now. The check-in button,
+ * theme-color, primary buttons, active nav, tab underline and progress bar all
+ * resolve to the same --ncc-accent. The earlier #e8650a is retired.
  */
 
 :root {
-  --ncc-accent: #e8650a;
-  --ncc-accent-strong: #c95408;
+  --ncc-accent: #f48120;
+  --ncc-accent-strong: #d96f15;
   --ncc-accent-soft: #fdeadd;
+  /* Minimum interactive target on compact (DECISIONS 37.5): 48px is the
+     stricter of Material's 48dp and Apple's 44pt, and the check-in button's
+     existing height (31.11), so 48 is the one number the app already ships. */
+  --ncc-tap: 48px;
   --ncc-bg: #f6f6f4;
   --ncc-surface: #ffffff;
   --ncc-text: #20262f;
@@ -143,6 +152,11 @@ code {
 .ncc-field select,
 .ncc-field textarea {
   font: inherit;
+  /* Never below 16px, at EVERY width (DECISIONS 37.6): iOS Safari zooms the
+     viewport when a focused field's text is under 16px, which is itself a
+     "not usable on a phone" failure. This is the one type rule that is not
+     conditional on the breakpoint. */
+  font-size: 16px;
   width: 100%;
   max-width: 30rem;
   padding: 0.5rem 0.65rem;
@@ -240,6 +254,50 @@ code {
   display: grid;
   grid-template-columns: 232px 1fr;
   min-height: 100vh;
+}
+
+/*
+ * Off-canvas nav drawer (DECISIONS 37.2). CSS-only, no JavaScript: a
+ * visually-hidden but focusable checkbox at the top of the shell, a
+ * <label for> styled as the topbar menu button, and a full-screen backdrop
+ * label to close. On desktop the checkbox, button and backdrop are inert
+ * (the button and backdrop display:none; the checkbox clipped and ignored),
+ * so there is one nav tree at every width and the sidebar is the normal grid
+ * column. The compact behaviour is in the 768px block below.
+ *
+ * The checkbox is clipped rather than display:none so it stays a real
+ * focusable control operable by keyboard — the honest no-JS affordance 37.2
+ * asks for.
+ */
+.ncc-nav-toggle {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+.ncc-nav-btn {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  min-width: var(--ncc-tap);
+  min-height: var(--ncc-tap);
+  font-size: 1.4rem;
+  line-height: 1;
+  color: var(--ncc-text);
+  background: var(--ncc-surface);
+  border: 1px solid var(--ncc-border);
+  border-radius: var(--ncc-radius-sm);
+  cursor: pointer;
+}
+
+.ncc-nav-backdrop {
+  display: none;
 }
 
 .ncc-sidebar {
@@ -366,7 +424,7 @@ code {
 }
 
 .ncc-topbar__search input[type='search']:focus {
-  outline: 2px solid var(--ncc-accent, #f48120);
+  outline: 2px solid var(--ncc-accent);
   outline-offset: 1px;
 }
 
@@ -746,19 +804,204 @@ code {
   background-attachment: local, local, scroll, scroll;
 }
 
-@media (max-width: 900px) {
+/*
+ * The single compact breakpoint (DECISIONS 37.1): max-width 768px is "phone",
+ * above it the desktop layout is untouched. This ONE query replaces the former
+ * lone 900px rule — two arbitrary widths were two patterns; the discipline is
+ * one. Everything a phone needs lives here: the off-canvas nav drawer (37.2),
+ * the wide-table card rule (37.4), 48px tap targets (37.5) and the 16px type
+ * anchor (37.6).
+ */
+@media (max-width: 768px) {
   .ncc-shell {
     grid-template-columns: 1fr;
   }
 
+  /* 37.2 drawer: the sidebar slides in from the left over the content; the
+     backdrop closes it. Both driven by the checkbox two elements up. */
   .ncc-sidebar {
-    position: static;
-    height: auto;
-    padding-bottom: 1rem;
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    z-index: 40;
+    width: 264px;
+    max-width: 82vw;
+    height: 100vh;
+    transform: translate(-100%);
+    transition: transform 0.2s ease;
+  }
+
+  .ncc-nav-toggle:checked ~ .ncc-sidebar {
+    transform: translate(0);
+  }
+
+  .ncc-nav-toggle:checked ~ .ncc-nav-backdrop {
+    display: block;
+    position: fixed;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 30;
+    background: #14181f73;
+    border: 0;
+  }
+
+  .ncc-nav-btn {
+    display: inline-flex;
+  }
+
+  /* The topbar's placeholder search (a no-op until /app/search exists, 29.55)
+     is dropped on a phone rather than crowding the menu button and title; the
+     menu button and title lead the row and the account controls wrap under. */
+  .ncc-topbar {
+    flex-wrap: wrap;
+  }
+
+  .ncc-topbar__search {
+    display: none;
   }
 
   .ncc-content {
     padding: 1.1rem 1rem 2.5rem;
+  }
+
+  /* 37.5 tap targets: nav links, buttons, the menu control and form fields
+     are all at least 48px in the pressed dimension. */
+  .ncc-sidebar a.ncc-navlink,
+  .ncc-sidebar span.ncc-navlink {
+    display: flex;
+    align-items: center;
+    min-height: var(--ncc-tap);
+  }
+
+  .ncc-btn {
+    min-height: var(--ncc-tap);
+    display: inline-flex;
+    align-items: center;
+  }
+
+  .ncc-field input,
+  .ncc-field select,
+  .ncc-field textarea {
+    min-height: var(--ncc-tap);
+  }
+
+  /* 37.6 type: 16px is the anchor (a smaller root would make the width-
+     independent 16px input rule an outlier, and iOS zooms sub-16px inputs).
+     The headings step down so a phone page has a hierarchy, not one size. */
+  :root {
+    font-size: 16px;
+  }
+
+  h1 {
+    font-size: 1.5rem;
+  }
+
+  h2 {
+    font-size: 1.25rem;
+  }
+
+  h3 {
+    font-size: 1.0625rem;
+  }
+
+  .ncc-hint {
+    font-size: 0.875rem;
+  }
+
+  /* 37.4 card rule: below the breakpoint a wide table cannot be read across,
+     so each row becomes a stacked labelled card — the header is hidden and
+     every cell wears its column name from data-label. */
+  .ncc-table-scroll table.ncc-table,
+  .ncc-table-scroll thead,
+  .ncc-table-scroll tbody,
+  .ncc-table-scroll tr,
+  .ncc-table-scroll th,
+  .ncc-table-scroll td {
+    display: block;
+  }
+
+  .ncc-table-scroll thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+    border: 0;
+  }
+
+  .ncc-table-scroll tr {
+    margin-bottom: 0.75rem;
+    border: 1px solid var(--ncc-border);
+    border-radius: var(--ncc-radius-sm);
+    padding: 0.25rem 0.75rem;
+    background: var(--ncc-surface);
+  }
+
+  .ncc-table-scroll td {
+    display: flex;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 0.4rem 0;
+    text-align: right;
+    border: 0;
+  }
+
+  .ncc-table-scroll td::before {
+    content: attr(data-label);
+    font-weight: 600;
+    color: var(--ncc-muted);
+    text-align: left;
+  }
+
+  /* 37.4 exception: the attendance matrix is the one table that keeps its
+     grid — a stacked 31-day card would be unreadable. It scrolls sideways
+     with the edge shadow instead. */
+  .ncc-matrix .ncc-table-scroll table.ncc-table,
+  .ncc-matrix .ncc-table-scroll thead,
+  .ncc-matrix .ncc-table-scroll tbody,
+  .ncc-matrix .ncc-table-scroll tr,
+  .ncc-matrix .ncc-table-scroll th,
+  .ncc-matrix .ncc-table-scroll td {
+    display: table-cell;
+  }
+
+  .ncc-matrix .ncc-table-scroll table.ncc-table {
+    display: table;
+  }
+
+  .ncc-matrix .ncc-table-scroll thead {
+    display: table-header-group;
+    position: static;
+    width: auto;
+    height: auto;
+    margin: 0;
+    clip-path: none;
+  }
+
+  .ncc-matrix .ncc-table-scroll tbody {
+    display: table-row-group;
+  }
+
+  .ncc-matrix .ncc-table-scroll tr {
+    display: table-row;
+    margin: 0;
+    border: 0;
+    padding: 0;
+    background: transparent;
+  }
+
+  .ncc-matrix .ncc-table-scroll td {
+    text-align: left;
+  }
+
+  .ncc-matrix .ncc-table-scroll td::before {
+    content: none;
   }
 }
 
@@ -767,29 +1010,30 @@ code {
  *
  * The button is the whole point of the screen: full width of its card and at
  * least 48 px tall, because it is pressed on a phone at a gate, often with
- * gloves on. Brand orange #F48120 rather than the token --ncc-accent
- * (#e8650a): the owner specified the exact colour for this one control.
+ * gloves on. It uses the shared --ncc-accent, which is now brand orange
+ * #F48120 (DECISIONS 37.7): the token and the owner's specified colour are one
+ * and the same after the accent unification, so there is no second literal.
  */
 .ncc-checkin-btn {
   display: block;
   width: 100%;
-  min-height: 48px;
-  min-width: 48px;
+  min-height: var(--ncc-tap);
+  min-width: var(--ncc-tap);
   padding: 0.75rem 1rem;
   font: inherit;
   font-size: 1.05rem;
   font-weight: 600;
   color: #ffffff;
-  background: #f48120;
-  border: 1px solid #f48120;
+  background: var(--ncc-accent);
+  border: 1px solid var(--ncc-accent);
   border-radius: var(--ncc-radius-sm);
   cursor: pointer;
   text-align: center;
 }
 
 .ncc-checkin-btn:hover {
-  background: #d96f15;
-  border-color: #d96f15;
+  background: var(--ncc-accent-strong);
+  border-color: var(--ncc-accent-strong);
 }
 
 /* The press result, in words (DECISIONS 31.13): "Location recorded at

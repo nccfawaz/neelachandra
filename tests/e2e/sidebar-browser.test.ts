@@ -172,3 +172,71 @@ describe('the sidebar as a browser actually renders it', () => {
     }
   })
 })
+
+/*
+ * The off-canvas drawer as a phone renders it (DECISIONS 37.2).
+ *
+ * On a 390px phone the sidebar must be OFF the screen until the menu button
+ * opens it, and the whole mechanism is pure CSS: a visually-hidden checkbox
+ * and two <label>s. Clicking the label is a native browser action — no page
+ * script runs — so a sidebar that slides in after the click proves the
+ * "works with JavaScript off" contract for navigation, read back from the
+ * COMPUTED geometry Chromium reports, not from the markup.
+ */
+describe('the nav drawer as Chromium computes it on a phone', () => {
+  it('hides the sidebar off-canvas at 390px and reveals it with the CSS-only menu toggle', async () => {
+    const { server, origin } = await startServer()
+    const page = await browser.newPage({ viewport: { width: 390, height: 844 } })
+    try {
+      await page.goto(origin + '/', { waitUntil: 'networkidle' })
+
+      // The menu button is shown on a phone (it is display:none on desktop).
+      // The rule sets inline-flex, but the topbar is itself a flex container,
+      // so the button is a flex item and Chromium blockifies its used display
+      // to `flex` — the point of the assertion is that it is not `none`.
+      const btnDisplay = await page.$eval('.ncc-nav-btn', (el) => getComputedStyle(el).display)
+      expect(btnDisplay, 'the menu button must be shown on a phone').toBe('flex')
+
+      // Closed: the sidebar sits entirely left of the viewport (translateX
+      // -100%), so its right edge is at or before x=0 and it cannot be tapped.
+      const closed = await page.$eval('.ncc-sidebar', (el) => {
+        const r = el.getBoundingClientRect()
+        return { right: r.right, width: r.width, transform: getComputedStyle(el).transform }
+      })
+      console.log('[drawer closed]', JSON.stringify(closed))
+      expect(closed.width, 'the drawer has real width').toBeGreaterThan(200)
+      expect(closed.right, 'the closed drawer is off the left edge').toBeLessThanOrEqual(1)
+      // A non-identity transform is what puts it there.
+      expect(closed.transform).not.toBe('none')
+
+      // Open it the way a user does with JS off: click the menu <label>. That
+      // flips the checkbox natively; no script on the page is involved. Wait
+      // out the 0.2s slide-in transition before reading the settled geometry.
+      await page.click('.ncc-nav-btn')
+      await page.waitForTimeout(350)
+
+      const open = await page.$eval('.ncc-sidebar', (el) => {
+        const r = el.getBoundingClientRect()
+        return { left: r.left, right: r.right }
+      })
+      console.log('[drawer open]', JSON.stringify(open))
+      expect(open.left, 'the opened drawer starts at the left edge').toBeGreaterThanOrEqual(-1)
+      expect(open.right, 'the opened drawer is on screen').toBeGreaterThan(200)
+
+      // The backdrop appears with the open drawer and closes it when tapped.
+      const backdrop = await page.$eval('.ncc-nav-backdrop', (el) => getComputedStyle(el).display)
+      expect(backdrop, 'the backdrop is shown while the drawer is open').toBe('block')
+
+      // Tap the backdrop where it is actually exposed — to the RIGHT of the
+      // 264px drawer, which sits above it. A user taps the dimmed area beside
+      // the menu; the drawer itself would swallow a centre tap.
+      await page.click('.ncc-nav-backdrop', { position: { x: 340, y: 400 } })
+      await page.waitForTimeout(350)
+      const reclosed = await page.$eval('.ncc-sidebar', (el) => el.getBoundingClientRect().right)
+      expect(reclosed, 'tapping the backdrop closes the drawer').toBeLessThanOrEqual(1)
+    } finally {
+      await page.close()
+      await new Promise<void>((r) => server.close(() => r()))
+    }
+  })
+})

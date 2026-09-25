@@ -7397,15 +7397,17 @@ Every colour or size claim in Stage 2 is a Chromium-computed value at 390 × 844
 and brand orange is **#F48120** — the value the check-in button and the
 `theme-color` meta already use.
 
-Open question, not silently decided: the shared accent token `--ncc-accent` is
-**#e8650a**, a slightly different orange, and it drives the primary buttons,
-active nav indicator, tab underline and progress bar across the whole app.
-Re-hueing that token to #F48120 is a one-line change but it repaints desktop too,
-which is beyond a mobile pass. So this pass REUSES existing tokens and does not
-touch the palette; #F48120 stays the owner-specified literal for the check-in
-button and theme-color only. If the owner wants the whole accent unified to
-#F48120, that is a separate, deliberate token change — flagged here rather than
-folded in.
+Open question, now RESOLVED by the owner (2026-09-25): unify `--ncc-accent` to
+**#F48120**. The token was **#e8650a**, a slightly different orange, and it
+drives the primary buttons, active nav indicator, tab underline and progress bar
+across the whole app; the check-in button carried a second orange of its own.
+The owner's instruction was explicit — "don't keep two oranges" — so the token
+is re-hued to #F48120 (with `--ncc-accent-strong: #d96f15`, the old check-in
+hover shade, and `--ncc-accent-soft: #fdeadd`), the check-in button now paints
+from `var(--ncc-accent)` rather than a literal, and the one stray orange in the
+CRM quote print sheet (`src/modules/crm/routes.tsx`) is unified too. #e8650a no
+longer appears anywhere in `src/`. Desktop is repainted deliberately, as asked.
+See §37.9 for the computed proof.
 
 ### 37.8 How this is proven (the testing contract for Stage 2)
 
@@ -7425,3 +7427,70 @@ through the real rendered page. Concretely for this work:
   catches drift.
 - Every form still posts with JavaScript disabled; the nav drawer is a checkbox,
   not a script, for the same reason.
+
+### 37.9 Stage 2 shipped — the four reference screens, with computed proof
+
+Built 2026-09-25 on branch `mobile-redesign`. The accent unification (§37.7) and
+the four screens the owner named — login, `/app` with the check-in panel, the HR
+site check-ins day view, and one wide table as the card-rule reference — are in.
+Nothing beyond those four was touched. Every figure below is a value Chromium
+computed at 390 × 844 against the SERVED stylesheet, or a byte asserted in what
+the router serves; each is held by a named assertion, cited by full path.
+
+**The single compact breakpoint (§37.1).** The former lone `@media (max-width:
+900px)` block in `src/dashboard/assets/css/dashboard.css` is replaced by one
+`@media (max-width: 768px)` block carrying the whole phone layout. That the
+breakpoint reaches the browser is pinned by `tests/integration/served-css.test.ts`
+(needle `@media(max-width:768px)` — the minifier drops the space after `@media`).
+
+**Accent unified to #F48120 (§37.7).** `--ncc-accent: #f48120` and
+`--ncc-tap: 48px` are asserted in the served CSS by
+`tests/integration/served-css.test.ts`; the check-in button paints from
+`var(--ncc-accent)` (same test, needle `background:var(--ncc-accent)`), and
+`tests/e2e/checkin-button.test.ts` still reads the button's computed
+`background-color` as `rgb(244, 129, 32)` — i.e. the token resolves to #F48120 at
+the browser. No `#e8650a`/`#c95408` remains in `src/` (grep, 2026-09-25).
+
+**The off-canvas drawer, no JavaScript (§37.2).** `tests/e2e/sidebar-browser.test.ts`
+renders the real `AppShell` at 390 × 844 and reads: closed, `.ncc-sidebar` has
+computed `transform: matrix(1, 0, 0, 1, -264, 0)` and its right edge is at x = 0
+(entirely off the left); after clicking the menu `<label>` (a native toggle, no
+page script) and waiting out the 0.2s slide, `left = 0, right = 264`; the backdrop
+computes `display: block` while open and a tap on its exposed area (right of the
+264px drawer) closes it back to right = 0. The served CSS carries
+`.ncc-nav-toggle:checked` and `transform:translate(-100%)` (served-css test).
+Note the source is written `translate(-100%)`/`translate(0)` and `inset:0` is
+expanded to the four longhands, because esbuild rewrites `translateX(...)`→
+`translate(...)` and `inset`→longhands, and the css-build-staleness gate requires
+source and built to match (the rgba→hex8 precedent from the matrix work).
+
+**The wide-table card rule and its one exception (§37.4).** `DataTable` in
+`src/dashboard/components/index.tsx` now emits `data-label={col.header}` on every
+`<td>`. `tests/e2e/mobile-cards-login.test.ts` renders the real `DataTable` with
+the reference six columns (Employee, Reading, At, Status, Flag, Position) at
+390 × 844: in an ordinary card the `<thead>` computes `position: absolute`
+(lifted out of flow), each `<td>` computes `display: flex`, and the cell's
+`::before` computes `content: "Employee"` from `attr(data-label)` — the label is
+injected, not typed. Inside the one `.ncc-matrix` exception the same markup keeps
+`table`/`table-cell` display and `::before` computes `none`; the matrix scrolls
+sideways instead, still proven by `tests/e2e/matrix-scroll.test.ts` (scrollWidth
+817 > clientWidth 358, `background-attachment: local, local, scroll, scroll`).
+The served CSS carries `attr(data-label)` (served-css test).
+
+**Login and tap targets (§37.5/37.6).** `tests/e2e/mobile-cards-login.test.ts`
+renders the real `LoginPage` at 390 × 844: `document.documentElement.scrollWidth`
+does not exceed `clientWidth` (no sideways scroll), the email input computes
+`font-size: 16px` (no iOS focus-zoom, the width-independent rule), and the
+sign-in button computes at least 48px tall and fills the form width. The form
+computes `method = post`, `action = /login` — it posts with JS off. Tap targets
+(`min-height:var(--ncc-tap)` on nav links, `.ncc-btn`, form controls) reach the
+browser via the served CSS.
+
+**Gate counts, 2026-09-25 (all green).**
+- `npm test` (unit, no DB): 25 files, 392 tests. Includes css-build-staleness
+  (source declarations all present in the built artifact after `vite build`),
+  dist-staleness (committed `dist/` matches a fresh `tsc`), gate-collection
+  (every collected test tracked by git), decisions-citations.
+- `npm run test:integration` (MariaDB :3307): 49 files, 485 tests, served-css
+  among them.
+- e2e (`vitest.e2e.config.ts`, Playwright Chromium): 5 files, 17 tests.
