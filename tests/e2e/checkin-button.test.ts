@@ -23,12 +23,23 @@ import { renderToString } from 'hono/jsx/dom/server'
 
 const ROOT = path.resolve(__dirname, '../..')
 
-function panelHtml(action: 'checkin' | 'checkout'): string {
+function panelHtml(action: 'checkin' | 'checkout', withScript = true): string {
   const buttonText = action === 'checkin' ? 'Check in' : 'Check out'
   const formAction = action === 'checkin' ? '/app/attendance/checkin' : '/app/attendance/checkout'
   return `<!doctype html><html lang="en"><head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
-<link rel="stylesheet" href="/assets/css/dashboard.css"></head>
+<link rel="stylesheet" href="/assets/css/dashboard.css">
+<script>
+  // A fixed fake position, installed before any page script can ask.
+  Object.defineProperty(navigator, 'geolocation', {
+    value: {
+      getCurrentPosition: function (ok) {
+        setTimeout(function () { ok({ coords: { latitude: 9.9312, longitude: 76.2673 } }) }, 0)
+      },
+    },
+    configurable: true,
+  })
+</script></head>
 <body><main style="max-width:430px;margin:0 auto;padding:1rem">
 <section class="ncc-card ncc-card--wide">
   <p class="ncc-kpi__label">Site attendance</p>
@@ -40,7 +51,7 @@ function panelHtml(action: 'checkin' | 'checkout'): string {
   </form>
   <p class="ncc-checkin-note">Location is recorded when you press the button — at check-in and check-out only. Your position is not tracked at any other time.</p>
 </section>
-</main></body></html>`
+</main>${withScript ? '<script src="/assets/js/checkin-geo.js" defer></script>' : ''}</body></html>`
 }
 
 const CONTENT_TYPES: Record<string, string> = {
@@ -154,6 +165,61 @@ describe('the check-in button as Chromium computes it on a phone', () => {
       expect(parseFloat(note.size)).toBeLessThan(14)
       // Muted grey, not the body text colour.
       expect(note.color).not.toBe('rgb(32, 38, 47)')
+    } finally {
+      server.close()
+      await page.close()
+    }
+  })
+
+  /* DECISIONS 31.12 (execution-order bug): on production the fields never
+   * filled even though the form and inputs were in the DOM. The script used
+   * to query the DOM immediately from a deferred head script and exit
+   * silently on a miss. These tests execute the REAL served script against
+   * the mirrored panel and assert the hidden inputs actually receive the
+   * device's position -- and that a formless page logs a warning instead of
+   * failing silently. */
+  it('fills the lat/lng hidden inputs from the served script (geolocation stubbed)', async () => {
+    const { server, origin } = await startServer()
+    const page = await browser.newPage({ viewport: { width: 390, height: 844 } })
+    const consoleLines: string[] = []
+    page.on('console', (m) => consoleLines.push(m.text()))
+    try {
+      await page.goto(origin + '/', { waitUntil: 'networkidle' })
+      await page.waitForFunction(
+        () => {
+          const lat = document.querySelector('input[name="lat"]') as HTMLInputElement | null
+          const lng = document.querySelector('input[name="lng"]') as HTMLInputElement | null
+          return !!lat && !!lng && lat.value !== '' && lng.value !== ''
+        },
+        undefined,
+        { timeout: 5000 },
+      )
+      const values = await page.evaluate(() => ({
+        lat: (document.querySelector('input[name="lat"]') as HTMLInputElement).value,
+        lng: (document.querySelector('input[name="lng"]') as HTMLInputElement).value,
+      }))
+      expect(values).toEqual({ lat: '9.9312', lng: '76.2673' })
+      expect(consoleLines.some((l) => l.includes('[checkin-geo]'))).toBe(false)
+    } finally {
+      server.close()
+      await page.close()
+    }
+  })
+
+  it('logs a loud warning instead of failing silently when the form is missing', async () => {
+    const { server, origin } = await startServer()
+    const page = await browser.newPage({ viewport: { width: 390, height: 844 } })
+    const consoleLines: string[] = []
+    page.on('console', (m) => consoleLines.push(m.text()))
+    try {
+      // Serve a page with no check-in form at all: the script must still
+      // run (it is injected unconditionally by the shell on this route in
+      // the bug report) and must not vanish without a trace.
+      await page.setContent('<!doctype html><html><head></head><body><p>no form here</p></body></html>')
+      await page.addScriptTag({ path: path.join(ROOT, 'public/assets/js/checkin-geo.js') })
+      await page.waitForTimeout(3600) // past the 10×300ms retry window
+      const warned = consoleLines.some((l) => l.includes('[checkin-geo]'))
+      expect(warned, 'the script must log [checkin-geo] when it cannot bind').toBe(true)
     } finally {
       server.close()
       await page.close()

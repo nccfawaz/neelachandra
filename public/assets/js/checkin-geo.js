@@ -30,30 +30,26 @@
  *   - (0, 0) is never submitted. A failed GPS can serialise to exactly zero
  *     on both axes; the server would store NULL for it anyway, but the
  *     client does not send known-garbage.
+ *
+ * Execution order (hardened after a production report where the fields
+ * never filled despite the form being in the DOM): the tag arrives with
+ * `defer` in <head> (AppShell), which usually runs after parsing -- but the
+ * first version queried the DOM immediately and exited silently when it
+ * missed. Now the DOM walk waits for DOMContentLoaded, the submit hook is a
+ * DELEGATED listener on document (so it survives the form being re-rendered
+ * by a future htmx swap), and a short retry covers any host that strips or
+ * reorders the defer. A missed form logs a console warning instead of
+ * vanishing.
  */
 (function () {
   'use strict'
 
-  var form = document.querySelector('form[action="/app/attendance/checkin"]')
-  if (!form) return
+  var FORM_SELECTOR = 'form[action="/app/attendance/checkin"]'
 
-  var latInput = form.querySelector('input[name="lat"]')
-  var lngInput = form.querySelector('input[name="lng"]')
-  if (!latInput || !lngInput) return
-
+  var latInput = null
+  var lngInput = null
   var latest = null
-
-  function setFields(pos) {
-    latest = { lat: pos.coords.latitude, lng: pos.coords.longitude }
-    latInput.value = String(latest.lat)
-    lngInput.value = String(latest.lng)
-  }
-
-  function clearFields() {
-    latest = null
-    latInput.value = ''
-    lngInput.value = ''
-  }
+  var bound = false
 
   function isGarbage(p) {
     return !p || p.lat === 0 || p.lng === 0 ||
@@ -61,25 +57,85 @@
       typeof p.lat !== 'number' || typeof p.lng !== 'number'
   }
 
-  if (navigator.geolocation) {
+  function setFields(pos) {
+    latest = { lat: pos.coords.latitude, lng: pos.coords.longitude }
+    if (latInput) latInput.value = String(latest.lat)
+    if (lngInput) lngInput.value = String(latest.lng)
+  }
+
+  function clearFields() {
+    latest = null
+    if (latInput) latInput.value = ''
+    if (lngInput) lngInput.value = ''
+  }
+
+  function askForPosition(timeoutMs) {
+    if (!navigator.geolocation) return
     navigator.geolocation.getCurrentPosition(
-      function (pos) { if (!isGarbage({ lat: pos.coords.latitude, lng: pos.coords.longitude })) setFields(pos) },
+      function (pos) {
+        if (!isGarbage({ lat: pos.coords.latitude, lng: pos.coords.longitude })) setFields(pos)
+      },
       function () { clearFields() },
-      { enableHighAccuracy: true, timeout: 10000, maximumAge: 30000 }
+      { enableHighAccuracy: true, timeout: timeoutMs, maximumAge: 30000 }
     )
   }
 
-  form.addEventListener('submit', function () {
-    if (latest && !isGarbage(latest)) {
-      // Refresh at the moment of the press (DECISIONS 31.3: the capture is
-      // this press, not the page load). Fire-and-forget: if the device
-      // answers after the form is already gone, the post carries what it
-      // had and the row says so.
-      navigator.geolocation.getCurrentPosition(setFields, clearFields, {
-        enableHighAccuracy: true, timeout: 4000, maximumAge: 5000,
-      })
+  function bind(form) {
+    if (bound) return
+    latInput = form.querySelector('input[name="lat"]')
+    lngInput = form.querySelector('input[name="lng"]')
+    if (!latInput || !lngInput) {
+      console.warn('[checkin-geo] form found but lat/lng inputs missing')
+      return
     }
-    // Empty or garbage fields are left as they are: the server stores
-    // NULL/unavailable and the attendance stands.
-  })
+    bound = true
+    // Delegated on document, not on the form node: an htmx swap that
+    // replaces the panel must not silently unhook the submit hook.
+    document.addEventListener('submit', function (e) {
+      var target = e.target
+      if (!target || target !== form || !target.matches(FORM_SELECTOR)) return
+      if (latest && !isGarbage(latest)) {
+        // Refresh at the moment of the press (DECISIONS 31.3: the capture
+        // is this press, not the page load). Fire-and-forget: if the device
+        // answers after the form is already gone, the post carries what it
+        // had and the row says so.
+        navigator.geolocation.getCurrentPosition(setFields, clearFields, {
+          enableHighAccuracy: true, timeout: 4000, maximumAge: 5000,
+        })
+      }
+      // Empty or garbage fields are left as they are: the server stores
+      // NULL/unavailable and the attendance stands.
+    })
+    askForPosition(10000)
+  }
+
+  function tryBind() {
+    var form = document.querySelector(FORM_SELECTOR)
+    if (form) { bind(form); return true }
+    return false
+  }
+
+  function start() {
+    if (tryBind()) return
+    // The form is server-rendered into the initial HTML, so by
+    // DOMContentLoaded it must exist. If it does not, give the page one
+    // short beat (slow device / stripped defer / late host rewrite) before
+    // declaring the miss loudly rather than silently.
+    var tries = 0
+    var timer = setInterval(function () {
+      if (tryBind() || ++tries >= 10) {
+        clearInterval(timer)
+        if (!bound) {
+          console.warn('[checkin-geo] check-in form not found after load; ' +
+            'geolocation capture disabled for this page')
+        }
+      }
+    }, 300)
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', start)
+  } else {
+    start()
+  }
 })()
