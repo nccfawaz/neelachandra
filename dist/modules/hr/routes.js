@@ -1793,8 +1793,14 @@ hr.get('/app/hr/attendance/far', requirePermission(PERMISSIONS.HR_ATTENDANCE_REC
     const db = c.get('db');
     const date = dateParam(c, 'date');
     const [rows, summary] = await Promise.all([q.farChecksOn(db, date), q.dayAttendanceSummary(db, date)]);
-    // Test rows never count toward the flagged total (DECISIONS 31.10).
+    // Test rows never count toward the flagged total (31.10); 'recorded'
+    // (36.1) is not a flag at all -- it is a reading without a reference, and
+    // is nothing to review.
     const flagged = rows.filter((r) => !r.test && (r.flag === 'far' || r.flag === 'unavailable')).length;
+    /* 36.1: flag 'recorded' marks a reading captured against the generic Site
+     * -- no reference coordinate exists, so there is no distance and no
+     * pass/fail. Sushma is READING A POSITION, not judging one: the badge is
+     * neutral and the Maps link is the row's answer. */
     const flagBadge = (r) => {
         if (r.test)
             return _jsx("span", { class: "ncc-badge ncc-badge-muted", children: "TEST" });
@@ -1802,6 +1808,8 @@ hr.get('/app/hr/attendance/far', requirePermission(PERMISSIONS.HR_ATTENDANCE_REC
             return _jsx("span", { class: "ncc-badge ncc-badge-danger", children: "FAR" });
         if (r.flag === 'unavailable')
             return _jsx("span", { class: "ncc-badge ncc-badge-warn", children: "no reading" });
+        if (r.flag === 'recorded')
+            return _jsx("span", { class: "ncc-badge ncc-badge-muted", children: "position \u2014 no reference" });
         if (r.flag === '')
             return _jsx("span", { class: "ncc-muted", children: "\u2014" });
         return _jsx("span", { class: "ncc-badge ncc-badge-ok", children: "on site" });
@@ -1825,7 +1833,7 @@ hr.get('/app/hr/attendance/far', requirePermission(PERMISSIONS.HR_ATTENDANCE_REC
                                     : _jsx("span", { class: "ncc-badge ncc-badge-ok", children: "no" }) },
                     ], rows: summary.inToday, empty: `Nobody has checked in yet on ${date}.` }) }), _jsx(Panel, { title: "Missing \u2014 no check-in today", children: _jsx(DataTable, { columns: [
                         { header: 'Person', cell: (r) => (_jsxs(_Fragment, { children: [_jsx("strong", { children: r.full_name }), _jsx("div", { class: "ncc-muted", children: r.employee_code })] })) },
-                    ], rows: summary.missing, empty: `Everyone on the roster has checked in on ${date}.` }) }), _jsxs(Panel, { title: "Every reading \u2014 the detail", children: [_jsx(Alert, { tone: "warn", children: "A far reading is recorded, never refused: the attendance always stands, and on_duty_travel days are not exempt. FAR marks a real position beyond the 500 m threshold; \"no reading\" marks a check-in whose device supplied no position. Both are review items, not corrections. TEST rows were written in test mode and never count here." }), _jsx(DataTable, { columns: [
+                    ], rows: summary.missing, empty: `Everyone on the roster has checked in on ${date}.` }) }), _jsxs(Panel, { title: "Every reading \u2014 the detail", children: [_jsx(Alert, { tone: "warn", children: "A far reading is recorded, never refused: the attendance always stands, and on_duty_travel days are not exempt. FAR marks a real position beyond the 500 m threshold at Head Office; \"no reading\" marks a check-in whose device supplied no position. Both are review items, not corrections. A row marked \"position \u2014 no reference\" is a SITE check-in (36.1): the coordinates shown ARE the record -- there is no reference point, so there is no distance and no pass/fail. Open the Maps link to see where the person was. TEST rows were written in test mode and never count here." }), _jsx(DataTable, { columns: [
                             { header: 'Employee', cell: (r) => (_jsxs(_Fragment, { children: [_jsx("strong", { children: r.full_name }), _jsxs("div", { class: "ncc-muted", children: [r.employee_code, r.designation_name ? ` · ${r.designation_name}` : ''] })] })) },
                             { header: 'Reading', cell: (r) => (r.which === 'checkin' ? 'Check-in' : 'Check-out') },
                             { header: 'At', cell: (r) => r.at ?? _jsx("span", { class: "ncc-muted", children: "\u2014" }) },

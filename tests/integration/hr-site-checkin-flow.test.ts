@@ -47,6 +47,7 @@ const highWater = new Map<string, number>()
 let actor = { userId: 0, ip: '127.0.0.1' as string | null }
 
 let workerId = 0
+let siteWorkerId = 0
 let excludedId = 0
 let siteId = 0
 let officeId = 0
@@ -142,6 +143,65 @@ afterAll(async () => {
 })
 
 describe('self check-in', () => {
+  /* 36.1: the generic Site option. Not linked to any project, no reference
+   * coordinates: the captured position IS the record. Outcome 'recorded',
+   * no distance, no far flag -- and the HR day view shows flag 'recorded'
+   * so Sushma reads a position, not a pass/fail. */
+  it('a Site check-in stores the reading as recorded-without-reference — no distance, no far flag', async () => {
+    const options = await q.checkinSiteOptions(db)
+    // Exactly two options: the generic Site and exactly one office option.
+    const keys = options.map((o) => o.key).sort()
+    expect(keys.filter((k) => k === 'site')).toHaveLength(1)
+    expect(keys.filter((k) => k.startsWith('office:'))).toHaveLength(1)
+    expect(keys.filter((k) => k.startsWith('project:'))).toHaveLength(0)
+    const site = options.find((o) => o.key === 'site')
+    expect(site!.lat).toBeNull()
+    expect(site!.lng).toBeNull()
+
+    const worker = await svc.createEmployee(
+      db,
+      actor,
+      employeeInput({ fullName: 'Fixture Worker Site361', gender: 'male', fatherOrSpouseName: 'Fixture Parent Site361' })
+    )
+    siteWorkerId = worker
+    const result = await svc.selfCheckIn(db, actor, {
+      employeeId: worker,
+      siteKey: 'site',
+      reading: { lat: 11.5, lng: 75.9 },
+    })
+    expect(result.outcome).toBe('recorded')
+    expect(result.far).toBe(false)
+    expect(result.distanceM).toBeNull()
+
+    const row = await db
+      .selectFrom('attendance')
+      .select(['checkin_at', 'checkin_lat', 'checkin_lng', 'checkin_far', 'checkin_site_key'])
+      .where('employee_id', '=', worker)
+      .where('attendance_date', '=', today())
+      .executeTakeFirstOrThrow()
+    expect(row.checkin_at).not.toBeNull()
+    expect(Number(row.checkin_lat)).toBeCloseTo(11.5, 5)
+    expect(Number(row.checkin_lng)).toBeCloseTo(75.9, 5)
+    expect(Number(row.checkin_far)).toBe(0)
+    expect(String(row.checkin_site_key)).toBe('site')
+  })
+
+  it('a Site CHECK-OUT also records without reference, and the HR day view flags it recorded — not far', async () => {
+    const out = await svc.selfCheckOut(db, actor, { employeeId: siteWorkerId, reading: { lat: 11.51, lng: 75.91 } })
+    expect(out.outcome).toBe('recorded')
+    expect(out.far).toBe(false)
+    expect(out.distanceM).toBeNull()
+
+    const rows = await q.farChecksOn(db, today())
+    const mine = rows.filter((r) => r.employee_id === siteWorkerId)
+    expect(mine.length).toBe(2) // check-in and check-out
+    for (const r of mine) {
+      expect(r.flag).toBe('recorded')
+      expect(r.lat).not.toBeNull()
+      expect(r.lng).not.toBeNull()
+    }
+  })
+
   it('writes a row for a NEAR reading, unflagged', async () => {
     const result = await svc.selfCheckIn(db, actor, {
       employeeId: workerId,

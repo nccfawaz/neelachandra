@@ -3844,13 +3844,20 @@ hr.get('/app/hr/attendance/far', requirePermission(PERMISSIONS.HR_ATTENDANCE_REC
   const date = dateParam(c, 'date')
 
   const [rows, summary] = await Promise.all([q.farChecksOn(db, date), q.dayAttendanceSummary(db, date)])
-  // Test rows never count toward the flagged total (DECISIONS 31.10).
+  // Test rows never count toward the flagged total (31.10); 'recorded'
+  // (36.1) is not a flag at all -- it is a reading without a reference, and
+  // is nothing to review.
   const flagged = rows.filter((r) => !r.test && (r.flag === 'far' || r.flag === 'unavailable')).length
 
+  /* 36.1: flag 'recorded' marks a reading captured against the generic Site
+   * -- no reference coordinate exists, so there is no distance and no
+   * pass/fail. Sushma is READING A POSITION, not judging one: the badge is
+   * neutral and the Maps link is the row's answer. */
   const flagBadge = (r: (typeof rows)[number]) => {
     if (r.test) return <span class="ncc-badge ncc-badge-muted">TEST</span>
     if (r.flag === 'far') return <span class="ncc-badge ncc-badge-danger">FAR</span>
     if (r.flag === 'unavailable') return <span class="ncc-badge ncc-badge-warn">no reading</span>
+    if (r.flag === 'recorded') return <span class="ncc-badge ncc-badge-muted">position — no reference</span>
     if (r.flag === '') return <span class="ncc-muted">—</span>
     return <span class="ncc-badge ncc-badge-ok">on site</span>
   }
@@ -3919,9 +3926,11 @@ hr.get('/app/hr/attendance/far', requirePermission(PERMISSIONS.HR_ATTENDANCE_REC
       <Panel title="Every reading — the detail">
         <Alert tone="warn">
           A far reading is recorded, never refused: the attendance always stands, and on_duty_travel days are
-          not exempt. FAR marks a real position beyond the 500 m threshold; "no reading" marks a check-in
-          whose device supplied no position. Both are review items, not corrections. TEST rows were written
-          in test mode and never count here.
+          not exempt. FAR marks a real position beyond the 500 m threshold at Head Office; "no reading" marks
+          a check-in whose device supplied no position. Both are review items, not corrections. A row marked
+          "position — no reference" is a SITE check-in (36.1): the coordinates shown ARE the record -- there
+          is no reference point, so there is no distance and no pass/fail. Open the Maps link to see where
+          the person was. TEST rows were written in test mode and never count here.
         </Alert>
         <DataTable
           columns={[

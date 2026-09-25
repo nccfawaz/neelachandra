@@ -1015,8 +1015,10 @@ export interface SelfCheckInput {
 
 export interface SelfCheckResult {
   /** 'ok' = real position, on site. 'far' = real position, beyond threshold.
-   *  'unavailable' = no valid reading; the row carries NULLs and the flag says so. */
-  outcome: 'ok' | 'far' | 'unavailable'
+   *  'unavailable' = no valid reading; the row carries NULLs and the flag says so.
+   *  'recorded' = a real position stored against a site with no reference
+   *  coordinates (the generic Site option, 36.1): captured, not judged. */
+  outcome: 'ok' | 'far' | 'unavailable' | 'recorded'
   far: boolean
   distanceM: number | null
 }
@@ -1059,14 +1061,26 @@ export async function selfCheckIn(
     const reading: LatLng | null =
       input.reading !== null && isValidReading(input.reading) ? input.reading : null
 
+    /* 36.1: a 'site' check-in has NO reference coordinates, so there is no
+     * distance to compute and no far flag to set -- the reading is the
+     * record. A good reading is stored and outcome 'recorded' (captured
+     * without reference); a failed device still stores NULLs as
+     * 'unavailable', exactly as everywhere else. */
     const siteCoords: LatLng | null = site.lat === null || site.lng === null ? null : { lat: site.lat, lng: site.lng }
-    const far = reading !== null && isFarFromSite(reading, siteCoords)
+    const hasReference = siteCoords !== null
+    const far = reading !== null && hasReference && isFarFromSite(reading, siteCoords)
     const distance =
-      reading === null || siteCoords === null
+      reading === null || !hasReference
         ? null
         : Math.round(distanceMeters(reading, siteCoords))
     const outcome: SelfCheckResult['outcome'] =
-      reading === null ? 'unavailable' : far ? 'far' : 'ok'
+      reading === null
+        ? 'unavailable'
+        : !hasReference
+          ? 'recorded'
+          : far
+            ? 'far'
+            : 'ok'
     const now = nowSqlDateTime()
     const day = today()
     const testMode = (await isCheckinTestMode(trx, input.employeeId)) ?? false
@@ -1186,13 +1200,20 @@ export async function selfCheckOut(
       input.reading !== null && isValidReading(input.reading) ? input.reading : null
 
     const siteCoords: LatLng | null = site.lat === null || site.lng === null ? null : { lat: site.lat, lng: site.lng }
-    const far = reading !== null && isFarFromSite(reading, siteCoords)
+    const hasReference = siteCoords !== null
+    const far = reading !== null && hasReference && isFarFromSite(reading, siteCoords)
     const distance =
-      reading === null || siteCoords === null
+      reading === null || !hasReference
         ? null
         : Math.round(distanceMeters(reading, siteCoords))
     const outcome: SelfCheckResult['outcome'] =
-      reading === null ? 'unavailable' : far ? 'far' : 'ok'
+      reading === null
+        ? 'unavailable'
+        : !hasReference
+          ? 'recorded'
+          : far
+            ? 'far'
+            : 'ok'
 
     await trx
       .updateTable('attendance')

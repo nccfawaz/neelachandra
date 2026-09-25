@@ -449,6 +449,9 @@ const checkinMessage = (r: ReturnType<typeof svc.selfCheckIn> extends Promise<in
     : r.outcome === 'far'
       ? 'Checked in. The reading was far from the site, so it has been flagged for HR review — your attendance stands.'
       : 'Checked in.'
+// 'recorded' (36.1) is a good reading against the generic Site: nothing was
+// flagged, so the plain success line is the honest one — the ?loc=stored
+// param already tells the panel to show "Location recorded".
 
 /* Which of the two things the worker needs to know happened (31.13): the
  * reading was stored, or it was not. Travels as ?loc= so the panel itself

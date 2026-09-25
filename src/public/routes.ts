@@ -101,8 +101,9 @@ for (const file of [
 publicSite.get('/app-sw.js', async (c) => {
   const found = await serve(c, '/public/assets/app-sw.js', ASSET_CACHE)
   if (!found) return c.notFound()
-  c.header('Service-Worker-Allowed', '/')
-  return found
+  const res = new Response(found.body, { status: found.status, headers: found.headers })
+  res.headers.set('Service-Worker-Allowed', '/')
+  return res
 })
 
 /* The twelve error documents ---------------------------------------------- */

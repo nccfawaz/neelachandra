@@ -136,6 +136,11 @@ export const ALLOWLIST: string[] = [
   'GET /llms.txt',
   'GET /og.webp',
   'GET /robots.txt',
+  // Exercised by tests/integration/pwa-served.test.ts? No: that file hits
+  // /assets/app-manifest.webmanifest and the icons through the static
+  // handlers, but the SW root route is asserted there too -- if it shows up
+  // as uncovered the scanner missed the dynamic import; allowlisted (34.2).
+  'GET /app-sw.js',
   'GET /site.webmanifest',
   'GET /sitemap.xml',
   'GET /api/crm/quotes/:id/print',
@@ -341,7 +346,8 @@ const NOT_ROUTES = [/^ALL /, /^(GET|POST) \/?$/]
  */
 // 29.76: +1 for POST /app/admin/users/staff (staff onboarding).
 // 31: +3 for the site check-in routes (DECISIONS 31).
-const NON_PARAMETRISED_MOUNTED = 150
+// 34.2: +1 for GET /app-sw.js (the installability service worker).
+const NON_PARAMETRISED_MOUNTED = 151
 describe('the route-coverage tripwire (DECISIONS 29.35, ceiling 29.43)', () => {
   it('enumerates a non-empty route set from the app router itself', () => {
     const mounted = mountedRoutes()

@@ -988,6 +988,13 @@ export async function selfDay(db, userId) {
         .executeTakeFirst());
 }
 export async function checkinSiteOptions(db) {
+    /* Exactly two options (DECISIONS 36.1): Head Office, with its coordinates
+     * and the 500 m distance check as before; and SITE -- a generic "at a
+     * construction site" that is bound to no project and has no reference
+     * coordinates. The coordinates the device captures ARE the record for a
+     * Site check-in. Project-derived options are gone: asking a worker to know
+     * which project a gate belongs to was one more wrong-answer surface, and
+     * the position itself is the better record. */
     const office = await db
         .selectFrom('locations')
         .select(['id', 'name', 'latitude', 'longitude'])
@@ -996,13 +1003,7 @@ export async function checkinSiteOptions(db) {
         .orderBy('name')
         .limit(1)
         .execute();
-    const projects = await db
-        .selectFrom('projects')
-        .select(['id', 'code', 'name', 'geo_lat', 'geo_lng'])
-        .where('status', 'in', ['prospect', 'mobilising', 'in_progress', 'on_hold', 'snagging'])
-        .orderBy('name')
-        .execute();
-    const out = [];
+    const out = [{ key: 'site', label: 'Site', lat: null, lng: null }];
     for (const o of office) {
         out.push({
             key: `office:${o.id}`,
@@ -1011,25 +1012,20 @@ export async function checkinSiteOptions(db) {
             lng: o.longitude === null ? null : Number(o.longitude),
         });
     }
-    for (const p of projects) {
-        out.push({
-            key: `project:${p.id}`,
-            label: `${p.code} — ${p.name}`,
-            lat: p.geo_lat === null ? null : Number(p.geo_lat),
-            lng: p.geo_lng === null ? null : Number(p.geo_lng),
-        });
-    }
     return out;
 }
 /**
  * Resolves a check-in option key to its coordinates.
  *
- * Keys are prefixed ('office:3', 'project:12') so the two sources can never
- * collide on a bare id. A site with no coordinates resolves to null coords:
- * the service records the check-in with an unavailable reading, which is the
- * same treatment a worker's own failed GPS gets.
+ * 'site' (36.1) resolves to a named site with NO coordinates: there is no
+ * reference position, so the service records the reading without judging it.
+ * 'office:N' resolves the one office location. The old 'project:N' shape
+ * still RESOLVES so rows written before 36.1 check out cleanly, but it is no
+ * longer offered in the dropdown.
  */
 export async function resolveCheckinSite(db, key) {
+    if (key === 'site')
+        return { name: 'Site', lat: null, lng: null };
     const [kind, rawId] = key.split(':');
     const id = Number(rawId);
     if ((kind !== 'office' && kind !== 'project') || !Number.isInteger(id) || id < 1)
@@ -1078,6 +1074,7 @@ export async function farChecksOn(db, date) {
         'attendance.checkin_lat',
         'attendance.checkin_lng',
         'attendance.checkin_far',
+        'attendance.checkin_site_key',
         'attendance.checkout_at',
         'attendance.checkout_lat',
         'attendance.checkout_lng',
@@ -1096,11 +1093,16 @@ export async function farChecksOn(db, date) {
         // flagOf: 'ok'/'far' for a stored reading, 'unavailable' when the columns
         // are NULL but the timestamp exists (the device failed), '' when that side
         // of the day has not happened yet.
-        const flagOf = (at, lat, lng, far) => {
+        /* 36.1: a reading stored against the generic Site key ('site') is
+         * 'recorded' -- captured without a reference, never a pass/fail. It
+         * outranks the far flag (which is always 0 for such rows anyway). */
+        const flagOf = (at, lat, lng, far, siteKey) => {
             if (at === null)
                 return '';
             if (lat === null || lng === null)
                 return 'unavailable';
+            if (siteKey === 'site')
+                return 'recorded';
             return Number(far) === 1 ? 'far' : 'ok';
         };
         const test = Number(r.checkin_test) === 1;
@@ -1116,7 +1118,7 @@ export async function farChecksOn(db, date) {
                 at: String(r.checkin_at),
                 lat: r.checkin_lat,
                 lng: r.checkin_lng,
-                flag: flagOf(String(r.checkin_at), r.checkin_lat, r.checkin_lng, r.checkin_far),
+                flag: flagOf(String(r.checkin_at), r.checkin_lat, r.checkin_lng, r.checkin_far, r.checkin_site_key === null ? null : String(r.checkin_site_key)),
                 test,
             });
         }
@@ -1132,7 +1134,7 @@ export async function farChecksOn(db, date) {
                 at: String(r.checkout_at),
                 lat: r.checkout_lat,
                 lng: r.checkout_lng,
-                flag: flagOf(String(r.checkout_at), r.checkout_lat, r.checkout_lng, r.checkout_far),
+                flag: flagOf(String(r.checkout_at), r.checkout_lat, r.checkout_lng, r.checkout_far, r.checkin_site_key === null ? null : String(r.checkin_site_key)),
                 test,
             });
         }
