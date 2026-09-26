@@ -53,3 +53,13 @@ core.*
 .freebuff-*.log.err
 test-results/
 .test-login.env
+
+# Local one-off scratch scripts and secrets kept in the working root by the
+# owner — never to be committed or deleted. Ignored by exact name.
+/secrets.txt
+/att.mjs
+/clear-att.mjs
+/fix-att.mjs
+/perms.mjs
+/testmode.mjs
+/scripts/tmp-debug.mjs
