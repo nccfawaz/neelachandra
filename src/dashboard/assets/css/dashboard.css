@@ -21,7 +21,7 @@
      stricter of Material's 48dp and Apple's 44pt, and the check-in button's
      existing height (31.11), so 48 is the one number the app already ships. */
   --ncc-tap: 48px;
-  --ncc-bg: #f6f6f4;
+  --ncc-bg: #f5f7fa;
   --ncc-surface: #ffffff;
   --ncc-text: #20262f;
   --ncc-text-muted: #5b6472;
@@ -32,6 +32,11 @@
   --ncc-ok-soft: #e7f3ec;
   --ncc-warn: #8a5a00;
   --ncc-warn-soft: #fdf3e0;
+  /* The single overlay navy, as an alpha-composable channel triplet (DECISIONS
+     38): one token serves the modal/nav backdrop (0.45) and the matrix
+     edge-shadow stops (0.22, 0). A hex token cannot carry three alphas, so the
+     scrim is the one token expressed as rgb channels rather than a hex value. */
+  --ncc-scrim-rgb: 20, 24, 31;
   --ncc-radius: 10px;
   --ncc-radius-sm: 6px;
   --ncc-font: 'DM Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;
@@ -123,7 +128,7 @@ code {
 .ncc-btn-primary {
   background: var(--ncc-accent);
   border-color: var(--ncc-accent);
-  color: #ffffff;
+  color: var(--ncc-surface);
 }
 
 .ncc-btn-primary:hover {
@@ -189,6 +194,16 @@ code {
   overflow-x: auto;
 }
 
+/* Designed mobile list cards (DECISIONS 38). A list page passes DataTable a
+   `card` descriptor; the component then emits the normal table PLUS a sibling
+   <ul class="ncc-listcards">. On desktop the list is hidden and the table
+   shows; below the breakpoint the carded table hides and the list shows, so
+   the generic 37.4 transpose is replaced by a purpose-built card. Non-carded
+   tables are untouched and still transpose. */
+.ncc-listcards {
+  display: none;
+}
+
 .ncc-table th,
 .ncc-table td {
   text-align: left;
@@ -206,7 +221,7 @@ code {
 }
 
 .ncc-table tbody tr:hover {
-  background: #faf9f7;
+  background: var(--ncc-bg);
 }
 
 .ncc-badge {
@@ -301,9 +316,9 @@ code {
 }
 
 .ncc-sidebar {
-  background: #f5f7fa;
-  color: #3a4353;
-  border-right: 1px solid #e2e7ee;
+  background: var(--ncc-surface);
+  color: var(--ncc-text);
+  border-right: 1px solid var(--ncc-border);
   padding: 0.9rem 0 2rem;
   position: sticky;
   top: 0;
@@ -318,7 +333,7 @@ code {
   align-items: flex-start;
   gap: 0.25rem;
   padding: 0.9rem 1.1rem 1.1rem;
-  color: #3a4353;
+  color: var(--ncc-text);
   font-weight: 700;
   letter-spacing: -0.01em;
 }
@@ -346,28 +361,28 @@ code {
   /* 29.61: #8a94a3 on #f5f7fa measured 2.86:1 in Chromium — below even the
      3:1 large-text floor, and 0.68rem/700 is not large text. Darkened to the
      shared muted token, 5.16:1 on this background. */
-  color: #5b6472;
+  color: var(--ncc-text-muted);
 }
 
 .ncc-sidebar a.ncc-navlink,
 .ncc-sidebar span.ncc-navlink {
   display: block;
   padding: 0.44rem 1.1rem;
-  color: #3a4353;
+  color: var(--ncc-text);
   font-size: 0.9rem;
   border-left: 3px solid transparent;
 }
 
 .ncc-sidebar a.ncc-navlink:hover {
-  background: #e9edf3;
-  color: #1d2530;
+  background: var(--ncc-bg);
+  color: var(--ncc-text);
   text-decoration: none;
 }
 
 .ncc-sidebar a.ncc-navlink[aria-current='page'] {
-  background: #e9edf3;
+  background: var(--ncc-bg);
   border-left-color: var(--ncc-accent);
-  color: #1d2530;
+  color: var(--ncc-text);
   font-weight: 600;
 }
 
@@ -538,20 +553,20 @@ code {
 
 .ncc-alert--error {
   background: var(--ncc-danger-soft);
-  border-color: #f2c7c3;
-  color: #7f1a15;
+  border-color: var(--ncc-danger);
+  color: var(--ncc-danger);
 }
 
 .ncc-alert--ok {
   background: var(--ncc-ok-soft);
-  border-color: #bfe0cc;
-  color: #14532b;
+  border-color: var(--ncc-ok);
+  color: var(--ncc-ok);
 }
 
 .ncc-alert--warn {
   background: var(--ncc-warn-soft);
-  border-color: #ecd9ae;
-  color: #6d4700;
+  border-color: var(--ncc-warn);
+  color: var(--ncc-warn);
 }
 
 /* Auth screens reuse the login page look */
@@ -796,8 +811,8 @@ code {
   background-image:
     linear-gradient(to right, var(--ncc-surface), rgba(255, 255, 255, 0)),
     linear-gradient(to left, var(--ncc-surface), rgba(255, 255, 255, 0)),
-    radial-gradient(farthest-side at 0 50%, #14181f38, #14181f00),
-    radial-gradient(farthest-side at 100% 50%, #14181f38, #14181f00);
+    radial-gradient(farthest-side at 0 50%, rgba(var(--ncc-scrim-rgb), 0.22), rgba(var(--ncc-scrim-rgb), 0)),
+    radial-gradient(farthest-side at 100% 50%, rgba(var(--ncc-scrim-rgb), 0.22), rgba(var(--ncc-scrim-rgb), 0));
   background-position: 0 0, 100% 0, 0 0, 100% 0;
   background-size: 28px 100%, 28px 100%, 16px 100%, 16px 100%;
   background-repeat: no-repeat;
@@ -844,7 +859,7 @@ code {
     bottom: 0;
     left: 0;
     z-index: 30;
-    background: #14181f73;
+    background: rgba(var(--ncc-scrim-rgb), 0.45);
     border: 0;
   }
 
@@ -959,6 +974,65 @@ code {
     text-align: left;
   }
 
+  /* 38: a carded list hides the transposed table entirely and shows the
+     designed cards instead. Only tables given a `card` descriptor carry
+     .ncc-carded, so every other table still transposes via the rule above. */
+  .ncc-table-scroll.ncc-carded {
+    display: none;
+  }
+
+  .ncc-listcards {
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+
+  .ncc-listcard {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+    min-height: var(--ncc-tap);
+    padding: 0.7rem 0.9rem;
+    border: 1px solid var(--ncc-border);
+    border-radius: var(--ncc-radius-sm);
+    background: var(--ncc-surface);
+    color: var(--ncc-text);
+    text-decoration: none;
+  }
+
+  .ncc-listcard:hover {
+    border-color: var(--ncc-accent);
+    text-decoration: none;
+  }
+
+  .ncc-listcard__primary {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 0.5rem;
+    font-size: 1rem;
+  }
+
+  .ncc-listcard__code,
+  .ncc-listcard__amt {
+    color: var(--ncc-text-muted);
+    font-size: 0.85rem;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+
+  .ncc-listcard__secondary {
+    color: var(--ncc-text-muted);
+    font-size: 0.85rem;
+  }
+
+  .ncc-listcard__status {
+    margin-top: 0.15rem;
+  }
+
   /* 37.4 exception: the attendance matrix is the one table that keeps its
      grid — a stacked 31-day card would be unreadable. It scrolls sideways
      with the edge shadow instead. */
@@ -1023,7 +1097,7 @@ code {
   font: inherit;
   font-size: 1.05rem;
   font-weight: 600;
-  color: #ffffff;
+  color: var(--ncc-surface);
   background: var(--ncc-accent);
   border: 1px solid var(--ncc-accent);
   border-radius: var(--ncc-radius-sm);

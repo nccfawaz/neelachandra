@@ -256,7 +256,22 @@ hr.get('/app/hr/employees', requirePermission(PERMISSIONS.HR_EMPLOYEE_VIEW), asy
         </button>
       </form>
       <Panel title="Employees">
-        <DataTable columns={columns} rows={rows} empty="No employee matches that filter." />
+        <DataTable
+          columns={columns}
+          rows={rows}
+          empty="No employee matches that filter."
+          card={{
+            href: (r) => `/app/hr/employees/${r.id}`,
+            primary: (r) => (
+              <>
+                <strong>{r.full_name}</strong>
+                <span class="ncc-listcard__code">{r.employee_code}</span>
+              </>
+            ),
+            secondary: (r) => `${r.designation_name ?? '—'} · ${r.department_name ?? '—'}`,
+            status: (r) => <StatusBadge status={r.status} />,
+          }}
+        />
       </Panel>
     </>
   )
@@ -1406,7 +1421,7 @@ export function AttendanceGrid(props: {
   if (!editable) {
     return (
       <>
-        {table}
+        <div class="ncc-matrix">{table}</div>
         <MarkLegend keys={false} />
       </>
     )
@@ -2311,12 +2326,14 @@ hr.get('/app/hr/reports/muster', requirePermission(PERMISSIONS.HR_EMPLOYEE_VIEW)
           Printed Form XVI is drawn from this register. Muster-excluded employees (the owner) are left off
           it by design: the exclusion is a write gate as well, so no attendance row can exist for them.
         </Alert>
-        <DataTable
-          columns={columns}
-          rows={rows}
-          empty="Nobody was on the books in this month."
-          caption={`${totalMarked} of ${roster.length * days.length} employee-days are marked. Unmarked days count as nothing, not as absent.`}
-        />
+        <div class="ncc-matrix">
+          <DataTable
+            columns={columns}
+            rows={rows}
+            empty="Nobody was on the books in this month."
+            caption={`${totalMarked} of ${roster.length * days.length} employee-days are marked. Unmarked days count as nothing, not as absent.`}
+          />
+        </div>
         <p class="ncc-hint">
           P present · A absent · ½ half day · WO weekly off · H holiday · PL paid leave · LWP unpaid ·
           OD on duty travel · CO comp off · · not marked · — not employed. Payable counts present, on duty,
@@ -2441,7 +2458,32 @@ hr.get('/app/hr/contractors', requirePermission(PERMISSIONS.HR_LABOUR_CONTRACTOR
         </button>
       </form>
       <Panel title="Labour contractors">
-        <DataTable columns={columns} rows={rows} empty="No contractor matches that filter." />
+        <DataTable
+          columns={columns}
+          rows={rows}
+          empty="No contractor matches that filter."
+          card={{
+            href: (r) => `/app/hr/contractors/${r.id}`,
+            primary: (r) => (
+              <>
+                <strong>{r.name}</strong>
+                <span class="ncc-listcard__code">{r.code}</span>
+              </>
+            ),
+            secondary: (r) => `${r.trade_specialisation ?? '—'} · ${r.contact_phone ?? '—'}`,
+            status: (r) => {
+              const lic = r.licence_valid_until !== null && expired(r.licence_valid_until, now)
+              const wc = r.wc_policy_valid_until !== null && expired(r.wc_policy_valid_until, now)
+              return lic || wc ? (
+                <span class="ncc-badge ncc-badge-danger">
+                  {lic && wc ? 'licence & WC expired' : lic ? 'licence expired' : 'WC expired'}
+                </span>
+              ) : (
+                <StatusBadge status={r.status} />
+              )
+            },
+          }}
+        />
         <p class="ncc-hint">
           These are firms, not employees. Nothing on this screen creates a row in the employee master, and a
           contractor's workers are counted by skill level rather than named, because their employment sits with
@@ -3552,7 +3594,28 @@ hr.get('/app/hr/contractor-bills', requirePermission(PERMISSIONS.HR_LABOUR_CONTR
         </button>
       </form>
       <Panel title="Bills">
-        <DataTable columns={billColumns({ showContractor: true })} rows={bills} empty="No bill matches that filter." />
+        <DataTable
+          columns={billColumns({ showContractor: true })}
+          rows={bills}
+          empty="No bill matches that filter."
+          card={{
+            href: (r) => `/app/hr/contractor-bills/${r.id}`,
+            primary: (r) => (
+              <>
+                <strong>{r.bill_no}</strong>
+                <span class="ncc-listcard__amt">
+                  <Money paise={r.net_payable_paise} />
+                </span>
+              </>
+            ),
+            secondary: (r) => (
+              <>
+                {r.contractor_name} · {r.project_code}
+              </>
+            ),
+            status: (r) => <StatusBadge status={r.status} />,
+          }}
+        />
       </Panel>
       {canContractors(c) ? (
         <Panel title="Generate a bill">

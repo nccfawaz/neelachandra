@@ -26,7 +26,12 @@ const ROOT = path.resolve(__dirname, '../..')
 /* geo: 'success' answers instantly, 'denied' errors instantly, 'slow' answers
  * after ~1.5 s (so the in-flight state can be asserted), 'timeout' never
  * answers (so the script's own 10.5 s deadline governs). */
-function panelHtml(action: 'checkin' | 'checkout', withScript = true, geo: 'success' | 'denied' | 'slow' | 'timeout' = 'success'): string {
+function panelHtml(
+  action: 'checkin' | 'checkout',
+  withScript = true,
+  geo: 'success' | 'denied' | 'slow' | 'timeout' = 'success',
+  confirm: 'unavailable' | 'stored' | null = null,
+): string {
   const buttonText = action === 'checkin' ? 'Check in' : 'Check out'
   // 36.2: mirror the REAL panel — one form, action always the check-in
   // endpoint, and the check-out button overriding it with formaction.
@@ -48,6 +53,7 @@ function panelHtml(action: 'checkin' | 'checkout', withScript = true, geo: 'succ
     <input type="hidden" name="lat" value=""><input type="hidden" name="lng" value="">
     ${action === 'checkin' ? '<label class="ncc-field">Site<select name="siteKey"><option>OFFICE — Head office</option></select></label>' : '<p class="ncc-checkin-time">Checked in at 2026-09-24 08:12:44</p>'}
     ${action === 'checkin' ? '<button type="submit" class="ncc-checkin-btn">Check in</button>' : '<button type="submit" class="ncc-checkin-btn" formaction="/app/attendance/checkout">Check out</button>'}
+    ${confirm === 'unavailable' ? '<p class="ncc-checkin-confirm" role="status">Checked in — location unavailable. Your attendance stands; the row is marked so HR can follow up if the site matters.</p>' : confirm === 'stored' ? '<p class="ncc-checkin-confirm" role="status">Location recorded at 2026-09-24 08:12:44</p>' : ''}
   </form>
   <p class="ncc-checkin-note">Location is recorded when you press the button — at check-in and check-out only. Your position is not tracked at any other time.</p>
 </section>
@@ -63,10 +69,13 @@ function startServer(geo: 'success' | 'denied' | 'slow' | 'timeout' = 'success')
   const pages = new Map<string, string>([
     ['/', panelHtml('checkin', true, geo)],
     ['/checkout', panelHtml('checkout', true, geo)],
+    // The post-press status line, in the shape the real panel renders it after
+    // a check-in whose reading never arrived (routes.tsx: loc==='unavailable').
+    ['/confirm-unavailable', panelHtml('checkout', true, geo, 'unavailable')],
   ])
   const server = createServer(async (req, res) => {
     const url = new URL(req.url ?? '/', 'http://localhost')
-    if (url.pathname === '/' || url.pathname === '/checkout') {
+    if (url.pathname === '/' || url.pathname === '/checkout' || url.pathname === '/confirm-unavailable') {
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
       res.end(pages.get(url.pathname))
       return
@@ -178,6 +187,65 @@ describe('the check-in button as Chromium computes it on a phone', () => {
       expect(parseFloat(note.size)).toBeLessThan(14)
       // Muted grey, not the body text colour.
       expect(note.color).not.toBe('rgb(32, 38, 47)')
+    } finally {
+      server.close()
+      await page.close()
+    }
+  })
+
+  /* The post-press status line (DECISIONS 31.13) is the only part of the
+   * panel never measured on a phone. It renders inside the form after the
+   * button when a press stored no reading — the worker's confirmation that
+   * attendance stood without a location. On a 390px phone the two-sentence
+   * "location unavailable" text is the longest string the panel shows, so it
+   * is the overflow risk: assert its computed type AND that it wraps inside
+   * the card rather than pushing a horizontal scrollbar. */
+  it('the location-unavailable confirm line: computed type, and it wraps inside the card at 390px', async () => {
+    const { server, origin } = await startServer()
+    const page = await browser.newPage({ viewport: { width: 390, height: 844 } })
+    try {
+      await page.goto(origin + '/confirm-unavailable', { waitUntil: 'networkidle' })
+      const confirm = await page.$eval('.ncc-checkin-confirm', (el) => {
+        const cs = getComputedStyle(el)
+        const card = el.closest('.ncc-card')!.getBoundingClientRect()
+        const r = el.getBoundingClientRect()
+        return {
+          text: el.textContent?.trim(),
+          fontSize: cs.fontSize,
+          color: cs.color,
+          // Overflow: the line's own content never exceeds its box (it wraps),
+          // and the box stays within the card's edges.
+          scrollWidth: el.scrollWidth,
+          clientWidth: el.clientWidth,
+          right: r.right,
+          left: r.left,
+          cardRight: card.right,
+          cardLeft: card.left,
+        }
+      })
+      console.log('[checkin-confirm computed]', JSON.stringify(confirm, null, 1))
+
+      // The full real-panel text, not a shortened paraphrase.
+      expect(confirm.text).toBe(
+        'Checked in — location unavailable. Your attendance stands; the row is marked so HR can follow up if the site matters.',
+      )
+      // 0.9rem = 14.4px, semibold, --ncc-text (#20262f) — the confirmation is
+      // primary text, deliberately not the muted grey of the note below it.
+      expect(confirm.fontSize).toBe('14.4px')
+      expect(confirm.color).toBe('rgb(32, 38, 47)')
+
+      // No horizontal overflow: the text wrapped rather than running past its
+      // own box (scrollWidth would exceed clientWidth if a word forced a
+      // scroll), and the box sits within the card content edges.
+      expect(confirm.scrollWidth, 'the confirm text must wrap, not overflow its box').toBeLessThanOrEqual(
+        confirm.clientWidth,
+      )
+      expect(confirm.right, 'the confirm line must not spill past the card right edge').toBeLessThanOrEqual(
+        confirm.cardRight,
+      )
+      expect(confirm.left, 'the confirm line stays within the card left edge').toBeGreaterThanOrEqual(
+        confirm.cardLeft,
+      )
     } finally {
       server.close()
       await page.close()

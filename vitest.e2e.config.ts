@@ -30,7 +30,7 @@ import { defineConfig } from 'vitest/config'
  */
 export default defineConfig({
   test: {
-    include: ['tests/e2e/**/*.test.ts'],
+    include: ['tests/e2e/**/*.test.{ts,tsx}'],
     setupFiles: ['tests/setup-env.ts'],
     environment: 'node',
     restoreMocks: true,

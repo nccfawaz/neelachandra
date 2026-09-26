@@ -7494,3 +7494,134 @@ browser via the served CSS.
 - `npm run test:integration` (MariaDB :3307): 49 files, 485 tests, served-css
   among them.
 - e2e (`vitest.e2e.config.ts`, Playwright Chromium): 5 files, 17 tests.
+
+## 38. Stage 2 continued: the colour rework and the People section, 2026-09-25
+
+Built 2026-09-25 on branch `mobile-redesign`, continuing §37. Three things: the
+palette is reduced to a fixed token set with the page background moved to
+`#f5f7fa`; the People list pages get a purpose-built mobile card instead of the
+generic §37.4 transpose; the two remaining stacked attendance grids are made to
+scroll sideways like the matrix. Every figure below is a value Chromium computed
+at 390 × 844 (and desktop where stated) against the SERVED stylesheet, or a byte
+asserted in what the router serves; each is held by a named assertion.
+
+### 38.1 The palette — one accent, one green, everything else neutral
+
+The complete token set in `:root` (`src/dashboard/assets/css/dashboard.css`),
+with the exact hex each resolves to. No page may introduce a colour outside it.
+
+- `--ncc-accent: #f48120` — brand orange, the SINGLE accent (buttons, links,
+  focus, active nav, the check-in button). Unified in §37.7; §38 does not touch it.
+- `--ncc-bg: #f5f7fa` — the page background (was `#f6f6f4`). This is the colour
+  the sidebar itself used to be; see §38.2 for how the two are kept distinct.
+- `--ncc-surface: #ffffff` — cards, the sidebar, the topbar, any raised panel.
+- `--ncc-text: #20262f` — body text. `--ncc-border: #e3e5e8` — hairlines.
+- `--ncc-ok: #1b6e3c` with `--ncc-ok-soft: #e7f3ec` — the ONE green. Permitted
+  ONLY on success/positive states: the `.ncc-badge-ok` status badge (soft bg +
+  green text) and the `.ncc-alert--ok` success alert (soft bg, green border and
+  text). It is not a second accent and appears nowhere else.
+- `--ncc-danger: #b3261e`, `--ncc-warn: #8a5a00` — error and warning states only.
+- `--ncc-scrim-rgb: 20, 24, 31` — a CHANNEL TRIPLET, not a colour, because one
+  overlay colour is consumed at three alphas that a hex token cannot carry: the
+  nav backdrop `rgba(var(--ncc-scrim-rgb),.45)` and the matrix edge-shadow radial
+  layers `rgba(var(--ncc-scrim-rgb),.22)`→`rgba(var(--ncc-scrim-rgb),0)`. Kept as
+  a triplet with the space after the colon preserved (custom-prop rule) so the
+  css-build-staleness gate matches source to build.
+
+Served-CSS proof (`tests/integration/served-css.test.ts`): `--ncc-bg: #f5f7fa`,
+`--ncc-scrim-rgb: 20, 24, 31`, and `rgba(var(--ncc-scrim-rgb),.45)` are all pinned
+in what the router serves.
+
+**Exemptions (two classes, neither is a CSS colour the token set governs).**
+- `AppShell.tsx:76` `<meta name="theme-color" content="#f48120">`: an HTML meta
+  attribute, which cannot reference a CSS custom property. It is the literal of
+  `--ncc-accent`; if the accent moves, this moves with it.
+- The inline PRINT stylesheets for generated documents — CRM quote
+  (`src/modules/crm/routes.tsx` ~2562–2585) and inventory GRN/PO
+  (`src/modules/inventory/routes.tsx` ~1730–1752). These are self-contained
+  print sheets (pt/mm units, their own greys) for paper output, not the app
+  chrome; they are outside the screen token set by design.
+
+### 38.2 The sidebar stays distinct from the page
+
+Moving `--ncc-bg` to `#f5f7fa` collided with the old sidebar, which was that same
+`#f5f7fa` — they would have merged into one flat surface. The sidebar is now
+`var(--ncc-surface)` (white) with a `1px` right border in `var(--ncc-border)`.
+`tests/e2e/sidebar-browser.test.ts` reads the computed `.ncc-sidebar`
+`background-color` as `rgb(255, 255, 255)`, asserts it is NOT equal to the
+computed `body` background, and asserts `border-right-width > 0` — so a regression
+that let the two colours merge again goes red on the inequality, not just the hex.
+This supersedes the §29-era note that "the sidebar is light `#f5f7fa`".
+
+### 38.3 The designed People list card (supersedes the generic transpose there)
+
+The §37.4 transpose is correct but blunt: on the Employees list at 390px it
+emitted seven label/value rows per person, unreadable. §38 adds an OPTIONAL
+`card` descriptor to `DataTable` (`src/dashboard/components/index.tsx`):
+
+```
+interface CardDescriptor<T> {
+  href: (row) => string        // whole card is one <a> to the detail page
+  primary: (row) => Child      // name + code line
+  secondary?: (row) => Child   // one chosen line
+  status?: (row) => Child      // a badge
+}
+```
+
+When `card` is present the scroll wrapper is `class="ncc-table-scroll ncc-carded"`
+and a sibling `<ul class="ncc-listcards">` is emitted; at ≤768px the carded table
+is `display:none` and the list of cards shows, each card an `<a>` (navigation with
+JS off), `min-height:var(--ncc-tap)`. Above 768px the cards are `display:none` and
+the full table shows. `tests/e2e/people-listcards.test.tsx` renders the REAL
+`DataTable` with a real descriptor and reads: at 390px the carded table computes
+`display:none` while `.ncc-listcards` computes `flex`, the card is an `A` with the
+right `href`, computed `min-height:48px`, height ≥ 48, and no content overflow; at
+1280px the table shows and the cards compute `display:none`. Served CSS carries
+`.ncc-listcard` and `.ncc-table-scroll.ncc-carded` (served-css test). The generic
+transpose is KEPT wherever no designed card exists yet.
+
+**Per-page field choices (which two/three fields earn the card; the rest move to
+the detail page).** All list routes are in `src/modules/hr/routes.tsx`.
+
+- **Employees** — primary: full name + `employee_code`; secondary: designation ·
+  department; status: `StatusBadge`. To detail: employment type, joined date,
+  phone.
+- **Contractors** — primary: name + code; secondary: trade · phone; status: a
+  danger badge reading "licence & WC expired" / "licence expired" / "WC expired"
+  when `expired(...)`, else `StatusBadge`. To detail: licence/WC dates, ESI/PF.
+- **Contractor bills** — primary: `bill_no` + net payable (`<Money>`); secondary:
+  contractor · project code; status: `StatusBadge`. To detail: gross, period.
+- **Leave** and **Site check-ins** — KEEP the generic transpose. Leave has an
+  interactive in-row Withdraw form (no plain detail link to be a card), and
+  check-ins are a read-only log with no detail route. A card needs a detail
+  target and a single tap action; neither page has one yet.
+
+### 38.4 The two read-only attendance grids scroll sideways, not stacked
+
+A 31-day roster stacked into cards is unreadable. The editable grid already
+scrolled (its form carries `.ncc-matrix`); §38 wraps the read-only
+`AttendanceGrid` branch and the muster roll each in `<div class="ncc-matrix">`
+too, so they inherit the same sideways scroll AND the frozen first (name) column
+that `.ncc-matrix` already provides. `tests/e2e/matrix-scroll.test.ts` gains a
+second test that renders the real `DataTable` inside a `<div class="ncc-matrix">`
+and reads: `overflow-x:auto`, `scrollWidth > clientWidth` at 390px, the first body
+cell computes `position:sticky` and `left:0px`, and its on-screen x is unchanged
+(±1px) after `scrollLeft = 400` — the name column stays put while the days scroll.
+The edge-shadow affordance is the same pure-CSS local/scroll layering proven for
+the matrix.
+
+### 38.5 Gate counts, 2026-09-25 (Stage 2 continued)
+
+- `npm run typecheck`: clean (`tsc -p tsconfig.json`).
+- e2e (`vitest.e2e.config.ts`, Playwright Chromium): **6 files, 21 tests, all
+  green** — adds `people-listcards.test.tsx` (2) and the second matrix-scroll test
+  (+1) to §37.9's 5/17. The e2e include glob is widened to `*.test.{ts,tsx}` so the
+  card test, which legitimately uses JSX literals, is collected.
+- `npm run test:integration` (MariaDB :3307): **484 of 485 green**, served-css
+  among the green. The one red is `session-flavour-flow.test.ts` ("a staff session
+  inside half-life … the cookie is rewritten") — a session-renewal timing test,
+  unrelated to this work (untouched by the §38 diff, which is CSS + `DataTable` +
+  HR routes + the e2e/served-css tests). Flagged, not fixed: out of scope for the
+  mobile pass and pre-existing on this checkout.
+
+

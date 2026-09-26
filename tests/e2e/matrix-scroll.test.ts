@@ -157,4 +157,81 @@ describe('the attendance matrix scroll affordance as Chromium computes it on a p
       await page.close()
     }
   })
+
+  /* DECISIONS 38: the read-only AttendanceGrid branch and the muster roll used
+   * a plain DataTable and so STACKED to cards on a phone — a 31-day roster is
+   * unreadable stacked. §38 wraps both in a `<div class="ncc-matrix">`, the
+   * same ancestor the editable grid's form carries, so they inherit the
+   * sideways scroll AND the frozen first (name) column. This proves the div
+   * wrapper (not just the form) delivers both: horizontal overflow and a
+   * sticky, offset-0 name column that stays put when the grid is scrolled. */
+  it('a div-wrapped read-only grid scrolls sideways and freezes the name column at the left edge', async () => {
+    const table = renderToString(DataTable<Row>({ columns, rows }) as never)
+    const html = `<!doctype html><html lang="en"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="stylesheet" href="/assets/css/dashboard.css"></head>
+<body><main style="max-width:100vw;padding:1rem">
+<div class="ncc-matrix">${table}</div></main></body></html>`
+    const srv = createServer(async (req, res) => {
+      const url = new URL(req.url ?? '/', 'http://localhost')
+      if (url.pathname === '/') {
+        res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
+        res.end(html)
+        return
+      }
+      if (url.pathname.startsWith('/assets/')) {
+        try {
+          const file = path.join(ROOT, 'public', url.pathname.replace(/^\/+/, ''))
+          const body = await readFile(file)
+          res.writeHead(200, { 'content-type': CONTENT_TYPES[path.extname(file)] ?? 'application/octet-stream' })
+          res.end(body)
+        } catch {
+          res.writeHead(404).end('not found')
+        }
+        return
+      }
+      res.writeHead(404).end('not found')
+    })
+    const origin = await new Promise<string>((resolve) => {
+      srv.listen(0, '127.0.0.1', () => {
+        const a = srv.address()
+        resolve(`http://127.0.0.1:${typeof a === 'object' && a ? a.port : 0}`)
+      })
+    })
+    const page = await browser.newPage({ viewport: { width: 390, height: 844 } })
+    try {
+      await page.goto(origin + '/', { waitUntil: 'networkidle' })
+
+      // The div wrapper still overflows sideways rather than stacking to cards.
+      const scroll = await page.$eval('.ncc-matrix .ncc-table-scroll', (el) => ({
+        overflowX: getComputedStyle(el).overflowX,
+        wider: el.scrollWidth > el.clientWidth,
+      }))
+      expect(scroll.overflowX).toBe('auto')
+      expect(scroll.wider, 'the read-only grid must be wider than the phone viewport').toBe(true)
+
+      // The first cell in a body row is the frozen name column: sticky, pinned
+      // to the left, and it keeps its on-screen x when the grid is scrolled.
+      const firstCellSel = '.ncc-matrix .ncc-table tbody tr:first-child td:first-child'
+      const before = await page.$eval(firstCellSel, (el) => {
+        const cs = getComputedStyle(el)
+        return { position: cs.position, left: cs.left, x: el.getBoundingClientRect().left }
+      })
+      expect(before.position, 'the name column is sticky').toBe('sticky')
+      expect(before.left, 'the name column is pinned to the left edge').toBe('0px')
+
+      await page.$eval('.ncc-matrix .ncc-table-scroll', (el) => {
+        el.scrollLeft = 400
+      })
+      await page.waitForTimeout(50)
+      const after = await page.$eval(firstCellSel, (el) => el.getBoundingClientRect().left)
+      expect(
+        Math.abs(after - before.x),
+        `the frozen name column must not move when scrolled (before ${before.x}, after ${after})`,
+      ).toBeLessThanOrEqual(1)
+    } finally {
+      srv.close()
+      await page.close()
+    }
+  })
 })

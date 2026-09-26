@@ -21,7 +21,11 @@ import { sweepFixtures, fixtureEmail, fixtureName } from './fixture-markers.js'
 
 /** Declarations that must exist in the served CSS (the 29.59/29.60 fixes). */
 const DECLARATIONS: [string, string][] = [
-  ['f5f7fa', 'sidebar background #f5f7fa'],
+  // Page background is #f5f7fa (DECISIONS 38). The sidebar was this colour
+  // before §38; now the sidebar is white (var(--ncc-surface)) so it stays
+  // distinct from the page — sidebar-browser.test.ts proves that separation
+  // with computed values.
+  ['--ncc-bg: #f5f7fa', 'the page background token is #f5f7fa (38)'],
   ['span.ncc-navlink', 'disabled items get the block nav-item rule'],
   ['.ncc-sidebar__lockup', 'logo lockup sizing rule'],
   // The check-in button (DECISIONS 31.11): brand orange, phone-sized. After
@@ -53,6 +57,13 @@ const DECLARATIONS: [string, string][] = [
   ['.ncc-nav-toggle:checked', 'the drawer open state is the checkbox, no JS'],
   ['transform:translate(-100%)', 'the drawer sits off-canvas until opened'],
   ['attr(data-label)', 'stacked cards label each cell from its column header'],
+  // Stage 2 colour rework and designed list cards (DECISIONS 38): the single
+  // overlay scrim token, the nav backdrop consuming it, and the purpose-built
+  // list card that replaces the generic transpose on People list pages.
+  ['--ncc-scrim-rgb: 20, 24, 31', 'the single overlay scrim token (38)'],
+  ['rgba(var(--ncc-scrim-rgb),.45)', 'the nav backdrop paints from the scrim token (38)'],
+  ['.ncc-listcard', 'the designed mobile list-card rule reaches the browser (38)'],
+  ['.ncc-table-scroll.ncc-carded', 'a carded table hides its transpose on mobile (38)'],
 ]
 
 describe('the app layout serves its stylesheet with the required declarations', () => {

@@ -178,41 +178,73 @@ export interface Column<T> {
   numeric?: boolean
 }
 
+/**
+ * A designed mobile list card (DECISIONS 38). A list page whose generic
+ * transpose is unreadable (seven label/value rows per person) passes this
+ * instead: a primary line, one secondary line and a status, the whole card a
+ * link to the detail page. The remaining columns live on the detail page, not
+ * the list. Below 768px the table is hidden and these cards show; on desktop
+ * the table shows and the cards are hidden.
+ */
+export interface CardDescriptor<T> {
+  href: (row: T) => string
+  primary: (row: T) => Child
+  secondary?: (row: T) => Child
+  status?: (row: T) => Child
+}
+
 export function DataTable<T>(props: {
   columns: Column<T>[]
   rows: T[]
   empty?: string
   caption?: string
+  card?: CardDescriptor<T>
 }) {
   if (props.rows.length === 0) {
     return <div class="ncc-empty">{props.empty ?? 'Nothing to show yet.'}</div>
   }
+  const card = props.card
   return (
-    <div class="ncc-table-scroll">
-      <table class="ncc-table">
-        {props.caption ? <caption class="ncc-hint">{props.caption}</caption> : null}
-        <thead>
-          <tr>
-            {props.columns.map((col) => (
-              <th scope="col" class={col.numeric ? 'ncc-num' : undefined}>
-                {col.header}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {props.rows.map((row) => (
+    <>
+      <div class={card ? 'ncc-table-scroll ncc-carded' : 'ncc-table-scroll'}>
+        <table class="ncc-table">
+          {props.caption ? <caption class="ncc-hint">{props.caption}</caption> : null}
+          <thead>
             <tr>
               {props.columns.map((col) => (
-                <td class={col.numeric ? 'ncc-num' : undefined} data-label={col.header}>
-                  {col.cell(row)}
-                </td>
+                <th scope="col" class={col.numeric ? 'ncc-num' : undefined}>
+                  {col.header}
+                </th>
               ))}
             </tr>
+          </thead>
+          <tbody>
+            {props.rows.map((row) => (
+              <tr>
+                {props.columns.map((col) => (
+                  <td class={col.numeric ? 'ncc-num' : undefined} data-label={col.header}>
+                    {col.cell(row)}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {card ? (
+        <ul class="ncc-listcards">
+          {props.rows.map((row) => (
+            <li>
+              <a class="ncc-listcard" href={card.href(row)}>
+                <span class="ncc-listcard__primary">{card.primary(row)}</span>
+                {card.secondary ? <span class="ncc-listcard__secondary">{card.secondary(row)}</span> : null}
+                {card.status ? <span class="ncc-listcard__status">{card.status(row)}</span> : null}
+              </a>
+            </li>
           ))}
-        </tbody>
-      </table>
-    </div>
+        </ul>
+      ) : null}
+    </>
   )
 }
 

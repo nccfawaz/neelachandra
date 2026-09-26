@@ -112,9 +112,19 @@ describe('the sidebar as a browser actually renders it', () => {
     try {
       await page.goto(origin + '/', { waitUntil: 'networkidle' })
 
-      // Sidebar background, computed.
+      // Sidebar background, computed. Since DECISIONS 38 the page background
+      // token is #f5f7fa — the colour the sidebar itself used to be. To keep
+      // the two distinct the sidebar is now white (var(--ncc-surface)) with a
+      // right border; assert the white AND that it differs from the body, so a
+      // regression that let them merge again goes red.
       const bg = await page.$eval('.ncc-sidebar', (el) => getComputedStyle(el).backgroundColor)
-      expect(bg, 'sidebar computed background').toBe('rgb(245, 247, 250)') // #f5f7fa
+      expect(bg, 'sidebar computed background is white surface').toBe('rgb(255, 255, 255)')
+
+      const bodyBg = await page.$eval('body', (el) => getComputedStyle(el).backgroundColor)
+      expect(bg, 'sidebar must not merge into the page background').not.toBe(bodyBg)
+
+      const border = await page.$eval('.ncc-sidebar', (el) => getComputedStyle(el).borderRightWidth)
+      expect(parseFloat(border), 'sidebar carries a right border to separate it from the page').toBeGreaterThan(0)
 
       // Sidebar computed width — the number the earlier fixed 190px logo missed.
       const sidebarWidth = await page.$eval('.ncc-sidebar', (el) => getComputedStyle(el).width)
