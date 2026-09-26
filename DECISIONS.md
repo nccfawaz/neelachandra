@@ -7617,11 +7617,52 @@ the matrix.
   green** — adds `people-listcards.test.tsx` (2) and the second matrix-scroll test
   (+1) to §37.9's 5/17. The e2e include glob is widened to `*.test.{ts,tsx}` so the
   card test, which legitimately uses JSX literals, is collected.
-- `npm run test:integration` (MariaDB :3307): **484 of 485 green**, served-css
-  among the green. The one red is `session-flavour-flow.test.ts` ("a staff session
-  inside half-life … the cookie is rewritten") — a session-renewal timing test,
-  unrelated to this work (untouched by the §38 diff, which is CSS + `DataTable` +
-  HR routes + the e2e/served-css tests). Flagged, not fixed: out of scope for the
-  mobile pass and pre-existing on this checkout.
+- `npm run test:integration` (MariaDB :3307): **484 of 485 green** on 2026-09-25,
+  served-css among the green. The one red was `session-flavour-flow.test.ts` ("a
+  staff session inside half-life … the cookie is rewritten") — flagged then as a
+  pre-existing, out-of-scope session-renewal test (untouched by the §38 diff). It
+  was diagnosed and fixed on 2026-09-26: the renewal was never broken, the test
+  was. See §38.6; the suite is **485 of 485** after it.
+
+### 38.6 The half-life renewal red was the test, not the code, 2026-09-26
+
+`session-flavour-flow.test.ts`'s third case ("a staff session inside half-life is
+extended a full 30 days and the cookie is rewritten") failed on `main` and on the
+pre-§38 parent `b46eda2` alike — `expect(rewritten, 'the renewed session must
+rewrite the cookie').toBeDefined()` saw `undefined`. The question §38.5 deferred:
+is the **production sliding renewal** broken — every staff phone logged out at day
+30 — or is the **test** wrong?
+
+**Proven: the code is correct, the test was flaky and failed deterministically.**
+A throwaway probe drove the real `app.request('/app')` path against the live DB
+with an aged staff session:
+
+- One clean session, aged to 2 days out → `/app` returns `set-cookie: ncc_sid=…;
+  Max-Age=2592000; …` and the row is pushed to 30 days. Renewal works.
+- The test makes **two** staff logins (its case 1 and case 3 both `loginAs(STAFF_
+  EMAIL)`). Both land 30 days out **in the same wall-clock second**, so their
+  `expires_at` DATETIME ties to the second (MariaDB DATETIME has no sub-second
+  part). The test then aged "the newest row" via `order by expires_at desc` — a
+  tie the server breaks arbitrarily. When it returns the *other* session than the
+  one the `/app` request carries, the request's own session still has 30 days
+  left, `dueForRenewal` is correctly false, no cookie is rewritten, and case 3's
+  line-242 assertion fails. Forcing that mismatch in the probe reproduced it
+  exactly: `/app` status 200, `set-cookie: null`. Line 238 (`left > 29`) passed
+  regardless because *some* row for the user is always ~30 days out.
+
+The renewal middleware (`src/middleware/session.ts:138`) and `dueForRenewal`
+(`src/lib/session.ts:179`) are unchanged and correct. **No production defect: an
+actively-used staff session is renewed and its cookie rewritten on the first
+request past half-life.**
+
+The fix ages the session the request actually authenticates as, keyed by the same
+`sha256(cookie value)` the server stores (`sessionIdOfJar` +`sessionById` in the
+test), not "the newest row for this user". This removes the tie dependence
+entirely: it can only ever age the row `/app` will load. Verified deterministic —
+the file passes three consecutive runs, and the full suite is **49 files / 485
+tests green**; `npm run typecheck` clean; `npm test` **25 files / 392 tests
+green**. The mechanism is the three-valued/round-trip family this repo already
+tracks in a different guise: a comparison keyed on a column with less resolution
+(here, a DATETIME second) than the values it must distinguish silently ties.
 
 

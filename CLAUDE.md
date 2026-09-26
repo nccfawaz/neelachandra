@@ -413,6 +413,16 @@ deny CLASSES (*.md, *.sql, *.ts, *.tsx, *.json) rather than enumerating
 filenames, because a name-based deny covers only the files someone
 remembered, and the leak was three files nobody remembered.
 
+**Update 2026-09-26: `main` is the deploy branch by design now.** The
+`mobile-redesign` branch was merged into `main` earlier today, and `main`
+is the branch the Hostinger git integration publishes from. A push to
+`main` is therefore an *intended* deploy, not the accidental publish this
+note originally described — do not flag a `main` push as breaching a "no
+deploy" fence. It is still an outward-facing action, so confirm the intent
+to deploy before pushing unless the user has just authorized it; what has
+changed is that the deploy is expected, not that it stopped needing a
+deliberate hand. The probe-the-fence rule above stands unchanged.
+
 ## A markup test does not prove appearance (29.60)
 
 The /app stylesheet is vite's minified build of `src/dashboard/assets/css/` into

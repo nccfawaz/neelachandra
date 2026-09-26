@@ -5,6 +5,7 @@ import { getDb } from '../../src/db/kysely.js'
 import { closePool } from '../../src/db/pool.js'
 import { sweepFixtures, fixtureEmail } from './fixture-markers.js'
 import { hashSync } from '@node-rs/argon2'
+import { sha256Hex } from '../../src/lib/crypto.js'
 
 /*
  * The two-flavour session through the real HTTP path (DECISIONS 34.1).
@@ -68,6 +69,23 @@ async function tokenOf(res: Response): Promise<string> {
 }
 
 const stripSid = (j: string) => j.split('; ').filter((p) => !p.startsWith('ncc_sid=')).join('; ')
+
+/* The session row a jar authenticates as, keyed by the SAME sha256(cookie
+ * value) the server stores -- NOT "the newest row for this user". Two staff
+ * logins land 30 days out in the same wall-clock second, so their expires_at
+ * ties to the second; picking by `order by expires_at desc` can return the
+ * OTHER session than the cookie carries, which ages a row the request never
+ * uses and makes the renewal look broken when it is not (DECISIONS 34.2). */
+const sessionIdOfJar = (jar: string): string =>
+  sha256Hex(jar.match(/ncc_sid=([^;]+)/)?.[1] ?? '')
+
+async function sessionById(id: string) {
+  return db
+    .selectFrom('user_sessions')
+    .select(['id', 'expires_at'])
+    .where('id', '=', id)
+    .executeTakeFirst()
+}
 
 async function loginAs(email: string): Promise<{ jar: string; res: Response }> {
   const r1 = await app.request('/login')
@@ -220,9 +238,14 @@ describe('the two session flavours (34.1)', () => {
   it('a staff session inside half-life is extended a full 30 days and the cookie is rewritten', async () => {
     // Log in, then age the row artificially to 2 days from expiry (well
     // inside half-life of 15 days) -- the same state 28 active days later.
+    // Age the EXACT session this jar carries, found by its cookie hash: an
+    // earlier staff login this suite made has an identical expires_at (same
+    // second, 30 days out), so "newest row" is a coin-flip that can age the
+    // wrong session and mask a working renewal (DECISIONS 34.2).
     const { jar } = await loginAs(STAFF_EMAIL)
-    const row = await sessionRow(staffUserId)
-    expect(row).toBeDefined()
+    const sid = sessionIdOfJar(jar)
+    const row = await sessionById(sid)
+    expect(row, 'the jar must resolve to a live session row').toBeDefined()
     await db
       .updateTable('user_sessions')
       .set({ expires_at: daysFromNow(2) })
@@ -233,7 +256,7 @@ describe('the two session flavours (34.1)', () => {
     const r = await app.request('/app', { headers: { cookie: jar }, redirect: 'manual' })
     expect([200, 302]).toContain(r.status)
 
-    const after = await sessionRow(staffUserId)
+    const after = await sessionById(sid)
     const left = (parseSql(String(after!.expires_at)) - Date.now()) / 86_400_000
     expect(left, 'the row must be pushed back out toward the full 30 days').toBeGreaterThan(29)
 
