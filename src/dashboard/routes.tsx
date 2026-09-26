@@ -12,7 +12,7 @@ import { formatPaiseAsRupeesSymbol } from '../lib/money.js'
 import { formatDateTime } from '../lib/dates.js'
 import { NotFoundError } from '../lib/errors.js'
 import { readBody } from '../middleware/csrf.js'
-import { okRedirect, errRedirect } from './render.js'
+import { banner, okRedirect, errRedirect } from './render.js'
 import * as q from '../modules/hr/queries.js'
 import * as svc from '../modules/hr/service.js'
 import { UnprocessableError, ConflictError } from '../lib/errors.js'
@@ -125,6 +125,12 @@ dashboard.get('/app', requirePermission(PERMISSIONS.DASHBOARD_VIEW_OWN_KPI), asy
       clients={checkinPanelHtml ? ['checkin-geo'] : undefined}
       subtitle={greeting(user.fullName)}
     >
+      {/* Check-in/out results 303 back here with ?ok=/?error= (DECISIONS
+          36.x). This is the only screen every staff role sees, so an
+          unrendered error here is a silent failure -- render the flash like
+          every other module route does. */}
+      {banner(c)}
+
       {unreadCount > 0 ? (
         <Alert tone="warn">
           You have {unreadCount} unread {unreadCount === 1 ? 'notification' : 'notifications'}.{' '}
@@ -369,7 +375,20 @@ async function checkinPanel(c: Context<AppEnv>) {
           ) : (
             <label class="ncc-field">
               Site
+              {/* No option is preselected: the first entry is an empty
+                  placeholder, so a worker chooses Office or Site DELIBERATELY
+                  rather than silently accepting whatever happened to sort
+                  first. It is intentionally NOT `disabled` (the HTML reset
+                  algorithm would then skip it and preselect the first real
+                  option, defeating the point) and intentionally NOT `required`
+                  (a forgotten choice must reach the server and come back as a
+                  VISIBLE error banner on /app, which also covers the no-JS
+                  post -- the empty siteKey is rejected by checkPostOf and
+                  errRedirect renders it). */}
               <select name="siteKey">
+                <option value="" selected>
+                  Choose a site…
+                </option>
                 {sites.map((s) => (
                   <option value={s.key}>{s.label}</option>
                 ))}
@@ -415,7 +434,12 @@ async function checkPostOf(c: Context<AppEnv>): Promise<CheckPost> {
   // on a check-out post is accepted and ignored, so a stale cached form
   // cannot break the post.
   const rawSiteKey = typeof body['siteKey'] === 'string' ? body['siteKey'] : ''
-  const siteKey = /^(office|project):\d+$/.test(rawSiteKey) ? rawSiteKey : null
+  // The generic 'site' default (DECISIONS 36.1) plus the addressed forms
+  // office:N / project:N. 'site' is what the dropdown submits on a plain
+  // check-in press, so it MUST be accepted here or the common path 303s to
+  // /app?error= (DECISIONS 36.x). resolveCheckinSite/selfCheckIn already
+  // understand all three.
+  const siteKey = rawSiteKey === 'site' || /^(office|project):\d+$/.test(rawSiteKey) ? rawSiteKey : null
   // A missing, blank, or failed position ("0", "0,0", garbage) is a reading
   // of "unavailable", not a refusal and not a coordinate: the client script
   // fills these from navigator.geolocation when the worker grants it, and a

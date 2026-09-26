@@ -10,7 +10,7 @@ import { formatPaiseAsRupeesSymbol } from '../lib/money.js';
 import { formatDateTime } from '../lib/dates.js';
 import { NotFoundError } from '../lib/errors.js';
 import { readBody } from '../middleware/csrf.js';
-import { okRedirect, errRedirect } from './render.js';
+import { banner, okRedirect, errRedirect } from './render.js';
 import * as q from '../modules/hr/queries.js';
 import * as svc from '../modules/hr/service.js';
 import { UnprocessableError, ConflictError } from '../lib/errors.js';
@@ -79,7 +79,7 @@ dashboard.get('/app', requirePermission(PERMISSIONS.DASHBOARD_VIEW_OWN_KPI), asy
         .executeTakeFirst();
     const unreadCount = Number(unread?.n ?? 0);
     const checkinPanelHtml = await checkinPanel(c);
-    return c.html(_jsxs(AppShell, { title: "Dashboard", user: user, perms: perms, csrfToken: session.csrfToken, path: "/app", clients: checkinPanelHtml ? ['checkin-geo'] : undefined, subtitle: greeting(user.fullName), children: [unreadCount > 0 ? (_jsxs(Alert, { tone: "warn", children: ["You have ", unreadCount, " unread ", unreadCount === 1 ? 'notification' : 'notifications', ".", ' ', _jsx("a", { href: "/app/notifications", children: "Open them" }), "."] })) : null, defs.length === 0 ? (_jsx(Alert, { tone: "warn", children: "Your account has no dashboard permissions yet. An administrator needs to assign you a role." })) : null, kpis.length > 0 ? (_jsx("div", { class: "ncc-grid ncc-grid--kpi", children: kpis.map((r) => (_jsx(Widget, { def: r.def, data: r.data }))) })) : null, panels.length > 0 ? (_jsx("div", { class: "ncc-grid ncc-grid--2", children: panels.map((r) => (_jsx(Widget, { def: r.def, data: r.data }))) })) : null, checkinPanelHtml] }));
+    return c.html(_jsxs(AppShell, { title: "Dashboard", user: user, perms: perms, csrfToken: session.csrfToken, path: "/app", clients: checkinPanelHtml ? ['checkin-geo'] : undefined, subtitle: greeting(user.fullName), children: [banner(c), unreadCount > 0 ? (_jsxs(Alert, { tone: "warn", children: ["You have ", unreadCount, " unread ", unreadCount === 1 ? 'notification' : 'notifications', ".", ' ', _jsx("a", { href: "/app/notifications", children: "Open them" }), "."] })) : null, defs.length === 0 ? (_jsx(Alert, { tone: "warn", children: "Your account has no dashboard permissions yet. An administrator needs to assign you a role." })) : null, kpis.length > 0 ? (_jsx("div", { class: "ncc-grid ncc-grid--kpi", children: kpis.map((r) => (_jsx(Widget, { def: r.def, data: r.data }))) })) : null, panels.length > 0 ? (_jsx("div", { class: "ncc-grid ncc-grid--2", children: panels.map((r) => (_jsx(Widget, { def: r.def, data: r.data }))) })) : null, checkinPanelHtml] }));
 });
 function greeting(name) {
     const first = name.trim().split(/\s+/)[0] ?? name;
@@ -202,7 +202,7 @@ async function checkinPanel(c) {
     else if (loc === 'unavailable') {
         locConfirmHtml = (_jsxs("p", { class: "ncc-checkin-confirm", role: "status", children: [checkedOut ? 'Checked out' : 'Checked in', " \u2014 location unavailable. Your attendance stands; the row is marked so HR can follow up if the site matters."] }));
     }
-    return (_jsxs("section", { class: "ncc-card ncc-card--wide", children: [_jsxs("p", { class: "ncc-kpi__label", children: ["Site attendance \u2014 ", formatDateTime(new Date().toISOString())] }), sites.length === 0 ? (_jsx("p", { class: "ncc-muted", children: "No check-in sites are configured yet: an office location of type \"office\" or an active project with coordinates (projects.geo_lat / geo_lng) puts a site in this list." })) : (_jsxs("form", { method: "post", action: "/app/attendance/checkin", class: "ncc-inline-form", children: [_jsx("input", { type: "hidden", name: "nc_csrf", value: csrfToken }), _jsx("input", { type: "hidden", name: "lat", value: "" }), _jsx("input", { type: "hidden", name: "lng", value: "" }), checkedIn ? (_jsxs("p", { class: "ncc-checkin-time", children: ["Checked in at ", day?.checkin_at, checkedOut ? _jsxs(_Fragment, { children: [" \u00B7 checked out at ", day?.checkout_at] }) : null] })) : (_jsxs("label", { class: "ncc-field", children: ["Site", _jsx("select", { name: "siteKey", children: sites.map((s) => (_jsx("option", { value: s.key, children: s.label }))) })] })), checkedOut ? null : checkedIn ? (_jsx("button", { type: "submit", class: "ncc-checkin-btn", formaction: "/app/attendance/checkout", children: "Check out" })) : (_jsx("button", { type: "submit", class: "ncc-checkin-btn", children: "Check in" })), locConfirmHtml] })), _jsx("p", { class: "ncc-checkin-note", children: "Location is recorded when you press the button \u2014 at check-in and check-out only. Your position is not tracked at any other time." })] }));
+    return (_jsxs("section", { class: "ncc-card ncc-card--wide", children: [_jsxs("p", { class: "ncc-kpi__label", children: ["Site attendance \u2014 ", formatDateTime(new Date().toISOString())] }), sites.length === 0 ? (_jsx("p", { class: "ncc-muted", children: "No check-in sites are configured yet: an office location of type \"office\" or an active project with coordinates (projects.geo_lat / geo_lng) puts a site in this list." })) : (_jsxs("form", { method: "post", action: "/app/attendance/checkin", class: "ncc-inline-form", children: [_jsx("input", { type: "hidden", name: "nc_csrf", value: csrfToken }), _jsx("input", { type: "hidden", name: "lat", value: "" }), _jsx("input", { type: "hidden", name: "lng", value: "" }), checkedIn ? (_jsxs("p", { class: "ncc-checkin-time", children: ["Checked in at ", day?.checkin_at, checkedOut ? _jsxs(_Fragment, { children: [" \u00B7 checked out at ", day?.checkout_at] }) : null] })) : (_jsxs("label", { class: "ncc-field", children: ["Site", _jsxs("select", { name: "siteKey", children: [_jsx("option", { value: "", selected: true, children: "Choose a site\u2026" }), sites.map((s) => (_jsx("option", { value: s.key, children: s.label })))] })] })), checkedOut ? null : checkedIn ? (_jsx("button", { type: "submit", class: "ncc-checkin-btn", formaction: "/app/attendance/checkout", children: "Check out" })) : (_jsx("button", { type: "submit", class: "ncc-checkin-btn", children: "Check in" })), locConfirmHtml] })), _jsx("p", { class: "ncc-checkin-note", children: "Location is recorded when you press the button \u2014 at check-in and check-out only. Your position is not tracked at any other time." })] }));
 }
 async function checkPostOf(c) {
     const body = await readBody(c);
@@ -212,7 +212,12 @@ async function checkPostOf(c) {
     // on a check-out post is accepted and ignored, so a stale cached form
     // cannot break the post.
     const rawSiteKey = typeof body['siteKey'] === 'string' ? body['siteKey'] : '';
-    const siteKey = /^(office|project):\d+$/.test(rawSiteKey) ? rawSiteKey : null;
+    // The generic 'site' default (DECISIONS 36.1) plus the addressed forms
+    // office:N / project:N. 'site' is what the dropdown submits on a plain
+    // check-in press, so it MUST be accepted here or the common path 303s to
+    // /app?error= (DECISIONS 36.x). resolveCheckinSite/selfCheckIn already
+    // understand all three.
+    const siteKey = rawSiteKey === 'site' || /^(office|project):\d+$/.test(rawSiteKey) ? rawSiteKey : null;
     // A missing, blank, or failed position ("0", "0,0", garbage) is a reading
     // of "unavailable", not a refusal and not a coordinate: the client script
     // fills these from navigator.geolocation when the worker grants it, and a

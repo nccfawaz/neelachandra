@@ -363,3 +363,112 @@ describe('the check-in forms carry a valid CSRF token', () => {
     expect(Number(row.checkin_far)).toBe(0) // the morning is untouched
   })
 })
+
+/*
+ * The dashboard is the one screen every staff role lands on, and check-in/out
+ * results 303 back to it with ?ok=/?error=. Three regressions guarded here:
+ *
+ *   1. The dropdown has NO preselected option: the first entry is an empty
+ *      placeholder ("Choose a site…"), so a worker picks Office or Site
+ *      deliberately. A plain press with nothing chosen submits siteKey='',
+ *      which MUST be rejected (checkPostOf) -> the "Choose the site…" error.
+ *   2. A deliberately chosen 'site' (the generic option, DECISIONS 36.1) MUST
+ *      be ACCEPTED. checkPostOf once validated with /^(office|project):\d+$/,
+ *      which rejected 'site' -> null -> the same error on a real choice.
+ *   3. That error -- and every ?error= -- must RENDER on /app. /app once never
+ *      called banner(), so the message travelled in the URL and appeared
+ *      nowhere in the DOM: a silent failure on the only screen staff see. The
+ *      assertion pins the message inside a visible ncc-alert--error (no
+ *      display:none, and no max-width:768px rule hides it, so it shows at
+ *      390x844 too). The real-browser proof that a defaults-only press lands
+ *      on this visible error is tests/integration/checkin-real-press.test.ts.
+ */
+describe('the dashboard requires a deliberate site and shows its errors', () => {
+  it('renders an empty placeholder first — nothing is preselected', async () => {
+    // The dropdown only renders when there is no attendance row for today; a
+    // checked-in/out worker sees the status line instead. Clear the day first.
+    await resetTodayRow()
+    const jar = await login('', EMAIL)
+    const page = await app.request('/app', { headers: { cookie: jar }, redirect: 'manual' })
+    const html = await page.text()
+    // First option is the empty placeholder, marked selected; the real site
+    // options carry non-empty values and none of THEM is selected. Hono
+    // serialises the boolean attribute as selected="".
+    expect(html).toMatch(/<select name="siteKey">\s*<option value="" selected(?:="")?>/)
+    const select = html.match(/<select name="siteKey">([\s\S]*?)<\/select>/)?.[1] ?? ''
+    expect(select, 'no non-empty option may be preselected').not.toMatch(/<option value="[^"]+"[^>]*selected/)
+  })
+
+  it("a plain post with no site chosen (siteKey='') is rejected — the placeholder path", async () => {
+    await resetTodayRow()
+    const jar = await login('', EMAIL)
+    const page = await app.request('/app', { headers: { cookie: jar }, redirect: 'manual' })
+    const token = (await page.text()).match(/name="nc_csrf" value="([^"]+)"/)?.[1] ?? ''
+    const res = await app.request('/app/attendance/checkin', {
+      method: 'POST',
+      redirect: 'manual',
+      headers: { 'content-type': 'application/x-www-form-urlencoded', cookie: jar },
+      body: new URLSearchParams({ siteKey: '', lat: '', lng: '', nc_csrf: token }).toString(),
+    })
+    expect(res.status).toBe(303)
+    expect(res.headers.get('location') ?? '').toContain('error=Choose')
+    // ...and nothing was checked in.
+    const row = await db
+      .selectFrom('attendance')
+      .select(['checkin_at'])
+      .where('employee_id', '=', employeeId)
+      .executeTakeFirst()
+    expect(row?.checkin_at ?? null).toBeNull()
+  })
+
+  it("a deliberately chosen siteKey='site' is accepted — the generic option (36.1)", async () => {
+    await resetTodayRow()
+    const jar = await login('', EMAIL)
+    const page = await app.request('/app', { headers: { cookie: jar }, redirect: 'manual' })
+    const html = await page.text()
+    // The generic 'site' option is offered for a deliberate pick.
+    expect(html).toMatch(/<option value="site"/)
+    const token = html.match(/name="nc_csrf" value="([^"]+)"/)?.[1] ?? ''
+
+    const ok = await app.request('/app/attendance/checkin', {
+      method: 'POST',
+      redirect: 'manual',
+      headers: { 'content-type': 'application/x-www-form-urlencoded', cookie: jar },
+      body: new URLSearchParams({ siteKey: 'site', lat: '', lng: '', nc_csrf: token }).toString(),
+    })
+    // Accepted: a success redirect, NOT /app?error=Choose the site...
+    expect(ok.status).toBe(303)
+    const loc = ok.headers.get('location') ?? ''
+    expect(loc).not.toContain('error=')
+    expect(loc).toMatch(/^\/app\?loc=/)
+
+    const row = await db
+      .selectFrom('attendance')
+      .select(['checkin_at', 'checkin_site_key'])
+      .where('employee_id', '=', employeeId)
+      .executeTakeFirstOrThrow()
+    expect(row.checkin_at).not.toBeNull()
+    expect(row.checkin_site_key).toBe('site')
+  })
+
+  it('a ?error= on /app renders visibly in an error alert — no silent failure at 390x844', async () => {
+    const jar = await login('', EMAIL)
+    const message = 'Choose the site you are checking in at.'
+    const res = await app.request(`/app?error=${encodeURIComponent(message)}`, {
+      headers: { cookie: jar },
+      redirect: 'manual',
+    })
+    expect(res.status).toBe(200)
+    const html = await res.text()
+
+    // The message text is in the DOM (it was absent entirely before banner()).
+    expect(html).toContain(message)
+    // ...and inside the visible error alert component, role=alert for AT. The
+    // served CSS gives .ncc-alert--error a background/colour and no
+    // display:none, and there is no max-width:768px rule that hides it, so it
+    // is visible at the 390-wide phone width, not merely present.
+    const alert = html.match(/<div class="ncc-alert ncc-alert--error" role="alert">([\s\S]*?)<\/div>/)
+    expect(alert, 'the error must render in an ncc-alert--error, not just sit in the URL').not.toBeNull()
+    expect(alert![1]).toContain(message)
+  })
+})
