@@ -129,7 +129,7 @@ export async function loadSession(
   if (row.revoked_at !== null) return null
   if (String(row.expires_at) <= nowSqlDateTime()) return null
 
-  const expiresAtMs = Date.parse(String(row.expires_at).replace(' ', 'T') + 'Z') || 0
+  const expiresAtMs = Date.parse(String(row.expires_at).replace(' ', 'T') + '+05:30') || 0
 
   return {
     id: row.id,

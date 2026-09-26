@@ -85,7 +85,7 @@ export async function loadSession(db, cookieValue) {
         return null;
     if (String(row.expires_at) <= nowSqlDateTime())
         return null;
-    const expiresAtMs = Date.parse(String(row.expires_at).replace(' ', 'T') + 'Z') || 0;
+    const expiresAtMs = Date.parse(String(row.expires_at).replace(' ', 'T') + '+05:30') || 0;
     return {
         id: row.id,
         userId: Number(row.user_id),
