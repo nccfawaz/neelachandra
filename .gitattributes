@@ -16,3 +16,10 @@ migrations/*.sql text eol=lf
 *.png                  binary
 *.webp                 binary
 *.ico                  binary
+
+# dist/ is committed, generated tsc output. Pin the stored blob AND the
+# checked-out file to LF on every machine so dist-staleness (29.70) can never
+# go red on line endings alone, regardless of anyone's core.autocrlf. tsc
+# emits LF. Placed after the binary rules so those still win for any future
+# binary dropped under dist/.
+dist/** text eol=lf
