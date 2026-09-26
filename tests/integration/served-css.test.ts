@@ -64,6 +64,20 @@ const DECLARATIONS: [string, string][] = [
   ['rgba(var(--ncc-scrim-rgb),.45)', 'the nav backdrop paints from the scrim token (38)'],
   ['.ncc-listcard', 'the designed mobile list-card rule reaches the browser (38)'],
   ['.ncc-table-scroll.ncc-carded', 'a carded table hides its transpose on mobile (38)'],
+  // The Stage 1 spacing scale and fixed dashboard grid (DECISIONS 40). The
+  // tokens, the four/two fixed columns, the full-width wide span, the flex list
+  // row that fixes "Attendance days1 unapproved", the two-line label reservation
+  // that keeps KPI values on one baseline, and the desktop check-in cap must all
+  // reach the browser — dashboard-grid-browser.test.ts proves the geometry, this
+  // proves the declarations survive the vite build.
+  ['--sp-4: 1rem', 'the spacing scale token reaches the browser (40)'],
+  ['.ncc-grid--kpi{grid-template-columns:repeat(4,minmax(0,1fr))}', 'the KPI grid is four fixed columns (40, B)'],
+  ['.ncc-grid--2{grid-template-columns:repeat(2,minmax(0,1fr))}', 'the panel grid is two fixed columns (40, B)'],
+  ['.ncc-card--wide{grid-column:1 / -1}', 'a wide card spans the whole grid row (40, B)'],
+  ['.ncc-list__item{display:flex', 'the panel list row is a flex row — the "days1 unapproved" fix (40, E)'],
+  ['justify-content:space-between', 'the list row pushes its value to the far edge (40, E)'],
+  ['.ncc-grid--kpi .ncc-kpi__label{min-height:2.6em}', 'a two-line label reservation keeps KPI values aligned (40, C/B)'],
+  ['.ncc-checkin-btn{max-width:none}', 'the phone override lifts the desktop check-in cap (40, F)'],
 ]
 
 describe('the app layout serves its stylesheet with the required declarations', () => {

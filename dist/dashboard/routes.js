@@ -40,8 +40,12 @@ function WidgetBody(props) {
     return (_jsx("ul", { class: "ncc-list", children: data.rows.map((row) => (_jsxs("li", { class: row.tone ? `ncc-list__item is-${row.tone}` : 'ncc-list__item', children: [row.href ? _jsx("a", { href: row.href, children: row.label }) : _jsx("span", { children: row.label }), _jsx("span", { class: "ncc-list__value", children: row.value })] }))) }));
 }
 function Widget(props) {
-    const isKpi = props.data.kind !== 'rows';
-    return (_jsxs("section", { class: isKpi ? 'ncc-card' : 'ncc-card ncc-card--wide', children: [_jsx("p", { class: "ncc-kpi__label", children: props.def.title }), _jsx(WidgetBody, { data: props.data })] }));
+    // A widget spans the full grid width only when its def says so (wide:true),
+    // not merely because it renders rows. This is what keeps the panel grid on a
+    // fixed two-column rhythm instead of every rows-widget claiming a whole row
+    // (DECISIONS 40, item B).
+    const wide = props.def.wide === true;
+    return (_jsxs("section", { class: wide ? 'ncc-card ncc-card--wide' : 'ncc-card', children: [_jsx("p", { class: "ncc-kpi__label", children: props.def.title }), _jsx(WidgetBody, { data: props.data })] }));
 }
 dashboard.get('/app', requirePermission(PERMISSIONS.DASHBOARD_VIEW_OWN_KPI), async (c) => {
     const user = currentUser(c);
@@ -70,7 +74,13 @@ dashboard.get('/app', requirePermission(PERMISSIONS.DASHBOARD_VIEW_OWN_KPI), asy
         };
     });
     const kpis = rendered.filter((r) => r.data.kind !== 'rows');
-    const panels = rendered.filter((r) => r.data.kind === 'rows');
+    const allPanels = rendered.filter((r) => r.data.kind === 'rows');
+    // Actions come before counts (DECISIONS 40, item B): the one queue a person
+    // acts on today — "Waiting on you" (pending_approvals) — leads, beside the
+    // check-in/out control. Every count is 0 and will be for weeks, so the tiles
+    // sit below the things that need a hand.
+    const actionPanels = allPanels.filter((r) => r.def.key === 'pending_approvals');
+    const panels = allPanels.filter((r) => r.def.key !== 'pending_approvals');
     const unread = await db
         .selectFrom('notifications')
         .select((eb) => eb.fn.countAll().as('n'))
@@ -79,7 +89,7 @@ dashboard.get('/app', requirePermission(PERMISSIONS.DASHBOARD_VIEW_OWN_KPI), asy
         .executeTakeFirst();
     const unreadCount = Number(unread?.n ?? 0);
     const checkinPanelHtml = await checkinPanel(c);
-    return c.html(_jsxs(AppShell, { title: "Dashboard", user: user, perms: perms, csrfToken: session.csrfToken, path: "/app", clients: checkinPanelHtml ? ['checkin-geo'] : undefined, subtitle: greeting(user.fullName), children: [banner(c), unreadCount > 0 ? (_jsxs(Alert, { tone: "warn", children: ["You have ", unreadCount, " unread ", unreadCount === 1 ? 'notification' : 'notifications', ".", ' ', _jsx("a", { href: "/app/notifications", children: "Open them" }), "."] })) : null, defs.length === 0 ? (_jsx(Alert, { tone: "warn", children: "Your account has no dashboard permissions yet. An administrator needs to assign you a role." })) : null, kpis.length > 0 ? (_jsx("div", { class: "ncc-grid ncc-grid--kpi", children: kpis.map((r) => (_jsx(Widget, { def: r.def, data: r.data }))) })) : null, panels.length > 0 ? (_jsx("div", { class: "ncc-grid ncc-grid--2", children: panels.map((r) => (_jsx(Widget, { def: r.def, data: r.data }))) })) : null, checkinPanelHtml] }));
+    return c.html(_jsxs(AppShell, { title: "Dashboard", user: user, perms: perms, csrfToken: session.csrfToken, path: "/app", clients: checkinPanelHtml ? ['checkin-geo'] : undefined, subtitle: greeting(user.fullName), children: [banner(c), unreadCount > 0 ? (_jsxs(Alert, { tone: "warn", children: ["You have ", unreadCount, " unread ", unreadCount === 1 ? 'notification' : 'notifications', ".", ' ', _jsx("a", { href: "/app/notifications", children: "Open them" }), "."] })) : null, defs.length === 0 ? (_jsx(Alert, { tone: "warn", children: "Your account has no dashboard permissions yet. An administrator needs to assign you a role." })) : null, checkinPanelHtml, actionPanels.length > 0 ? (_jsx("div", { class: "ncc-grid ncc-grid--2", children: actionPanels.map((r) => (_jsx(Widget, { def: r.def, data: r.data }))) })) : null, kpis.length > 0 ? (_jsx("div", { class: "ncc-grid ncc-grid--kpi", children: kpis.map((r) => (_jsx(Widget, { def: r.def, data: r.data }))) })) : null, panels.length > 0 ? (_jsx("div", { class: "ncc-grid ncc-grid--2", children: panels.map((r) => (_jsx(Widget, { def: r.def, data: r.data }))) })) : null] }));
 });
 function greeting(name) {
     const first = name.trim().split(/\s+/)[0] ?? name;

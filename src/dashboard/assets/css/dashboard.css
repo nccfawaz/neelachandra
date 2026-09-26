@@ -39,6 +39,17 @@
   --ncc-scrim-rgb: 20, 24, 31;
   --ncc-radius: 10px;
   --ncc-radius-sm: 6px;
+  /* Spacing scale (DECISIONS 40): one 4px-based ramp. Before this the sheet
+     chose spacing by eye from ~24 distinct rem values, the systemic cause of
+     ragged rows and uneven card padding. Every /app spacing value snaps to a
+     step; --sp-7 is the same 48px as --ncc-tap. */
+  --sp-1: 0.25rem;
+  --sp-2: 0.5rem;
+  --sp-3: 0.75rem;
+  --sp-4: 1rem;
+  --sp-5: 1.5rem;
+  --sp-6: 2rem;
+  --sp-7: 3rem;
   --ncc-font: 'DM Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;
   --ncc-mono: ui-monospace, 'SF Mono', 'Cascadia Mono', monospace;
 }
@@ -105,7 +116,7 @@ code {
   background: var(--ncc-surface);
   border: 1px solid var(--ncc-border);
   border-radius: var(--ncc-radius);
-  padding: 1rem 1.25rem;
+  padding: var(--sp-4);
 }
 
 .ncc-btn {
@@ -296,6 +307,11 @@ code {
   border: 0;
 }
 
+/* DECISIONS 40, item D: the hamburger matches the Sign out button — same
+   pressed height (--ncc-tap) and same 500 weight — so the two controls that
+   bracket the top bar read as a matched pair rather than a glyph beside a
+   button. It only shows below the breakpoint (display:none here); the shared
+   height is set on both so they align wherever both are visible. */
 .ncc-nav-btn {
   display: none;
   align-items: center;
@@ -303,6 +319,7 @@ code {
   min-width: var(--ncc-tap);
   min-height: var(--ncc-tap);
   font-size: 1.4rem;
+  font-weight: 500;
   line-height: 1;
   color: var(--ncc-text);
   background: var(--ncc-surface);
@@ -483,28 +500,44 @@ code {
 
 /* Layout helpers */
 
+/*
+ * Dashboard card grids (DECISIONS 40). FIXED column counts, not auto-fit:
+ * auto-fit derives the column count from the container width and each card's
+ * min, so the same page renders 5 cards then 2 then 3 then 2 — every row a
+ * different width and gap. A fixed count aligns every row on the same columns;
+ * a short final row left-aligns predictably instead of stretching to fill.
+ * The single 768px breakpoint (37.1) collapses both to one column, which is
+ * also the fix for "two across at 390px clips APPROVALS WAITING ON ME".
+ */
 .ncc-grid {
   display: grid;
-  gap: 1rem;
+  gap: var(--sp-4);
 }
 
 .ncc-grid--kpi {
-  grid-template-columns: repeat(auto-fit, minmax(196px, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
 .ncc-grid--2 {
-  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+/* A panel that carries its own list/table spans the full grid width rather
+   than sharing a row (marked wide:true in widgets.ts). minmax(0,1fr) above
+   lets a spanning child shrink instead of forcing overflow. */
+.ncc-card--wide {
+  grid-column: 1 / -1;
 }
 
 .ncc-row {
   display: flex;
-  gap: 0.6rem;
+  gap: var(--sp-3);
   align-items: center;
   flex-wrap: wrap;
 }
 
 .ncc-stack > * + * {
-  margin-top: 1rem;
+  margin-top: var(--sp-4);
 }
 
 .ncc-muted {
@@ -517,19 +550,87 @@ code {
   white-space: nowrap;
 }
 
+/*
+ * The panel row list (DECISIONS 40). These three classes are emitted by the
+ * dashboard's WidgetBody for every rows-widget but were never defined, so
+ * label and value ran together with no separation — the "Attendance days1
+ * unapproved" defect was a missing flex gap, not a missing string. flex with
+ * space-between pushes the value to the right edge; the gap guarantees a gutter
+ * even when the label is long enough to meet it.
+ */
+.ncc-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.ncc-list__item {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--sp-4);
+  padding: var(--sp-2) 0;
+  border-bottom: 1px solid var(--ncc-border);
+}
+
+.ncc-list__item:last-child {
+  border-bottom: 0;
+}
+
+.ncc-list__value {
+  color: var(--ncc-text-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  text-align: right;
+}
+
+.ncc-list__item.is-warn .ncc-list__value {
+  color: var(--ncc-warn);
+  font-weight: 600;
+}
+
+.ncc-list__item.is-error .ncc-list__value {
+  color: var(--ncc-danger);
+  font-weight: 600;
+}
+
+.ncc-list__item.is-ok .ncc-list__value {
+  color: var(--ncc-ok);
+  font-weight: 600;
+}
+
 /* KPI card */
 
+/*
+ * KPI tile (DECISIONS 40, item C). The label is what a person reads to know
+ * what the tile is; the number is 0 on every tile and will be for weeks. So
+ * the label leads at a readable size and the number is quieter than before
+ * (was 1.5rem/700 — a 0-glyph 60px tall). Label weight stays 600 so it reads
+ * as a heading, not body.
+ */
 .ncc-kpi__label {
-  font-size: 0.76rem;
+  font-size: 0.8rem;
   font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.05em;
+  letter-spacing: 0.04em;
+  line-height: 1.3;
   color: var(--ncc-text-muted);
-  margin: 0 0 0.3rem;
+  margin: 0 0 var(--sp-2);
+}
+
+/*
+ * In the 4-across KPI grid the longest labels ("APPROVALS WAITING ON ME",
+ * "UNASSIGNED ENQUIRIES") wrap to two lines at 1280 while shorter ones stay on
+ * one; without a floor the values would sit at different heights across a row.
+ * Reserving two lines of label height keeps every value on the same baseline.
+ * Scoped to the KPI grid so a lone tile elsewhere is not padded. (DECISIONS 40)
+ */
+.ncc-grid--kpi .ncc-kpi__label {
+  min-height: 2.6em;
 }
 
 .ncc-kpi__value {
-  font-size: 1.5rem;
+  font-size: 1.25rem;
   font-weight: 700;
   letter-spacing: -0.02em;
   font-variant-numeric: tabular-nums;
@@ -832,6 +933,14 @@ code {
     grid-template-columns: 1fr;
   }
 
+  /* DECISIONS 40, item B: one card per row on a phone. Two KPI tiles across at
+     390px clipped "APPROVALS WAITING ON ME"; collapsing both dashboard grids to
+     a single column is the fix, and it is the same one-breakpoint move (37.1). */
+  .ncc-grid--kpi,
+  .ncc-grid--2 {
+    grid-template-columns: 1fr;
+  }
+
   /* 37.2 drawer: the sidebar slides in from the left over the content; the
      backdrop closes it. Both driven by the checkbox two elements up. */
   .ncc-sidebar {
@@ -1088,9 +1197,14 @@ code {
  * #F48120 (DECISIONS 37.7): the token and the owner's specified colour are one
  * and the same after the accent unification, so there is no second literal.
  */
+/* DECISIONS 40, item F: on desktop the check-in/out button is capped so it
+   does not stretch the full content width — a 1200px-wide primary button reads
+   as a banner, not a control. Full width is restored below the breakpoint,
+   where one-thumb width is wanted. */
 .ncc-checkin-btn {
   display: block;
   width: 100%;
+  max-width: 22rem;
   min-height: var(--ncc-tap);
   min-width: var(--ncc-tap);
   padding: 0.75rem 1rem;
@@ -1135,4 +1249,16 @@ code {
   margin: 0.75rem 0 0;
   font-size: 0.8rem;
   color: var(--ncc-text-muted);
+}
+
+/* DECISIONS 40, item F: full-width check-in/out on a phone (the 22rem desktop
+   cap removed). This override MUST sit after the base .ncc-checkin-btn rule
+   above — the earlier @media block (same 768px breakpoint, 37.1) is higher in
+   the file, so a max-width:none placed there loses to the later base rule at
+   equal specificity and the cap never lifted (caught by the 390px browser
+   measurement, DECISIONS 40). */
+@media (max-width: 768px) {
+  .ncc-checkin-btn {
+    max-width: none;
+  }
 }

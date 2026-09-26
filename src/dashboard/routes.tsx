@@ -65,9 +65,13 @@ function WidgetBody(props: { data: WidgetData }) {
 }
 
 function Widget(props: { def: WidgetDef; data: WidgetData }) {
-  const isKpi = props.data.kind !== 'rows'
+  // A widget spans the full grid width only when its def says so (wide:true),
+  // not merely because it renders rows. This is what keeps the panel grid on a
+  // fixed two-column rhythm instead of every rows-widget claiming a whole row
+  // (DECISIONS 40, item B).
+  const wide = props.def.wide === true
   return (
-    <section class={isKpi ? 'ncc-card' : 'ncc-card ncc-card--wide'}>
+    <section class={wide ? 'ncc-card ncc-card--wide' : 'ncc-card'}>
       <p class="ncc-kpi__label">{props.def.title}</p>
       <WidgetBody data={props.data} />
     </section>
@@ -104,7 +108,13 @@ dashboard.get('/app', requirePermission(PERMISSIONS.DASHBOARD_VIEW_OWN_KPI), asy
   })
 
   const kpis = rendered.filter((r) => r.data.kind !== 'rows')
-  const panels = rendered.filter((r) => r.data.kind === 'rows')
+  const allPanels = rendered.filter((r) => r.data.kind === 'rows')
+  // Actions come before counts (DECISIONS 40, item B): the one queue a person
+  // acts on today — "Waiting on you" (pending_approvals) — leads, beside the
+  // check-in/out control. Every count is 0 and will be for weeks, so the tiles
+  // sit below the things that need a hand.
+  const actionPanels = allPanels.filter((r) => r.def.key === 'pending_approvals')
+  const panels = allPanels.filter((r) => r.def.key !== 'pending_approvals')
 
   const unread = await db
     .selectFrom('notifications')
@@ -144,6 +154,19 @@ dashboard.get('/app', requirePermission(PERMISSIONS.DASHBOARD_VIEW_OWN_KPI), asy
         </Alert>
       ) : null}
 
+      {/* Actions first (DECISIONS 40, item B): the check-in/out control and the
+          approval queue are the two things a person came here to act on. The
+          KPI counts, all zero for now, sit below them. */}
+      {checkinPanelHtml}
+
+      {actionPanels.length > 0 ? (
+        <div class="ncc-grid ncc-grid--2">
+          {actionPanels.map((r) => (
+            <Widget def={r.def} data={r.data} />
+          ))}
+        </div>
+      ) : null}
+
       {kpis.length > 0 ? (
         <div class="ncc-grid ncc-grid--kpi">
           {kpis.map((r) => (
@@ -159,8 +182,6 @@ dashboard.get('/app', requirePermission(PERMISSIONS.DASHBOARD_VIEW_OWN_KPI), asy
           ))}
         </div>
       ) : null}
-
-      {checkinPanelHtml}
     </AppShell>
   )
 })

@@ -7787,4 +7787,118 @@ carried was itself silent — a blank table that read as "pending" actually froz
 every approval, and nobody reading the empty table would know it. Making the blank
 mean the documented thing removes a silent freeze; it does not add a silent hole.
 
+## 40. Stage 1: a spacing scale, a fixed dashboard grid, and the /app action-first rework, 2026-09-26
+
+The brief for the /app dashboard was that its job is *action*, not metrics: check
+in/out and the things waiting on me come first, and every count is 0 and will be
+for weeks. "Decide, stop, report. Then build." This section is the report and the
+record of the build.
+
+### A. What existed today, and every place spacing or grid sizing was chosen by eye
+
+**Spacing before this pass had no scale.** Padding, gaps and margins were written
+as literal `rem`/`px` values at each rule, chosen individually. The recurring
+values were `1rem`, `0.75rem`, `0.5rem`, `1.5rem`, `2rem` and a scattering of
+`0.25rem` — close to a scale but never named as one, so a reader could not tell an
+intended step from a one-off, and two rules meaning "the standard gap" could drift
+apart silently. The by-eye sites, before the token sweep:
+
+- `.ncc-card` padding, panel gaps, list gaps: `1rem` literals in many rules.
+- KPI internals: label margin and value spacing set per-rule in `rem`.
+- Grid gaps: `gap: 1rem` / `gap: 0.75rem` written at each grid.
+- The check-in block, notices and header controls: individual `rem` paddings.
+
+**Grid sizing was `auto-fit`/`auto-fill` with `minmax`.** The KPI and panel grids
+used `repeat(auto-fit, minmax(<px>, 1fr))`, so the *column count* was a function of
+container width and the minmax floor — content-derived, not decided. That is the B
+defect at its root: at 390px two columns still fit under the floor, and two columns
+clip "APPROVALS WAITING ON ME"; on desktop the count wandered with width. A count
+nobody decided is a layout nobody can pin in a test.
+
+### The decided tokens
+
+**Spacing scale (`:root`, `dashboard.css`):** a seven-step scale, each step a named
+token, `--sp-7` deliberately equal to `--ncc-tap` (48px) so the largest spacing step
+and the tap-target are one number:
+
+- `--sp-1: 0.25rem`, `--sp-2: 0.5rem`, `--sp-3: 0.75rem`, `--sp-4: 1rem`,
+  `--sp-5: 1.5rem`, `--sp-6: 2rem`, `--sp-7: 3rem`.
+
+**Grid rule:** the dashboard grids are FIXED column counts, not `auto-fit`:
+
+- `.ncc-grid{display:grid;gap:var(--sp-4)}` — the one grid gap is `--sp-4`.
+- `.ncc-grid--kpi{grid-template-columns:repeat(4,minmax(0,1fr))}` — KPI row is four
+  fixed columns on desktop.
+- `.ncc-grid--2{grid-template-columns:repeat(2,minmax(0,1fr))}` — panels are two.
+- `.ncc-card--wide{grid-column:1 / -1}` — a wide card spans the whole row.
+- At `@media (max-width:768px)`: `.ncc-grid--kpi,.ncc-grid--2{grid-template-columns:1fr}`
+  — one card per row on a phone. `minmax(0,1fr)` (floor 0, not a px floor) is what
+  lets four equal columns hold without a content-derived reflow.
+
+### B–F. The build
+
+- **B. Actions top, counts below, fixed grid.** `AppShell` now renders, in order:
+  banner, alerts, the check-in panel, the "waiting on you" action panel(s) in a
+  `ncc-grid--2`, then the KPI counts in a `ncc-grid--kpi`, then the remaining panels.
+  `routes.tsx` splits `pending_approvals` out as the action panel from the rest;
+  `Widget` puts `ncc-card--wide` on any def with `wide === true`.
+- **C. Label first, number smaller.** `.ncc-kpi__label` is 0.8rem, 600, uppercase,
+  muted; `.ncc-kpi__value` dropped from the old 1.5rem/24px to 1.25rem. A zero no
+  longer occupies 60px. `.ncc-grid--kpi .ncc-kpi__label{min-height:2.6em}` reserves
+  two label lines so a one-line and a two-line label in the same row keep their
+  values on one baseline.
+- **D. Header.** `.ncc-nav-btn` gained `font-weight:500` so the hamburger and Sign
+  out match in weight; heights already matched via `--ncc-tap`.
+- **E. "Attendance days1 unapproved".** The defect was NOT the string — `widgets.ts`
+  already pushes `{label:'Attendance days', value:'1 unapproved'}`. The `.ncc-list`,
+  `.ncc-list__item` and `.ncc-list__value` classes were UNDEFINED, so label and value
+  ran together with no separation. Defined `.ncc-list__item{display:flex;
+  align-items:baseline;justify-content:space-between;gap:var(--sp-4)}` and a muted,
+  tabular, right-aligned `.ncc-list__value`. The space is now a flex gutter, not a
+  character.
+- **F. Check-in button width.** `.ncc-checkin-btn` capped at `max-width:22rem`
+  (~352px) on desktop; full width on a phone.
+
+**The F specificity lesson.** The phone override `.ncc-checkin-btn{max-width:none}`
+was first written inside the `@media(max-width:768px)` block at ~line 906 — and lost.
+A media query adds NO specificity; the base `.ncc-checkin-btn{max-width:22rem}` at
+~line 1167 has equal specificity and, being later in source, won. The button measured
+352px at 390px when it should have been full width. The fix was source ORDER: a new
+`@media(max-width:768px){.ncc-checkin-btn{max-width:none}}` block placed AFTER the base
+rule. This is the general trap — an `@media` block is not automatically stronger than
+an unconditional rule at the same selector; order decides.
+
+### The evidence, through the real browser and the served stylesheet
+
+Per §29.60, a renderToString test cannot see column counts, wrapping or baseline
+alignment, and the served stylesheet is vite's build of the source CSS. So the
+evidence is computed geometry from Chromium against the built
+`public/assets/css/dashboard.css`, in `tests/e2e/dashboard-grid-browser.test.ts`
+(4 tests), and served-CSS needles in `tests/integration/served-css.test.ts`:
+
+- **1280:** KPI grid = 4 columns; every card 296px (spread 0); every label wraps to
+  ≤2 lines with 0 horizontal overflow, including "APPROVALS WAITING ON ME" and
+  "UNASSIGNED ENQUIRIES"; per-row value baseline spread 0.
+- **1440:** 4 columns; card 306px; same label and baseline results.
+- **390:** 1 column; no label clips; check-in button 358px = full content width.
+- **desktop:** check-in button 352px, capped below content width; list item
+  `display:flex` with a real >8px gap between "Attendance days" and "1 unapproved".
+
+The served-CSS tripwire additionally pins that the §40 declarations survive the vite
+build: `--sp-4: 1rem`, the two grid-template-columns rules, `.ncc-card--wide`,
+`.ncc-list__item{display:flex`, `justify-content:space-between`, the
+`.ncc-kpi__label{min-height:2.6em}` reservation, and the
+`.ncc-checkin-btn{max-width:none}` phone override.
+
+### Gate counts (2026-09-26)
+
+- `npm run typecheck`: clean.
+- `npm test` (unit): 391/392, the one red being `dist-staleness (29.70)` — expected,
+  because it diffs committed `dist/` against a fresh build and the `dist/` rebuild is
+  staged but not yet committed; it goes green on commit (same class as the documented
+  "unpushed-work" red).
+- `npm run test:integration`: 491/491 across 50 files.
+- `npm run test:e2e`: 25/25 across 7 files.
+
+
 
