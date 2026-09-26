@@ -12,8 +12,8 @@ import { sql } from 'kysely'
  *
  *   - fourteen named accounts exist with exactly one role each and a linked
  *     employee row carrying a unique NCC-### employee_code;
- *   - approval_limits is EMPTY (§8.2): seeding a person grants no money
- *     authority;
+ *   - approval_limits is EMPTY (§39.2): the seed sets no ceilings, so approvals
+ *     run uncapped by amount; seeding a person still grants no money permission;
  *   - no real person is fixture-marked, so the test sweep cannot delete them;
  *   - the two Sunils (the architect and the two engineers' shared given name)
  *     are unambiguous: distinct emails, distinct employee_code, and the
@@ -67,7 +67,12 @@ describe('seeded staff roster', () => {
     expect(rows.length).toBe(14)
   })
 
-  it('leaves approval_limits empty — seeding a person grants no money authority (§8.2)', async () => {
+  it('leaves approval_limits empty — the seed sets no ceilings, so approvals are uncapped (§39.2)', async () => {
+    // The seed inserts no approval_limits rows. Since 2026-09-26 (§39.2) an empty
+    // table means approvals are UNCAPPED by amount, not blocked — the company runs
+    // without rupee ceilings. Seeding a person still grants no money PERMISSION
+    // (that is role_permissions, not this table); this only pins that the seed
+    // introduces no ceiling rows of its own.
     const res = await sql`select count(*) as n from approval_limits`.execute(db)
     expect(Number((res.rows[0] as { n: number }).n)).toBe(0)
   })

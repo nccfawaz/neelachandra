@@ -7,6 +7,7 @@ import { closePool } from '../../src/db/pool.js'
 import { addDays, today } from '../../src/lib/dates.js'
 import { parseJsonColumn } from '../../src/lib/json.js'
 import { getSetting } from '../../src/lib/settings.js'
+import { resolveApprovalLimit } from '../../src/lib/permissions.js'
 import * as q from '../../src/modules/hr/queries.js'
 import * as svc from '../../src/modules/hr/service.js'
 import { WRITER_MAPPING } from './expense-writer-mapping.js'
@@ -1101,21 +1102,28 @@ describe('approving a contractor bill', () => {
     )
   })
 
-  it('refuses every amount while approval_limits is empty', async () => {
-    // This is the state the running system is in today: 8.2 has not supplied the
-    // figures, the table is seeded empty, and so nothing can be approved. The
-    // refusal has to say so rather than reading a missing row as unlimited.
+  it('reports unlimited while approval_limits is empty — the amount is uncapped (DECISIONS 39.2)', async () => {
+    // The owner's 2026-09-26 decision (§39.2): an empty approval_limits table
+    // means a permission-holder approves ANY amount, not that nobody can. This
+    // reverses the old fail-closed reading that froze every money workflow. The
+    // resolver is the seam that decides it, so it is asserted directly and
+    // non-mutatively here (approving firstBillId would consume the fixture the
+    // ceiling tests below reuse); that a PRESENT ceiling row still refuses above
+    // it is held by the very next test.
     // The closed-period test above runs first in this describe and leaves its
     // own limit row behind — it deletes by role_key in its finally so this
     // test still sees the empty table the seed produces.
     await db.deleteFrom('approval_limits').where('role_key', '=', LIMIT_ROLE).execute()
-    await expect(svc.approveContractorBill(db, otherActor, firstBillId, [LIMIT_ROLE])).rejects.toThrow(
-      /No expense approval limit is set for your role/
-    )
-    // A user holding no roles at all is the same refusal, not a crash.
-    await expect(svc.approveContractorBill(db, otherActor, firstBillId, [])).rejects.toThrow(
-      /No expense approval limit is set/
-    )
+
+    const forRole = await resolveApprovalLimit(db, [LIMIT_ROLE], 'expense', today())
+    expect(forRole.unlimited, 'empty table must resolve to unlimited, not blocked').toBe(true)
+    expect(forRole.maxValue).toBeNull()
+    expect(forRole.requiresSecondApprovalAbove).toBeNull()
+
+    // A user holding no roles at all resolves unlimited too, not a crash — the
+    // approval PERMISSION is the separate gate that stops a role-less actor.
+    const forNoRoles = await resolveApprovalLimit(db, [], 'expense', today())
+    expect(forNoRoles.unlimited).toBe(true)
   })
 
   it('measures the gross, not the net payable, against the limit', async () => {

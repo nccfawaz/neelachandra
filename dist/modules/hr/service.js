@@ -2204,10 +2204,7 @@ export async function approveContractorBill(db, actor, billId, roleKeys) {
         }
         const gross = Number(bill.gross_paise);
         const limit = await resolveApprovalLimit(trx, roleKeys, 'expense', today());
-        if (limit === null) {
-            throw new UnprocessableError('No expense approval limit is set for your role, so no amount can be approved yet. An administrator sets these under Roles and approval limits.');
-        }
-        if (gross > limit.maxValue) {
+        if (!limit.unlimited && gross > limit.maxValue) {
             throw new UnprocessableError(`${formatPaiseAsRupees(gross)} is above your approval limit of ${formatPaiseAsRupees(limit.maxValue)}. This needs someone with a higher limit.`);
         }
         if (limit.requiresSecondApprovalAbove !== null && gross > limit.requiresSecondApprovalAbove) {

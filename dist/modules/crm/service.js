@@ -1348,7 +1348,9 @@ export async function submitQuote(db, actor, quoteId, roleKeys) {
             return { quoteNo: quote.quote_no, revision: quote.revision, status: 'approved', discountPct, totalPaise, limitBps: null };
         }
         const limit = await resolveApprovalLimit(trx, roleKeys, 'quote_discount_pct', today());
-        const withinLimit = limit !== null && bps <= Number(limit.maxValue);
+        // No ceiling row for the submitter's role means the discount is uncapped
+        // (DECISIONS 39.2): it self-approves like any within-limit discount.
+        const withinLimit = limit.unlimited || bps <= Number(limit.maxValue);
         if (withinLimit) {
             await trx
                 .updateTable('quotes')
@@ -1370,7 +1372,7 @@ export async function submitQuote(db, actor, quoteId, roleKeys) {
                     status: 'approved',
                     discount_pct: discountPct,
                     discount_bps: bps,
-                    limit_bps: Number(limit.maxValue),
+                    limit_bps: limit.unlimited ? null : Number(limit.maxValue),
                     role_key: limit.roleKey,
                     total_paise: totalPaise,
                 },
@@ -1382,7 +1384,7 @@ export async function submitQuote(db, actor, quoteId, roleKeys) {
                 status: 'approved',
                 discountPct,
                 totalPaise,
-                limitBps: Number(limit.maxValue),
+                limitBps: limit.unlimited ? null : Number(limit.maxValue),
             };
         }
         await trx
@@ -1394,7 +1396,7 @@ export async function submitQuote(db, actor, quoteId, roleKeys) {
             actorId: actor.userId,
             kind: 'quote_discount_approval',
             title: `Quote ${quote.quote_no} rev ${quote.revision} needs a discount approval`,
-            body: limit === null
+            body: limit.unlimited
                 ? `${discountPct}% discount on ${formatPaiseAsRupees(totalPaise)}. No discount ceiling is set for the submitter's role.`
                 : `${discountPct}% discount on ${formatPaiseAsRupees(totalPaise)} is above the ${Number(limit.maxValue) / 100}% ceiling for ${limit.roleKey}.`,
             linkPath: `/app/crm/quotes/${quoteId}`,
@@ -1410,7 +1412,7 @@ export async function submitQuote(db, actor, quoteId, roleKeys) {
                 status: 'pending_approval',
                 discount_pct: discountPct,
                 discount_bps: bps,
-                limit_bps: limit === null ? null : Number(limit.maxValue),
+                limit_bps: limit.unlimited ? null : Number(limit.maxValue),
                 total_paise: totalPaise,
             },
             ip: actor.ip,
@@ -1421,7 +1423,7 @@ export async function submitQuote(db, actor, quoteId, roleKeys) {
             status: 'pending_approval',
             discountPct,
             totalPaise,
-            limitBps: limit === null ? null : Number(limit.maxValue),
+            limitBps: limit.unlimited ? null : Number(limit.maxValue),
         };
     });
 }

@@ -7665,4 +7665,126 @@ green**. The mechanism is the three-valued/round-trip family this repo already
 tracks in a different guise: a comparison keyed on a column with less resolution
 (here, a DATETIME second) than the values it must distinguish silently ties.
 
+## 39. Two owner decisions: the session-flavour audience and no approval caps, 2026-09-26
+
+Two decisions the owner took on 2026-09-26, recorded here as the binding record.
+This section is also the home for the "34.1 / 34.2" citations that appear in
+`src/lib/session.ts` and `tests/unit/session-flavour.test.ts` and
+`tests/integration/session-flavour-flow.test.ts`: those numbers were used before a
+`## 34` heading existed (the file jumps 31 → 37), and the session-flavour material
+that predates today lives in §38.6. Read 34.1 as "the two session flavours" and
+34.2 / 39.1 as "the audience extension below". New citations use **39.1** and
+**39.2**.
+
+### 39.1 Every operational role gets the 30-day rolling session; the four privileged roles keep the absolute 12 hours
+
+The two session flavours (§38.6): the **office** flavour is an absolute 12-hour
+session that is never extended (`SESSION_TTL_SECONDS`), and the **staff** flavour
+is a 30-day session that slides at half-life (`STAFF_SESSION_TTL_SECONDS`,
+`dueForRenewal`). The flavour is decided from the user's role keys at login —
+`isStaffSession(roleKeys)` over `STAFF_ROLE_KEYS` — so it follows the role, not a
+per-user flag, and any staff role among several wins the long session.
+
+**Decision:** the rolling month now covers every operational role that works away
+from a shared office machine. The three original field roles keep it —
+`site_engineer`, `site_supervisor`, `qa_qc` — and five move to it:
+`project_manager`, `procurement_executive`, `sales_exec`, `ops_manager`,
+`digital_marketing`. `STAFF_ROLE_KEYS` holds all eight.
+
+**The four privileged roles stay at the absolute 12 hours** — `owner`, `admin`,
+`accounts_manager`, `hr_manager` — and are deliberately absent from
+`STAFF_ROLE_KEYS`. This was the point put to the owner ("stay at 12 h or also
+move?") and the answer was **keep at 12 h**, on the recommendation. The reasoning:
+these are the 2FA-gated, sensitive-data roles — company money (`accounts_manager`,
+`owner`), user and role administration (`admin`), employee PII (`hr_manager`). A
+30-day cookie on a shared office desktop is the exact exposure the short flavour
+exists to bound, and it is a smaller, deliberate set rather than "everyone". The
+short session is a security control for the roles that can do the most damage from
+a walked-up-to desk; extending it to them would remove that control for the
+convenience it was never meant to trade against.
+
+**Held by:** `tests/unit/session-flavour.test.ts` — "every operational role gets
+the long rolling session" iterates all eight staff roles and asserts both
+`STAFF_ROLE_KEYS.toContain(role)` and `isStaffSession([role]) === true`; "the
+privileged sensitive-data roles keep the absolute 12 hours" iterates the four and
+asserts `not.toContain` and `isStaffSession([role]) === false`. The integration
+handshake is `tests/integration/session-flavour-flow.test.ts`: a staff login
+(`site_supervisor`) receives `Max-Age=2592000` (30 d) and an office login
+(`admin`) receives `Max-Age=43200` (12 h). The office fixture is `admin`, one of
+the four, so that suite is unaffected by this change and still pins the 12-hour
+side.
+
+### 39.2 No approval caps: an empty `approval_limits` table means "approve any amount", not "approve nothing"
+
+`approval_limits` has always been seeded empty. The open question 8.2 read that
+blank as *pending setup*, and the code read it as **fail-closed**:
+`resolveApprovalLimit` returned `null` for "no row", and every caller
+(`approveExpense`, `approvePo`, `approveContractorBill`, the quote-discount
+self-approval) treated `null` as "cannot approve any amount", refusing with a
+message pointing at an admin screen. The consequence, reported to the owner: with
+the table empty **no money approval could succeed for anyone** — not an expense,
+a PO, a contractor bill, or a discount, and the owner had no exemption. An empty
+table froze every money workflow.
+
+**Decision (owner, 2026-09-26):** the company runs **without rupee ceilings on
+approvals**. This is deliberate, not unfinished setup. An empty `approval_limits`
+table now means a permission-holder approves **any amount**, not that nobody can
+approve. The blank is the intended steady state; a ceiling is the exception you
+insert a row for, not the default you must insert a row to escape.
+
+**What changed in code:**
+
+- `resolveApprovalLimit` (`src/lib/permissions.ts`) no longer returns `null`. It
+  returns an `ApprovalLimit` with an explicit `unlimited: boolean`. No matching
+  row (or no roles) → `{ unlimited: true, maxValue: null,
+  requiresSecondApprovalAbove: null, roleKey: null }`. A present row →
+  `{ unlimited: false, maxValue, … }` exactly as before. The `unlimited` flag is
+  explicit rather than overloading `null`, because `null` used to mean the
+  *opposite* (blocked) and a reader must not be able to confuse the two.
+- Each caller drops its `if (limit === null) throw` refusal. The ceiling check
+  becomes `if (!limit.unlimited && amount > limit.maxValue!) throw`, so it simply
+  does not fire when unlimited. Audit rows record `limit_max_value` / `limit_bps`
+  / `limit_role_key` as `null` when unlimited — honest: "no cap applied", not a
+  fabricated `0`.
+
+**What did NOT change — the amount is uncapped, the authority is not:**
+
+- **Self-approval is still blocked.** The creator cannot approve their own
+  expense / PO / bill, and the first approver cannot be the second. The owner has
+  no exemption from this (spec 4.2/4.3). Uncapping the amount does not touch it.
+- **A present ceiling row is still enforced**, including the
+  `requires_second_approval_above` two-signature path on `approvePo` /
+  `approveExpense`. Reinstating a cap is a single insert.
+- **The approval permission is still required.** `unlimited` governs the amount;
+  whether the actor may approve at all is the separate `can(...)` gate on the
+  route, unchanged.
+- **Budget-overrun (finance rule 4) is unchanged.** An uncapped expense that would
+  push a cost head past its budget line still refuses; that check reads the
+  project views, not `approval_limits`.
+
+**Held by:** `tests/integration/hr-contractor-flow.test.ts` — the case that
+formerly asserted "refuses every amount while approval_limits is empty" now
+asserts, against the live empty table, that `resolveApprovalLimit` reports
+`unlimited: true` (with `maxValue` / `requiresSecondApprovalAbove` null) for a
+permission-holder and for a role-less actor alike. It is asserted at the resolver
+seam rather than by approving a bill, because approving the shared fixture bill
+would consume the state the ceiling tests immediately below reuse. That a PRESENT
+ceiling row still refuses above it is held by the very next case ("measures the
+gross … against the limit"), so the row-present path is provably not loosened.
+`tests/integration/staff-roster.test.ts` pins that seeding a person still grants
+no money **permission** even though the empty table now caps no amount. The
+row-present ceiling and two-signature behaviour stay held by the seeded-row cases
+in `finance-approval`, `po-routes`, `quote-routes` and the contractor-bill limit
+cases.
+
+**Why fail-open here does not contradict the fail-closed rules elsewhere.** The
+repository's fail-closed instincts (a CHECK that admits UNKNOWN, an OR that widens
+an audience) are about mechanisms that *silently* admit what they look like they
+refuse. This is the opposite: an explicit, documented business decision that the
+approval **amount** is uncapped, with the approval **permission** and
+self-approval bar unchanged as the real controls. The danger the old behaviour
+carried was itself silent — a blank table that read as "pending" actually froze
+every approval, and nobody reading the empty table would know it. Making the blank
+mean the documented thing removes a silent freeze; it does not add a silent hole.
+
 

@@ -198,12 +198,12 @@ export interface ApproveExpenseResult {
  *   2. Self-approval — the creator cannot approve, and the first approver
  *      cannot be the second. Owner included: the roles seed says so in prose
  *      ("Cannot self-approve expenses") and 4.3 gives the owner no exemption.
- *   3. No approval_limits row for the actor's roles — "cannot approve any
- *      amount", never "unlimited" (see resolveApprovalLimit's doc comment).
- *      approval_limits is seeded empty pending open question 8.2, so this is
- *      the live behaviour today and the message says where the row is set.
- *   4. Above the ceiling — escalates, naming the figure and the ceiling.
- *   5. Budget overrun (rule 4) — approving would push committed + actual past
+ *   3. Above the ceiling — escalates, naming the figure and the ceiling. When
+ *      the actor holds NO approval_limits row the amount is uncapped and this
+ *      refusal does not fire: an approval permission with no ceiling row
+ *      approves any sum (DECISIONS 39.2). Self-approval (refusal 2) and the
+ *      second-signature rule below still apply.
+ *   4. Budget overrun (rule 4) — approving would push committed + actual past
  *      the head's budget line. The figures come from v_project_committed and
  *      v_project_actual, never recomputed. The message names the head, the
  *      overrunning figure and the three options the spec gives: revise the
@@ -251,14 +251,9 @@ export async function approveExpense(
 
     const total = Number(expense.total_paise)
     const limit = await resolveApprovalLimit(trx, roleKeys, 'expense', today())
-    if (limit === null) {
+    if (!limit.unlimited && total > limit.maxValue!) {
       throw new UnprocessableError(
-        'No expense approval limit is set for your role, so no amount can be approved yet. An administrator sets these under Roles and approval limits.'
-      )
-    }
-    if (total > limit.maxValue) {
-      throw new UnprocessableError(
-        `${formatPaiseAsRupees(total)} is above your approval limit of ${formatPaiseAsRupees(limit.maxValue)}. This needs someone with a higher limit.`
+        `${formatPaiseAsRupees(total)} is above your approval limit of ${formatPaiseAsRupees(limit.maxValue!)}. This needs someone with a higher limit.`
       )
     }
 

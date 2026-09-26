@@ -1006,12 +1006,12 @@ export async function submitPo(db, actor, poId) {
  *   1. Self-approval. The creator cannot approve, whatever they hold. Spec 4.2
  *      says the owner cannot self-approve expenses, and a PO is the same act
  *      with a different table, so there is no owner exemption here either.
- *   2. No limit row at all. resolveApprovalLimit returning null means "cannot
- *      approve any amount", never "unlimited" (see its doc comment). Since
- *      approval_limits is seeded empty pending open question 8.2, this is the
- *      live behaviour today, and the message says so rather than implying the
- *      user lacks a permission they do in fact hold.
- *   3. Above the ceiling. Escalates, naming the figure and the ceiling.
+ *   2. No limit row at all. resolveApprovalLimit reports unlimited, so a
+ *      permission-holder approves any amount (DECISIONS 39.2). The company
+ *      runs without rupee ceilings unless an approval_limits row reinstates
+ *      one; self-approval (refusal 1) still applies.
+ *   3. Above the ceiling. Escalates, naming the figure and the ceiling. Only
+ *      reached when a ceiling row is present.
  *
  * Above requires_second_approval_above the first approval is recorded and the
  * status stays pending_approval, because a PO that reads "approved" with one
@@ -1042,10 +1042,7 @@ export async function approvePo(db, actor, poId, roleKeys) {
         }
         const total = Number(po.total_paise);
         const limit = await resolveApprovalLimit(trx, roleKeys, 'purchase_order', today());
-        if (limit === null) {
-            throw new UnprocessableError(`No purchase order approval limit is set for your role, so no amount can be approved yet. An administrator sets these under Roles and approval limits.`);
-        }
-        if (total > limit.maxValue) {
+        if (!limit.unlimited && total > limit.maxValue) {
             throw new UnprocessableError(`${formatPaiseAsRupees(total)} is above your approval limit of ${formatPaiseAsRupees(limit.maxValue)}. This needs someone with a higher limit.`);
         }
         const needsSecond = limit.requiresSecondApprovalAbove !== null && total > limit.requiresSecondApprovalAbove;

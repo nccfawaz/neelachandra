@@ -2772,7 +2772,8 @@ export interface ContractorBillApprovalResult {
   billNo: string
   grossPaise: number
   netPayablePaise: number
-  limitRoleKey: string
+  /** The role whose ceiling row was applied, or null when uncapped (§39.2). */
+  limitRoleKey: string | null
   /** The expenses row the approval posted (§6.8 rule 1). */
   expenseId: number
   expenseNo: string
@@ -2840,14 +2841,9 @@ export async function approveContractorBill(
 
     const gross = Number(bill.gross_paise)
     const limit = await resolveApprovalLimit(trx, roleKeys, 'expense', today())
-    if (limit === null) {
+    if (!limit.unlimited && gross > limit.maxValue!) {
       throw new UnprocessableError(
-        'No expense approval limit is set for your role, so no amount can be approved yet. An administrator sets these under Roles and approval limits.'
-      )
-    }
-    if (gross > limit.maxValue) {
-      throw new UnprocessableError(
-        `${formatPaiseAsRupees(gross)} is above your approval limit of ${formatPaiseAsRupees(limit.maxValue)}. This needs someone with a higher limit.`
+        `${formatPaiseAsRupees(gross)} is above your approval limit of ${formatPaiseAsRupees(limit.maxValue!)}. This needs someone with a higher limit.`
       )
     }
     if (limit.requiresSecondApprovalAbove !== null && gross > limit.requiresSecondApprovalAbove) {

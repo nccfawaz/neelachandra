@@ -18,16 +18,32 @@ import {
 
 const DAY = 24 * 60 * 60 * 1000
 
-describe('session flavour from roles (34.1)', () => {
-  it('the field roles get the long rolling session', () => {
-    for (const role of ['site_engineer', 'site_supervisor', 'qa_qc']) {
+describe('session flavour from roles (34.1, extended 34.2)', () => {
+  it('every operational role gets the long rolling session', () => {
+    // The three original field roles (34.1) plus the five the owner moved on
+    // 2026-09-26 (34.2): PMs, procurement, sales, ops and marketing all work
+    // away from a shared office machine, so they get the rolling month.
+    for (const role of [
+      'site_engineer',
+      'site_supervisor',
+      'qa_qc',
+      'project_manager',
+      'procurement_executive',
+      'sales_exec',
+      'ops_manager',
+      'digital_marketing',
+    ]) {
       expect(STAFF_ROLE_KEYS).toContain(role)
       expect(isStaffSession([role]), `${role} must be staff flavour`).toBe(true)
     }
   })
 
-  it('office and admin roles keep the absolute 12 hours', () => {
-    for (const role of ['owner', 'admin', 'accounts_manager', 'hr_manager', 'ops_manager', 'project_manager', 'sales_exec']) {
+  it('the privileged sensitive-data roles keep the absolute 12 hours (34.2)', () => {
+    // Owner, admin, accounts_manager, hr_manager are DELIBERATELY excluded: a
+    // 30-day cookie on a shared desk is the exposure the short flavour bounds
+    // (company money, user/role administration, employee PII).
+    for (const role of ['owner', 'admin', 'accounts_manager', 'hr_manager']) {
+      expect(STAFF_ROLE_KEYS).not.toContain(role)
       expect(isStaffSession([role]), `${role} must be office flavour`).toBe(false)
     }
   })

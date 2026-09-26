@@ -1783,7 +1783,7 @@ hr.post('/api/hr/contractor-bills/:billId/approve', requirePermission(PERMISSION
     const back = `/app/hr/contractor-bills/${billId}`;
     return guard(c, back, async () => {
         const r = await svc.approveContractorBill(c.get('db'), actorOf(c), billId, c.get('roleKeys'));
-        return `${r.billNo} approved as ${r.limitRoleKey}: gross ${formatPaiseAsRupees(r.grossPaise)}, net payable ${formatPaiseAsRupees(r.netPayablePaise)}. It does not reach finance until the finance link is built.`;
+        return `${r.billNo} approved${r.limitRoleKey ? ` as ${r.limitRoleKey}` : ' (no approval ceiling set)'}: gross ${formatPaiseAsRupees(r.grossPaise)}, net payable ${formatPaiseAsRupees(r.netPayablePaise)}. It does not reach finance until the finance link is built.`;
     });
 });
 hr.get('/app/hr/recruiting', requirePermission(PERMISSIONS.HR_RECRUIT_MANAGE), async (c) => {

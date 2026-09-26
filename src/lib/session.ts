@@ -29,18 +29,31 @@ export const RENEWAL_FRACTION = 0.5
 
 /**
  * Which flavour a login gets, decided from the user's ROLE KEYS at login
- * time (DECISIONS 34.1) -- not a per-user flag, so a new hire assigned a
- * site role gets the long session automatically and an account promoted
- * into the office keeps it on the next login. The field role (who works at
- * a gate, on one device, on metered signal) gets the rolling month; the
- * office roles (shared machines, sensitive data) keep the absolute 12 h.
- * A user holding ANY staff role gets the staff flavour: the longest
- * session follows the most field-facing hat they wear.
+ * time (DECISIONS 34.1, extended 34.2) -- not a per-user flag, so a new hire
+ * assigned a site role gets the long session automatically and an account
+ * promoted into the office keeps it on the next login. A user holding ANY
+ * staff role gets the staff flavour: the longest session follows the most
+ * field-facing hat they wear.
+ *
+ * The owner's decision on 2026-09-26 (34.2) gives the rolling month to every
+ * operational role that works away from a shared office machine: the three
+ * original field roles, plus project_manager, procurement_executive,
+ * sales_exec, ops_manager and digital_marketing. What stays on the absolute
+ * 12 h is the small set of privileged, sensitive-data, often-2FA roles --
+ * owner, admin, accounts_manager, hr_manager -- because a 30-day cookie on a
+ * shared desk is the exact exposure the short flavour exists to bound
+ * (company money, user/role administration, employee PII). Those four are
+ * DELIBERATELY absent from this list; see 34.2 for the reasoning.
  */
 export const STAFF_ROLE_KEYS: readonly string[] = [
   'site_engineer',
   'site_supervisor',
   'qa_qc',
+  'project_manager',
+  'procurement_executive',
+  'sales_exec',
+  'ops_manager',
+  'digital_marketing',
 ]
 
 export function isStaffSession(roleKeys: readonly string[]): boolean {

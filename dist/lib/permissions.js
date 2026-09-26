@@ -174,18 +174,28 @@ export async function loadEffectivePermissions(db, userId) {
 }
 /**
  * Resolves the approval ceiling across every role the user holds, taking the
- * highest (spec 4.3). Returns null when the user holds no limit row for the
- * document type at all, which the caller must treat as "cannot approve any
- * amount" rather than "unlimited".
+ * highest (spec 4.3).
  *
- * approval_limits is seeded empty on purpose: the values are open question
- * 8.2 and are a business decision. Until the client sets them, every
- * approval escalates and the UI says which role is needed, which is the
- * honest behaviour for an unanswered question.
+ * When the user holds no matching limit row, the result is `{ unlimited: true }`:
+ * a permission-holder approves any amount. This is the owner's deliberate
+ * decision of 2026-09-26 (DECISIONS 39.2) — the company runs WITHOUT rupee
+ * ceilings on approvals. It reverses the earlier fail-closed reading (empty
+ * table = "cannot approve any amount") recorded against open question 8.2:
+ * that read a blank table as a freeze on every money workflow, which was never
+ * the intent. The authority to approve is still gated by the approval
+ * permission on the actor's role; only the AMOUNT is now uncapped. A specific
+ * ceiling can still be reinstated per role/document by inserting an
+ * approval_limits row, and a present row is enforced exactly as before.
  */
 export async function resolveApprovalLimit(db, roleKeys, documentType, onDate) {
+    const unlimited = {
+        unlimited: true,
+        maxValue: null,
+        requiresSecondApprovalAbove: null,
+        roleKey: null,
+    };
     if (roleKeys.length === 0)
-        return null;
+        return unlimited;
     const rows = await db
         .selectFrom('approval_limits')
         .select(['role_key', 'max_value', 'requires_second_approval_above'])
@@ -195,13 +205,14 @@ export async function resolveApprovalLimit(db, roleKeys, documentType, onDate) {
         .where((eb) => eb.or([eb('effective_to', 'is', null), eb('effective_to', '>=', onDate)]))
         .execute();
     if (rows.length === 0)
-        return null;
+        return unlimited;
     let best = rows[0];
     for (const r of rows) {
         if (Number(r.max_value) > Number(best.max_value))
             best = r;
     }
     return {
+        unlimited: false,
         maxValue: Number(best.max_value),
         requiresSecondApprovalAbove: best.requires_second_approval_above === null ? null : Number(best.requires_second_approval_above),
         roleKey: best.role_key,
