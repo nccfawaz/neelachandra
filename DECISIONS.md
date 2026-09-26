@@ -7900,5 +7900,78 @@ build: `--sp-4: 1rem`, the two grid-template-columns rules, `.ncc-card--wide`,
 - `npm run test:integration`: 491/491 across 50 files.
 - `npm run test:e2e`: 25/25 across 7 files.
 
+## 41. A media query adds no specificity: an override must come after its base rule
+
+The F bug in §40 cost real time and will recur now that the mobile pass has many
+overrides, so the rule is recorded here on its own.
+
+**A `@media` block adds nothing to a selector's specificity.** `@media (max-width:768px){.ncc-checkin-btn{max-width:none}}`
+and an unconditional `.ncc-checkin-btn{max-width:22rem}` have the **same** specificity
+— one class each. When the viewport matches the media query, BOTH rules apply and the
+cascade falls through to source order: the one written **later** wins. So an override
+inside a media query does not beat a base rule written after it; it loses to it,
+silently, only at the width where it was supposed to take effect.
+
+In §40 the phone override was written at ~line 906 and the base cap at ~line 1167, so
+at 390px the button measured 352px (the cap) instead of full width. The fix was not
+more specificity — it was source ORDER: move the `@media` override to **after** the
+base rule. `!important` would also have worked but is the wrong tool; it wins the next
+override too, and starts an escalation the next editor inherits.
+
+**The rule for this stylesheet:** a responsive override of a property set by an
+unconditional base rule must appear **after** that base rule in `dashboard.css`. The
+compact-breakpoint blocks (`@media (max-width:768px)`, §37.1) therefore belong near the
+END of the file or immediately after each base rule they override — never before it.
+When adding a mobile override, find the base declaration first and confirm the override
+sits later in source; equal specificity means position is the whole decision.
+
+This is the same family as the CHECK-clause and OR-audience traps elsewhere in this
+file: a mechanism that *looks* stronger than it is. A media query reads like "this wins
+on small screens"; it only means "this also applies on small screens", and applying is
+not winning.
+
+### On a gate for classes referenced in TSX but never defined in the CSS
+
+The days1 bug (§40, item E) and the whole unstyled waiting-on-you column had one root:
+four classes the markup rendered — `.ncc-list`, `.ncc-list__item`, `.ncc-list__value`
+and the `is-*` list tones — were referenced in TSX and **never defined** in the
+stylesheet. Asked whether a gate can catch that class of defect: **yes, for
+statically-written class names, which is exactly the shape that bit us** — but with
+limits worth stating so the gate does not become an empty-green or a false-positive
+generator.
+
+A feasible gate: extract every `ncc-*` token from `class=`/`className=` **string
+literals** across `src/**/*.tsx`, extract every class selector **defined in the SERVED
+stylesheet** (`public/assets/css/dashboard.css`, per §29.60 — not the source, which a
+build sits between), and assert every referenced token has a definition. The four
+classes that caused this bug were static literals, so a static extractor would have
+caught all four.
+
+The limits, grounded in the actual tree (79 static `ncc-*` tokens, 9 templated class
+attributes):
+
+- **Templated suffixes are invisible to a lexical scan.** `` `ncc-badge-${tone}` ``,
+  `` class={row.tone ? `ncc-list__item is-${row.tone}` : …} `` and `` `ncc-alert${tone}` ``
+  yield the static prefix but not the full name. The gate must enumerate the known
+  suffix values (the tone set) or allowlist those prefixes, or it reports false
+  positives on every dynamic class. NOTE the days1 classes were static, so this limit
+  did not shield the bug — but a naive gate that skips all dynamic classes could miss a
+  genuinely-undefined dynamic one.
+- **Intentionally-unstyled hooks need an allowlist.** Semantic classes, JS/test hooks
+  and `data-*`-driven selectors are referenced-but-undefined *by design*; without an
+  allowlist they are false positives. The allowlist must cite why each entry is exempt
+  (the citation rule, CLAUDE.md), or it becomes a registry of reasons nobody rereads.
+- **Selector extraction must be real parsing, not substring.** Compound (`.a.b`),
+  descendant (`.a .b`), pseudo (`.a:checked`) and grouped selectors all define `.a`;
+  a substring match over CSS text will both miss and over-match.
+- **Non-zero floors on both enumerations (§28.1).** Assert referenced-count > 0 and
+  defined-count > 0 before comparing, or an empty scan passes vacuously.
+- **Direction:** referenced-but-undefined (the bug here → dead reference, unstyled
+  markup) is the check that matters; defined-but-unreferenced is dead CSS, a separate
+  and lower-severity sweep.
+
+Not built in this pass; recorded so the decision to build it (and its allowlist basis)
+is a deliberate, cited act rather than something bolted on under the next bug.
+
 
 
