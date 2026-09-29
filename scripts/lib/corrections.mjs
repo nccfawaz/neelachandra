@@ -76,18 +76,23 @@ const CORRECTORS = [
   },
   {
     key: 'rating',
-    // Normalise every aggregateRating to the genuine figures. Matches both the
-    // single-line and the pretty-printed forms that appear across the pages.
+    // DELETE every aggregateRating node. With only 4 Google reviews, the
+    // listing does not display an aggregate rating publicly, so claiming one in
+    // Schema.org structured data is false. Two passes handle both positions the
+    // node takes: mid-object (followed by a comma) and last-property (preceded
+    // by a comma). Removing the node with its adjacent comma keeps the
+    // surrounding JSON valid in both cases — proven by json-ld parse in the
+    // fact-consistency gate.
     fn (html) {
-      return html.replace(
-        /"aggregateRating"\s*:\s*\{[\s\S]{0,400}?\}/g,
-        () => '"aggregateRating": {' +
-          ' "@type": "AggregateRating",' +
-          ` "ratingValue": "${RATING.value}",` +
-          ` "reviewCount": "${RATING.count}",` +
-          ' "bestRating": "5",' +
-          ' "worstRating": "1" }'
-      )
+      // The aggregateRating object is always flat (no nested braces), so
+      // [^{}]* stops at its own closing brace. A greedy/[\s\S] body would skip
+      // past it to the parent object's brace when the node is the last property
+      // (no trailing comma), swallowing the parent's close and corrupting JSON.
+      // Node followed by a comma (not the last property in its object).
+      let out = html.replace(/"aggregateRating"\s*:\s*\{[^{}]*\}\s*,/g, '')
+      // Node preceded by a comma (the last property in its object).
+      out = out.replace(/,\s*"aggregateRating"\s*:\s*\{[^{}]*\}/g, '')
+      return out
     }
   },
   {
@@ -139,6 +144,17 @@ const CORRECTORS = [
       out = out.replace(/4\.8★/g, `${RATING.value}★`)
       out = out.replace(/>4\.8<\/strong><sup>★<\/sup>/g,
         `>${RATING.value}</strong><sup>★</sup>`)
+      // Home page line 1091: bare 4.8 in a stat card with empty label
+      out = out.replace(
+        /(<strong class="bold-text-22">)4\.8(<\/strong><\/p><p class="heading-8"><\/p>)/g,
+        `$1${RATING.value}$2`
+      )
+      // The review-count is now confirmed (4), so the stat card's label
+      // placeholder can be filled from the genuine GBP figure.
+      out = out.replace(
+        /Google rating from \[CLIENT TO VERIFY: number\] Google reviews/g,
+        `Google rating from ${RATING.count} Google reviews`
+      )
 
       // 3. Prove nothing was missed. A leftover 4.8 next to a rating word
       //    means a new format was introduced upstream and this corrector needs
@@ -181,6 +197,146 @@ const CORRECTORS = [
       const anchor = '<li>\r\n              <div class="nav-button-wrapper">'
       if (!html.includes(anchor)) return html
       return html.replace(anchor, LOGIN_LI + anchor)
+    }
+  },
+  {
+    key: 'phone',
+    // Normalize all phone numbers to the single canonical number. The site
+    // previously displayed three different numbers (7829292929, 8029652243,
+    // 6157069211) plus a placeholder (+91-XXXXXXXXXX), creating confusion about
+    // which was correct. All instances are replaced with +91 7829292929 in
+    // various display formats, and tel: hrefs are normalized to the digits-only
+    // form that ensures reliable click-to-call behavior.
+    fn (html) {
+      let out = html
+      // Replace the obsolete numbers and placeholder with canonical
+      out = out.replace(/8029652243|80296\s*52243/g, '7829292929')
+      out = out.replace(/6157069211|61570\s*69211/g, '7829292929')
+      out = out.replace(/\+91-XXXXXXXXXX/g, '+91 7829292929')
+      // Normalize tel: hrefs to remove spaces/formatting for reliable dialing
+      out = out.replace(/tel:\+?91[\s-]?78292[\s-]?92929/g, 'tel:+917829292929')
+      out = out.replace(/tel:\+?91[\s-]?7829292929/g, 'tel:+917829292929')
+      return out
+    }
+  },
+  {
+    key: 'internal-links',
+    // Fix broken internal links. Projects page linked to /about and /contact,
+    // which 404 because the actual routes are /about-us and /contact-us.
+    fn (html, file) {
+      if (!file.includes('projects')) return html
+      return html
+        .replace(/href="\/about"/g, 'href="/about-us"')
+        .replace(/href="\/contact"/g, 'href="/contact-us"')
+    }
+  },
+  {
+    key: 'malformed-tag',
+    // Fix malformed <34> tag in home.html accordion. The opening tag was
+    // corrupted to <34 class="..."> while the closing tag remained </h3>,
+    // breaking HTML validity.
+    fn (html, file) {
+      if (!file.includes('index')) return html
+      return html.replace(/<34 class="accordion-heading">/g, '<h3 class="accordion-heading">')
+    }
+  },
+  {
+    key: 'founder-placeholder',
+    // Replace founder name placeholder with the actual name: Chandrashekar T.
+    // The second placeholder (commercial project example) is removed entirely
+    // by deleting its sentence, per owner instruction.
+    fn (html, file) {
+      if (!file.includes('projects')) return html
+      let out = html
+      out = out.replace(/\[PLACEHOLDER: Founder full name\]/g, 'Chandrashekar T')
+      // Remove the commercial project placeholder sentence. It sits at the end
+      // of a paragraph, so remove from "Our commercial work" through the
+      // placeholder and restore the sentence that should conclude the paragraph.
+      out = out.replace(
+        /Our commercial work applies the same structural discipline, material traceability and milestone-based delivery proven on OEM-grade industrial projects such as Honda Cars India — ensuring functional, durable, high-value business spaces delivered on schedule\. \[PLACEHOLDER: replace with a specific named commercial project — client, location, sq ft — once cleared for public use\.\]/g,
+        'Our commercial work applies the same structural discipline, material traceability and milestone-based delivery proven on OEM-grade industrial projects such as Honda Cars India.'
+      )
+      return out
+    }
+  },
+  {
+    key: 'rupee-symbol',
+    // Replace "Rs" with the proper rupee symbol ₹ in the packages page
+    // (meta description, schema, H1, and body copy).
+    fn (html, file) {
+      if (!file.includes('packages')) return html
+      return html.replace(/\bRs\b/g, '₹')
+    }
+  },
+  {
+    key: 'gst-disclosure',
+    // Add explicit GST-inclusive disclosure next to every price table. Prices
+    // include GST, but this was never stated, causing customer confusion.
+    fn (html, file) {
+      // Exact filenames — substring matching would fire the bengaluru branch on
+      // construction-packages-in-bengaluru.html (which also contains "bengaluru").
+      const PRICE_PAGES = [
+        'index.html',
+        'construction-packages-in-bengaluru.html',
+        'best-construction-company-in-bengaluru.html',
+        'construction-company-in-tumkur.html'
+      ]
+      if (!PRICE_PAGES.includes(file)) return html
+      // Skip if already present
+      if (html.includes('All prices include GST')) return html
+
+      let out = html
+      // Home page: after the pricing section heading
+      if (file === 'index.html') {
+        out = out.replace(
+          /(<h2 class="heading-4"><strong>House Construction Cost in Bengaluru: ₹2,299 to ₹3,499 per sqft<\/strong><\/h2>)/,
+          '$1\r\n    <p class="paragraph-note" style="margin-top: 0.75rem; font-size: 0.9rem; color: #666;">All prices include GST.<\/p>'
+        )
+      }
+      // Packages page: after the main H1
+      if (file === 'construction-packages-in-bengaluru.html') {
+        out = out.replace(
+          /(<h1 class="heading-35">How much does house construction cost in Bengaluru\?[^<]*<\/h1>)/,
+          '$1\r\n      <p class="paragraph-note" style="margin-top: 1rem; margin-bottom: 1.5rem; font-size: 0.9rem; color: #666;">All prices include GST.<\/p>'
+        )
+      }
+      // Bengaluru page: before the pricing card grid
+      if (file === 'best-construction-company-in-bengaluru.html') {
+        out = out.replace(
+          /(<div class="pricing-wrapper">)/,
+          '<p class="paragraph-note" style="margin-bottom: 1.5rem; font-size: 0.9rem; color: #666;">All prices include GST.<\/p>\r\n      $1'
+        )
+      }
+      // Tumkur page: after the per-sq-ft cost heading
+      if (file === 'construction-company-in-tumkur.html') {
+        out = out.replace(
+          /(<h3>Cost per Sq Ft in Tumkur by Package<\/h3>)/,
+          '$1\r\n    <p class="paragraph-note" style="margin-top: 0.5rem; margin-bottom: 1rem; font-size: 0.9rem; color: #666;">All prices include GST.<\/p>'
+        )
+      }
+      return out
+    }
+  },
+  {
+    key: 'founding-year',
+    // Anchor all duration claims to the verified founding year (2018) so they
+    // stay accurate and can't drift. Replaces vague/contradictory claims like
+    // "over a decade" (false in 2026), "10+ years" (false), "over 8 years"
+    // (will become false in 2027) with the current, computable figure.
+    fn (html) {
+      const now = new Date()
+      const years = now.getFullYear() - 2018
+      const yearsText = `${years}+ years`
+
+      let out = html
+      // "over a decade" appears in about.html and tumkur.html
+      out = out.replace(/over a decade/gi, yearsText)
+      // "10+ Years" in tumkur.html stat card
+      out = out.replace(/10\+\s*Years/gi, yearsText)
+      // "over 8 years" in bengaluru.html (3 instances)
+      out = out.replace(/over 8 years/gi, yearsText)
+
+      return out
     }
   }
 ]

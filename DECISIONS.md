@@ -7975,3 +7975,124 @@ is a deliberate, cited act rather than something bolted on under the next bug.
 
 
 
+
+
+## 42. Stage 1 SEO/AEO audit: the public site tells the truth in several incompatible ways, 2026-09-26
+
+Branch `seo-audit` off main. Main auto-deploys the repo root to the live public
+site (Hostinger, §29.54), so **no marketing copy reached main in this pass** —
+Stage 1 is audit/stop/report only. The 10 public pages are static root HTML
+built from `legacy/golden/*` by `scripts/build-site.mjs`; the audit reads the
+**served bytes** at repo root, not the golden source (§29.60: assert served,
+not source). Full evidence in [docs/seo/OWNER-FACTS.md](docs/seo/OWNER-FACTS.md).
+
+### What the audit found (measured, not asserted)
+
+- **The brand states its own core facts in conflicting ways.** Rating is 4.8
+  and 4.0/5.0 on the *same* home page (index.html:1089 vs :1204); the firm is
+  "over a decade" old and founded 2018 (8 yrs); the project count is 30+ on most
+  pages but "200+ across Karnataka" on tumkur:615; the waterproofing warranty is
+  1 year (about/packages) and "5 to 10 years" (services:105). A visitor and a
+  crawler both see the contradiction. There is no single source of truth.
+- **Placeholders and breakage shipped to production:** `[PLACEHOLDER: Founder
+  full name]` (projects:85), a second `[PLACEHOLDER…]` (projects:1000), a
+  `+91-XXXXXXXXXX` phone (bengaluru:259), a **malformed `<34>` tag** where an
+  `<h3>` belongs (index:1258), **three EMPTY `<title>`s** (bengaluru, terms,
+  privacy) and an empty meta description (bengaluru), **"Rs" instead of ₹** on
+  the packages meta/schema/H1, and **broken internal links** `/about` `/contact`
+  (should be `-us`) on projects.
+- **`aggregateRating` is on every page as "4.0 from 4 reviews"** — a schema
+  rating claim that is not clearly the real, on-page, verifiable Google count.
+  Per the brief and Google policy this must be removed unless a real rating +
+  count is both true and visible. Flagged separately from the copy ratings.
+- **Third-party brand claims with no substantiation.** Honda / Mandot Steel /
+  VRL / Recipharma / Nambiar / Capstone appear as detailed case studies (+ some
+  logos); **Godrej Properties, Salarpuria Sattva and Casagrand are name-dropped
+  as "trusted by" with no project at all — and that claim sits even on the
+  terms and privacy pages** (index:1549; terms:490; privacy:507). Highest legal
+  exposure. Recorded, not edited.
+- **Keyword cannibalisation.** Two URLs target "best construction company in
+  Bengaluru" (`…-bengaluru` and `…-bengaluru-projects`); the cost query is split
+  across four pages that each carry a per-sq-ft price table (home, packages,
+  bengaluru, tumkur); the FAQ block is duplicated (home 17 = services 17
+  Question nodes).
+- **Technical baseline (Chromium, served bytes, 390×844 and 1280×900):** CSS is
+  ~140–161 KB and render-blocking (4–5 stylesheets) on the main-template pages;
+  the two location pages are lean (~26 KB). CLS is poor on packages mobile
+  (0.152) and bengaluru desktop (0.17). LCP was fast but measured on localhost
+  with no throttle, so it is optimistic — not a pass. Image `alt` coverage is
+  weak: packages 3/25, about 8/32, services 10/27.
+- **Authorities are stale/over-claimed.** "BBMP" is named as a live authority,
+  but BBMP was dissolved into the **Greater Bengaluru Authority** (in existence
+  15 May 2025, five corporations, ~709–712 sq km). Nelamangala is **outside**
+  the GBA (Bengaluru Rural, ~30 km NW). Tumkur building licences inside the City
+  Corporation are the Corporation's, not TUDA's (TUDA is the planning-area body).
+  Third-party research leads corrected: five corporations not seven; B→A khata
+  window to **31 Dec 2027** (not 2026); DC conversion **waived inside master-plan
+  areas**.
+
+### Systemic fix (proposed for Stage 2, not built)
+
+Single source of truth `src/content/facts.ts` — one typed record for rating,
+review count, founding year, project count, warranties, phone, prices, and the
+approved-client list — consumed by the golden templates so a fact exists once.
+Refactor size: all 10 golden sources + `scripts/build-site.mjs` + the facts
+module ≈ **12 files touched**; the 10 root HTML files are rebuilt outputs, not
+hand-edits.
+
+### Proposed gates (Stage 2, empty-green per §28.1 — NON-ZERO FLOORS)
+
+1. **Placeholder gate** — no `[PLACEHOLDER`, `XXXXXX`, `[CLIENT TO VERIFY`,
+   empty `<title>`/meta, or malformed numeric tag in any served page. Floor:
+   asserts pages-scanned > 0.
+2. **Cross-page fact-difference gate** — the facts in `facts.ts` render
+   identically wherever they appear (rating, years, count, warranty, phone).
+   Floor: fact-occurrences-found > 0 before comparing.
+3. **Schema-claim-in-visible-text gate** — every `aggregateRating` / claim in
+   JSON-LD must also appear in the page's rendered text (and no aggregateRating
+   without a real, visible count). Floor: schema-blocks-scanned > 0.
+
+The **undefined-class gate is deliberately NOT in this set** — deferred in §41.
+
+### Gate counts (unchanged this pass — audit only, no gate built)
+
+Nothing was added to the suite. Current: typecheck; unit (25 files); integration
+(50 files, MariaDB :3307); e2e (7 files, Chromium). The three gates above are
+*proposed*, to be built when the owner approves Stage 2 and supplies the facts.
+
+**STOP.** Awaiting owner facts (OWNER-FACTS.md) and Stage 2 approval before any
+copy is written or any commit reaches main.
+
+### Stage 1 hotfix — approved defect repair (2026-09-29)
+
+The owner authorised ONE hotfix commit to `main` that repairs the defects
+above without touching frozen marketing copy; the Stage 2 copy freeze still
+stands for everything else. Every repair is applied by
+`scripts/lib/corrections.mjs` on top of the frozen `legacy/golden/*` masters —
+the golden bytes stay the pristine audit record and the deployed root is golden
+plus these named correctors. Four owner-confirmed facts now live in
+`src/content/facts.ts` as the single source of truth: founding year 2018
+(durations derived, so "over a decade" / "10+ years" / "over 8 years" become
+the computed "N+ years"), phone +91 7829292929 (obsolete 8029652243 /
+6157069211 and the `+91-XXXXXXXXXX` placeholder removed), the genuine Google
+figure 4.0 from 4 reviews (the invented 4.8 corrected in every visible format
+and the review-count placeholder filled), and GST-inclusive pricing (stated
+next to every price table). The `aggregateRating` JSON-LD node is DELETED from
+all five pages that carried it (about, services, packages, bengaluru, tumkur) —
+with 4 reviews Google shows no public aggregate, so a schema rating claim would
+be false. Same-commit defect repairs: `/about`->`/about-us` and
+`/contact`->`/contact-us` on projects, the malformed `<34>`->`<h3>` on home,
+the founder placeholder -> "Chandrashekar T", the commercial-project
+placeholder sentence removed, and "Rs"->₹ on packages. The three empty
+`<title>`s and the empty meta description are LEFT for Stage 2 (they need
+copy). Two gates added with non-zero floors (§28.1): a placeholder-regression
+gate and a cross-page fact-consistency gate; gate 3 (schema-in-visible-text) is
+deferred as too brittle.
+
+**Live-fetch correction to the technical-baseline finding above.** Those
+measurements (CSS size, CLS, LCP) were taken against **localhost only** — the
+"not a pass" caveat on LCP is about the missing throttle, not about the live
+host. A separate live fetch of the Hostinger-served domain afterward confirmed
+the **live bytes match the repo root**: the deploy is current, not stale. So
+the audit’s served-bytes reasoning (§29.60) holds against production, and this
+hotfix, once pushed to `main`, is the next thing the live site will serve.
