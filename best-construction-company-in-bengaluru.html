@@ -460,7 +460,7 @@ document.addEventListener('keydown', function(e){
 
   @media (max-width:900px){
     .bng-hero{ padding-top:96px; }
-    .bng-stats{ grid-template-columns:repeat(2,1fr); }
+    .bng-stats{ grid-template-columns:repeat(2,1fr); } .bng-stats .bng-stat:last-child{ grid-column:1 / -1; }
     .bng-stat{ border-bottom:1px solid var(--nc-border); }
     .bng-diff-grid, .bng-reg-grid{ grid-template-columns:1fr; }
     .bng-clients-grid{ grid-template-columns:repeat(2,1fr); }

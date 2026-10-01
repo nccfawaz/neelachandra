@@ -425,6 +425,49 @@ const CORRECTORS = [
       }
       return out
     }
+  },
+  {
+    key: 'stat-strip-reflow-mobile',
+    // BATCH 2c mobile fix. 2b fixed the desktop strips but left the phone (<=
+    // ~767/900/600px) breakpoints at an even column count: each strip wraps its
+    // three surviving cards into a 2-up grid (or 47% flex row), so the third card
+    // sits alone and leaves one empty cell. Fix: let the LAST card span both
+    // columns (full row), which keeps cards 1-2 at half width and the strip at two
+    // rows. That footprint is smaller than the one-column alternative (three full-
+    // width cards, three rows), so it is the "whichever is smaller" choice for all
+    // four strips. Every rule below is appended INSIDE an existing mobile @media
+    // block, so 1280px desktop geometry is byte-for-byte the batch-2b layout; only
+    // the phone breakpoints change. Each :last-child selector is specific enough
+    // (>= 0,0,3,0) to beat the narrower 479/600px width overrides that follow it.
+    fn (html, file) {
+      let out = html
+      if (file === 'index.html') {
+        // Hero strip is a 2-col grid at <=767px; counter strip is a 47% flex wrap.
+        out = out.replace(
+          '.container-10{position:static;display:grid;grid-template-columns:1fr 1fr;gap:16px;width:100%;max-width:560px;margin:0 auto}',
+          '.container-10{position:static;display:grid;grid-template-columns:1fr 1fr;gap:16px;width:100%;max-width:560px;margin:0 auto} .container-10>.gsap-stat-card:last-child{grid-column:1/-1}'
+        )
+        out = out.replace(
+          '.div-block-9{flex-flow:wrap;justify-content:center;border-right:0;margin-top:40px;gap:24px 0}',
+          '.div-block-9{flex-flow:wrap;justify-content:center;border-right:0;margin-top:40px;gap:24px 0} .div-block-9>.div-block-8:last-child{width:100%}'
+        )
+      }
+      if (file === 'best-construction-company-in-bengaluru.html') {
+        // .bng-stats drops to repeat(2,1fr) at <=900px.
+        out = out.replace(
+          '.bng-stats{ grid-template-columns:repeat(2,1fr); }',
+          '.bng-stats{ grid-template-columns:repeat(2,1fr); } .bng-stats .bng-stat:last-child{ grid-column:1 / -1; }'
+        )
+      }
+      if (file === 'construction-company-in-tumkur.html') {
+        // .trust-bar drops to two columns at <=600px (the governing phone rule).
+        out = out.replace(
+          '.tumkur-page .trust-bar{grid-template-columns:1fr 1fr;}',
+          '.tumkur-page .trust-bar{grid-template-columns:1fr 1fr;} .tumkur-page .trust-bar .trust-card:last-child{grid-column:1 / -1;}'
+        )
+      }
+      return out
+    }
   }
 ]
 
