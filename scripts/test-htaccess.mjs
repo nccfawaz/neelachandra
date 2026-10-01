@@ -182,7 +182,10 @@ async function main () {
     check('one canonical on /', (home.body.match(/rel="canonical"/g) || []).length, 1)
     check('no empty canonical on /', /rel="canonical"\s+href="\s*"/.test(home.body), false)
     check('no fake 4.8 rating on /', /4\.8\s*(?:★|\/\s*5)/.test(home.body), false)
-    check('genuine 4.0 rating on /', home.body.includes('4.0★'), true)
+    // Hotfix batch 2: the rating is REMOVED, not rewritten (facts.ts
+    // displayAggregateRating=false, STAGE2 Q11 unanswered). No rating value may
+    // appear beside a rating word on /.
+    check('no rating shown on / (removed)', /4\.[08]\s*(?:★|\/\s*5|star)/i.test(home.body), false)
     check('favicon.ico is the only icon on /',
       (home.body.match(/rel="(?:icon|shortcut icon|apple-touch-icon)"[^>]*href="(?!\/favicon\.ico)/g) || []).length, 0)
     check('login link in header on /', home.body.includes('nav-link-login'), true)
@@ -191,9 +194,9 @@ async function main () {
     // pages contain unrelated 4.8 values in CSS and SVG path data, and one
     // CSS comment that quotes "4.8" while describing heading markup.
     const bng = await get('/best-construction-company-in-bengaluru')
-    const fakeClaim = /4\.8\s*(?:\u2605|star|\/\s*5|<\/strong>)/i.test(bng.body)
-    check('no fake rating claim on bengaluru', fakeClaim, false)
-    check('genuine rating on bengaluru', bng.body.includes('4.0\u2605'), true)
+    // Hotfix batch 2: no rating of any value may appear beside rating wording.
+    const ratingClaim = /4\.[08]\s*(?:\u2605|star|\/\s*5|<\/strong>)/i.test(bng.body)
+    check('no rating claim on bengaluru (removed)', ratingClaim, false)
 
     const login = await get('/login')
     check('login page is noindex', /name="robots"\s+content="noindex/.test(login.body), true)

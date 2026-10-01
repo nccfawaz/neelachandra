@@ -51,21 +51,55 @@ describe('the served pages agree with facts.ts and with each other', () => {
     for (const p of pages) expect(p.raw.length).toBeGreaterThan(500)
   })
 
-  describe('rating', () => {
-    const good = GOOGLE_RATING.value.toFixed(1) // 4.0, not "4" — Number(4.0) String would drop it
-
-    it('states the real rating (4.0) in a rating context somewhere (positive floor)', () => {
-      const found = pages.flatMap((p) => windowsAround(p.body, new RegExp(good.replace('.', '\\.'))))
-        .filter((w) => RATING_CTX.test(w))
-      expect(found.length).toBeGreaterThan(0)
+  describe('rating (none published — facts.ts withholds the aggregate)', () => {
+    // BASIS: src/content/facts.ts sets GOOGLE_RATING.displayAggregateRating=false.
+    // The owner has not cleared ANY Google rating or review count for publication
+    // (STAGE2 Q11), so no served page may state a rating in any form. This is the
+    // served-bytes mirror of the rating-visible corrector's RESIDUAL tripwire.
+    // The premise guard below cites that flag: if Q11 is later answered yes and the
+    // flag flips, this block goes red and is revisited rather than silently passing
+    // a rating the gate was written to forbid.
+    it('premise: facts.ts withholds the aggregate rating (cited basis)', () => {
+      expect(GOOGLE_RATING.displayAggregateRating).toBe(false)
     })
 
-    it('never states the invented 4.8 in a rating context', () => {
-      const bad = pages
-        .filter((p) => windowsAround(p.body, /4\.8/).some((w) => RATING_CTX.test(w)))
-        .map((p) => p.file)
-      expect(bad, `4.8 rating claim survives in: ${bad.join(', ')}`).toEqual([])
+    // Non-zero floor (§28.1): an absence assertion over an empty scan passes
+    // vacuously. Prove the numeric detector has real input — the pages carry the
+    // 4.0/4.8 needle in CSS/SVG — and that the page corpus is the full canonical
+    // set, so "no claim found" means scanned-and-clean, not scanned-nothing.
+    it('scans a non-empty corpus before asserting absence', () => {
+      const needleHits = pages.reduce((n, p) => n + (p.body.match(/4\.[08]/g)?.length ?? 0), 0)
+      expect(needleHits).toBeGreaterThan(0)
+      expect(pages.length).toBe(PAGES.length)
     })
+
+    // Each detector is a distinct rating-claim shape (mirrors corrections.mjs
+    // RESIDUAL). A bare 4.x is not a claim — CSS/SVG carry unrelated values — so
+    // the numeric detector only fires on a value sitting beside a rating word.
+    const CLAIMS: { name: string; find: (body: string) => boolean }[] = [
+      {
+        // Mirrors the rating-visible RESIDUAL: only the two values a rating claim
+        // ever used (invented 4.8, genuine 4.0). A bare \d.\d is NOT a claim — geo
+        // lat/long, CSS lengths and share.google carry decimals near RATING_CTX
+        // words ('flex-start' contains 'star') and are not ratings.
+        name: 'the 4.0/4.8 rating value in a rating context',
+        find: (b) => windowsAround(b, /4\.[08]/, 90).some((w) => RATING_CTX.test(w)),
+      },
+      { name: 'star glyph ★', find: (b) => /★/.test(b) },
+      { name: 'review-count claim (N reviews)', find: (b) => /\d+\s+(?:Google\s+)?reviews\b/i.test(b) },
+      {
+        name: '"Avg. Verified Client Rating" label',
+        find: (b) => /Avg\.\s*Verified\s*Client\s*Rating/i.test(b),
+      },
+      { name: '"verified ... rating/review"', find: (b) => /verified[^.<>]{0,40}(?:rating|review)/i.test(b) },
+    ]
+
+    for (const { name, find } of CLAIMS) {
+      it(`no served page carries a rating claim: ${name}`, () => {
+        const bad = pages.filter((p) => find(p.body)).map((p) => p.file)
+        expect(bad, `rating claim (${name}) survives in: ${bad.join(', ')}`).toEqual([])
+      })
+    }
   })
 
   describe('aggregateRating schema node', () => {

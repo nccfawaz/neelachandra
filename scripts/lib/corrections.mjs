@@ -97,76 +97,125 @@ const CORRECTORS = [
   },
   {
     key: 'rating-visible',
-    // The rating also appears as VISIBLE text in three places: a stat card on
-    // the homepage ("Google Rating"), a stat card on the Bengaluru page
-    // ("Avg. Verified Client Rating"), and one sentence of FAQ prose on the
-    // same page. Correcting only the JSON-LD would leave each page
-    // contradicting its own structured data, which is the exact mismatch
-    // Google penalises, and would leave a false claim in the visible copy.
+    // HOTFIX BATCH 2 (plan: docs/seo/STAGE2-COPY-PROPOSAL.md "Rating claims
+    // removal plan"; open owner question Q11). The owner has NOT confirmed that
+    // any Google rating or review count may be published, and src/content/facts.ts
+    // sets displayAggregateRating:false. So every VISIBLE rating claim the golden
+    // masters carry (the invented 4.8) is REMOVED here, not rewritten to the real
+    // 4.0 — a figure the site may not state until Q11 is answered. The companion
+    // `rating` corrector above deletes the aggregateRating JSON-LD nodes; this one
+    // removes the visible stat badges and rating sentences and rewrites the two
+    // Bengaluru FAQ answers so they no longer mention a rating.
     //
-    // These are the only visible-copy changes in this file. They exist because
-    // the owner confirmed the 4.8 was not genuine, so leaving it on screen was
-    // not an option.
-    fn (html) {
-      // The claim appears in SEVEN visible formats across four pages, each
-      // worded differently: "4.8★", "4.8</strong><sup>★</sup>", "4.8 / 5.0",
-      // "4.8/5", "4.8 star client rating" and two stat cards. Searching only
-      // for "4.8★" found two of them, which is why this is pattern-by-pattern
-      // and ends with an assertion instead of a single global replace.
-      //
-      // ORDER MATTERS: the prose rewrites run before the bare-number swaps,
-      // otherwise the number changes first and the longer phrases no longer
-      // match. Getting this wrong produced the truncated string
-      // "and a verified 4." on the first attempt.
+    // Correctors run on the GOLDEN input, which still says "4.8" / "over 8 years",
+    // so every pattern targets the golden wording, not the served text. about.html
+    // uses bare-LF endings in its stat region (the file is mixed CRLF/LF), so that
+    // one block matches on \n; every other page matches on \r\n. [ \t]* absorbs the
+    // leading indent so a mis-counted space cannot silently turn a removal into a
+    // no-op — and if any removal fails to fire, the RESIDUAL tripwire below throws.
+    fn (html, file) {
       let out = html
 
-      // 1. Prose claims. Swapping the digits alone would offer a 4.0 as
-      //    evidence of being "widely recognized as leading", so each clause is
-      //    restated as a plain, checkable fact.
-      // The Bengaluru FAQ answer exists TWICE: once as visible <details>
-      //  markup using "4.8★" and once inside the FAQPage JSON-LD using
-      // "4.8 star". Both copies have to read identically or the page and its
-      // structured data disagree, so the pattern accepts either spelling and
-      // the replace is global.
+      // --- Whole stat / sentence blocks removed ---
+
+      // Row 1  home:985  "Google Rating" hero stat card (reflow R1: the stat
+      // strip drops from 4 flex cards to 3).
       out = out.replace(
-        /and a 4\.8(?:★| star) client rating\./g,
-        `and a verified ${RATING.value}-star Google rating from ${RATING.count} reviews.`
-      )
-      out = out.replace(
-        /and a 4\.8\/5 average client rating\./,
-        `and a verified ${RATING.value}-star Google rating from ${RATING.count} reviews.`
+        /[ \t]*<div class="scroll-col-2 gsap-stat-card">\r\n[ \t]*<p class="heading-3"><strong class="bold-text-11">4\.8★<\/strong><\/p>\r\n[ \t]*<div class="div-block-31"><div><p class="paragraph-4">Google Rating<\/p><\/div><div class="div-block-32"><img src="\/assets\/images\/home\/rating\.webp" width="48" height="48" loading="lazy" alt="Google rating icon"><\/div><\/div>\r\n[ \t]*<\/div>\r\n/,
+        ''
       )
 
-      // 2. Display figures. The surrounding label already says what it is, so
-      //    only the number is corrected, preserving each page's own format.
-      out = out.replace(/4\.8 \/ 5\.0/g, `${RATING.value} / 5.0`)
-      out = out.replace(/4\.8\/5(?!\.)/g, `${RATING.value}/5`)
-      out = out.replace(/4\.8★/g, `${RATING.value}★`)
-      out = out.replace(/>4\.8<\/strong><sup>★<\/sup>/g,
-        `>${RATING.value}</strong><sup>★</sup>`)
-      // Home page line 1091: bare 4.8 in a stat card with empty label
+      // Row 2  home:1091  "average Google rating from N reviews" counter card
+      // (reflow R2: .div-block-9 drops from 4 to 3 counters).
       out = out.replace(
-        /(<strong class="bold-text-22">)4\.8(<\/strong><\/p><p class="heading-8"><\/p>)/g,
-        `$1${RATING.value}$2`
-      )
-      // The review-count is now confirmed (4), so the stat card's label
-      // placeholder can be filled from the genuine GBP figure.
-      out = out.replace(
-        /Google rating from \[CLIENT TO VERIFY: number\] Google reviews/g,
-        `Google rating from ${RATING.count} Google reviews`
+        /[ \t]*<div class="div-block-8 counter-2"><div class="div-block-7"><p class="heading-7"><strong class="bold-text-22">4\.8<\/strong><\/p><p class="heading-8"><\/p><\/div><p class="paragraph-10"><strong class="bold-text-5">average Google rating from \[CLIENT TO VERIFY: number\] Google reviews<\/strong><\/p><\/div>\r\n/,
+        ''
       )
 
-      // 3. Prove nothing was missed. A leftover 4.8 next to a rating word
-      //    means a new format was introduced upstream and this corrector needs
-      //    extending. Failing loudly is the only safe outcome: a half
-      //    corrected page states two different ratings at once.
-      const RESIDUAL = /.{0,90}4\.8.{0,60}/gs
-      for (const m of out.match(RESIDUAL) || []) {
-        if (/Numeric stat displays/.test(m)) continue  // a CSS comment, not a claim
-        if (/rating|Rating|star|★|review|Review|Google/.test(m)) {
+      // Row 3  home:1206  testimonial numeric rating heading + sentence (reflow
+      // R3). The decorative stars.webp image above it is left as-is: it is not in
+      // the approved 12-row plan and carries no numeric claim.
+      out = out.replace(
+        /[ \t]*<div><h3 class="heading-18">4\.8 \/ 5\.0<\/h3><p class="paragraph-35">Average client rating across residential, commercial and industrial projects delivered since 2018\.<\/p><\/div>\r\n/,
+        ''
+      )
+
+      // Row 8  bengaluru:491  "Avg. Verified Client Rating" bng-stat (reflow R4:
+      // .bng-stats drops from 4 to 3).
+      out = out.replace(
+        /[ \t]*<div class="bng-stat"><span class="num">4\.8★<\/span><span class="lbl">Avg\. Verified Client Rating<\/span><\/div>\r\n/,
+        ''
+      )
+
+      // Row 11  tumkur:585  "Average Client Rating" trust-card (reflow R5:
+      // .trust-bar drops from 4 to 3).
+      out = out.replace(
+        /[ \t]*<div class="trust-card">\r\n[ \t]*<div class="trust-num">4\.8\/5<\/div>\r\n[ \t]*<div class="trust-label">Average Client Rating<\/div>\r\n[ \t]*<\/div>\r\n/,
+        ''
+      )
+
+      // Row 12  about:757  "Average Rating" stat (reflow R6). about.html uses bare
+      // LF line endings in this region, so this block alone matches on \n.
+      out = out.replace(
+        /[ \t]*<div class="scroll-col-2">\n[ \t]*<h2 class="heading-3"><strong class="bold-text-11">4\.8<\/strong><sup>★<\/sup><\/h2>\n[ \t]*<div class="div-block-31"><div><p class="paragraph-4">Average Rating<\/p><\/div><div class="div-block-32"><img src="\/assets\/images\/home\/rating\.webp" loading="lazy" alt=""><\/div><\/div>\n[ \t]*<\/div>\n/,
+        ''
+      )
+
+      // --- Clause-level rewrites ---
+
+      // Row 4  projects:1144  drop the trailing rating clause; the sentence now
+      // ends at "... with over 60 acres developed."
+      out = out.replace(' and a 4.8/5 average client rating.', '.')
+
+      // Rows 5-6 (JSON-LD, bengaluru:315) and 7-8 (visible, bengaluru:700). The
+      // two FAQ answers are identical but for " star" vs "★"; both become the
+      // approved string F1 (no rating, never the word "verified"). The replacement
+      // keeps the golden "over 8 years" wording so the founding-year corrector,
+      // which runs AFTER this one, rewrites it to the single computed "N+ years"
+      // figure the rest of the site carries — rather than freezing "8+" into prose
+      // that would drift at the next year-rollover. Both sites therefore end
+      // byte-identical F1 AND agree with the site-wide years figure.
+      out = out.replace(
+        /, over 8 years of proven engineering experience, and a 4\.8(?: star|★) client rating\./g,
+        ' and over 8 years of proven engineering experience.'
+      )
+
+      // --- RESIDUAL tripwire, re-pointed (CLAUDE.md: a tripwire must evaluate its
+      // subject and be able to go red). After removal NO rating claim may survive
+      // on ANY page; each check fails the build loudly rather than ship a page
+      // that states a rating in one place and nothing in another. Comments are
+      // stripped first so the home.html heading-markup comment that quotes "4.8"
+      // is not read as a claim.
+      const scan = out.replace(/<!--[\s\S]*?-->/g, '').replace(/\/\*[\s\S]*?\*\//g, '')
+
+      // Numeric rating values. The pages carry unrelated 4.0/4.8 in CSS and SVG
+      // path data (noted in scripts/test-htaccess.mjs), so a bare value is not a
+      // claim — only one sitting beside a rating word is.
+      for (const m of scan.match(/.{0,90}4\.[08].{0,60}/gs) || []) {
+        if (/rating|star|★|review|Google/i.test(m)) {
           throw new Error(
-            'Uncorrected 4.8 rating claim remains after correction:\n  ' +
+            `rating-visible: residual numeric rating claim in ${file}:\n  ` +
             m.replace(/\s+/g, ' ').trim()
+          )
+        }
+      }
+
+      // Rating phrasings that are a claim on their own. The star GLYPH ★ only ever
+      // appeared in the numeric badges removed above (the decorative testimonial
+      // image says "star" in alt text but carries no glyph); "verified" is only
+      // flagged next to a rating/review word, so benign material/payment uses pass.
+      const PHRASES = [
+        ['star-glyph badge ★', /★/],
+        ['review-count claim', /\d+\s+(?:Google\s+)?reviews\b/i],
+        ['"Avg. Verified Client Rating" label', /Avg\.\s*Verified\s*Client\s*Rating/i],
+        ['"verified ... rating/review"', /verified[^.<>]{0,40}(?:rating|review)/i]
+      ]
+      for (const [label, re] of PHRASES) {
+        const m = scan.match(re)
+        if (m) {
+          throw new Error(
+            `rating-visible: residual ${label} in ${file}:\n  ` +
+            scan.slice(Math.max(0, m.index - 50), m.index + 60).replace(/\s+/g, ' ').trim()
           )
         }
       }
