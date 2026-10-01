@@ -238,6 +238,17 @@ page contradict its own structured data.
 This is a real narrowing of §8.5 and it is the owner's call, not the toolchain's.
 Recorded so the gate's baseline is never mistaken for the untouched legacy site.
 
+**Batch 2 update (seo-audit, commit af9ac16).** The paragraph above is superseded on
+the rating point: 4.8 invented rating removed in batch 2; no rating displayed. The
+owner has not cleared any Google rating or review count for publication (STAGE2 Q11),
+and `src/content/facts.ts` sets `displayAggregateRating:false`, so the earlier
+"rewritten to a verified 4.0" is no longer what the toolchain does — the
+`rating-visible` corrector now DELETES every visible rating stat and clause and the
+`rating` corrector deletes the aggregateRating JSON-LD, leaving no rating on any page.
+The RESIDUAL tripwire in `corrections.mjs` and `tests/unit/served-fact-consistency.test.ts`
+hold that absence. Batch 2b extended the same removal to the hand-maintained
+`llms.txt` / `llms-full.txt` (gate: `tests/unit/llms-rating-free.test.ts`).
+
 ### 4.5 §3.2 axis 7 enumerates too few asset sources
 §3.2 point 7 defines the asset axis as "the full asset reference set from `img`,
 `source`, `link` and `script`". That enumeration is incomplete: it misses CSS

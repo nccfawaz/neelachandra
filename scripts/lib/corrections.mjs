@@ -15,14 +15,6 @@ import { PAGES } from './pages.mjs'
 
 const ORIGIN = 'https://neelachandra.com'
 
-// The genuine Google Business Profile figures, read from the rendered listing
-// at https://maps.app.goo.gl/xKXFta3YY4gzuJFU6 on 2026-08-27. The star
-// histogram showed 3 five-star and 1 one-star review, which is 16/4 = 4.0
-// exactly, and the listing's own summary displays 4,0. This replaces the
-// invented 4.8, which appeared on five pages with four mutually contradictory
-// review counts (2, 4, 4, 30, 87).
-export const RATING = { value: '4.0', count: '4' }
-
 // One favicon convention for every page, per the owner's instruction. The site
 // previously used five different conventions across ten pages, referencing
 // favicon-96x96.png, favicon.svg, apple-touch-icon.png and six paths that
@@ -385,6 +377,52 @@ const CORRECTORS = [
       // "over 8 years" in bengaluru.html (3 instances)
       out = out.replace(/over 8 years/gi, yearsText)
 
+      return out
+    }
+  },
+  {
+    key: 'stat-strip-reflow',
+    // BATCH 2b layout fix. Removing the invented 4.8 rating (batch 2,
+    // `rating-visible`) deleted one card from four stat strips, each of which was
+    // sized for four. Two were CSS grids with an explicit 4-column track, so the
+    // 4th column stayed empty; two were flex rows that then trailed a ~300px gap
+    // on the right. This corrector makes the three survivors fill the strip.
+    // Scope is DESKTOP only (the explicit ask: the empty 4th column and the right
+    // gap) and the change is minimal — centre the two flex rows, drop the grid
+    // track from four columns to three. Card size, dividers and the GSAP hooks
+    // are untouched. CSS is matched mid-line, so no line endings are involved,
+    // and each target is unique in its file: the Bengaluru grids
+    // .bng-pricing-grid / .bng-clients-grid also use repeat(4,1fr) and must NOT
+    // change, so the .bng-stats match carries its full selector prefix.
+    fn (html, file) {
+      let out = html
+      if (file === 'index.html') {
+        // Hero stat strip (.container-10) and counter strip (.div-block-9) are
+        // flex rows; with three children they left-aligned and left dead space
+        // on the right. Centre the survivors.
+        out = out.replace(
+          '.container-10{gap:30px;flex-flow:row;',
+          '.container-10{gap:30px;flex-flow:row;justify-content:center;'
+        )
+        out = out.replace(
+          '.div-block-9{border-right:1px solid rgba(102,102,102,.88);margin-top:60px;display:flex}',
+          '.div-block-9{border-right:1px solid rgba(102,102,102,.88);margin-top:60px;display:flex;justify-content:center}'
+        )
+      }
+      if (file === 'best-construction-company-in-bengaluru.html') {
+        // .bng-stats held four cards; now three. Match ONLY the .bng-stats rule.
+        out = out.replace(
+          '.bng-stats{ display:grid; grid-template-columns:repeat(4,1fr);',
+          '.bng-stats{ display:grid; grid-template-columns:repeat(3,1fr);'
+        )
+      }
+      if (file === 'construction-company-in-tumkur.html') {
+        // .trust-bar is the only repeat(4,1fr) in this file.
+        out = out.replace(
+          'grid-template-columns:repeat(4,1fr);',
+          'grid-template-columns:repeat(3,1fr);'
+        )
+      }
       return out
     }
   }
