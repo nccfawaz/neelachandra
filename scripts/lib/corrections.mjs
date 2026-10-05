@@ -468,6 +468,36 @@ const CORRECTORS = [
       }
       return out
     }
+  },
+  {
+    key: 'count-claims',
+    // HOTFIX BATCH 3 (count-claim consistency). The golden masters contradict
+    // each other on the delivered-project count: the tumkur page carries a
+    // 60+ stat card and two 200+ claims while every other page, the meta
+    // descriptions and llms-full.txt say 30+. The owner fixed the figure at
+    // 30+, so the tumkur trust bar keeps its card and slot count but shows
+    // 30+, and both 200+ headings/sentences become 30+. Separately, the
+    // bengaluru and projects pages describe the Mandot Steel facility as
+    // "85,000+ sq ft" while the portfolio sections on the same pages, the
+    // home page and llms-full.txt state exactly 85,000 sq ft; the plus is
+    // dropped on those two pages so one figure stands everywhere. Patterns
+    // match the golden wording on either line ending, and a failed match
+    // leaves the golden text in place, which the served-fact-consistency
+    // gate reports.
+    fn (html, file) {
+      let out = html
+      if (file === 'construction-company-in-tumkur.html') {
+        // Trust bar card value only; the card itself and the strip layout
+        // (stat-strip-reflow / stat-strip-reflow-mobile) are untouched.
+        out = out.replace(/trust-num">60\+</g, 'trust-num">30+<')
+        out = out.replace(/200\+ Projects Delivered Across Karnataka/g, '30+ Projects Delivered Across Karnataka')
+        out = out.replace(/200\+ completed projects across Karnataka/g, '30+ completed projects across Karnataka')
+      }
+      if (file === 'best-construction-company-in-bengaluru.html' || file === 'best-construction-company-in-bengaluru-projects.html') {
+        out = out.replace(/85,000\+ sq ft/g, '85,000 sq ft')
+      }
+      return out
+    }
   }
 ]
 

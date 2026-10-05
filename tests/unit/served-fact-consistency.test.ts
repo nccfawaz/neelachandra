@@ -155,4 +155,60 @@ describe('the served pages agree with facts.ts and with each other', () => {
       expect(missing, `GST disclosure missing on: ${missing.join(', ')}`).toEqual([])
     })
   })
+
+  describe('project and area count claims (hotfix batch 3)', () => {
+    // BASIS: owner decision, hotfix batch 3. The golden masters contradicted
+    // each other on the delivered-project count: the tumkur page carried a
+    // 60+ stat card and two 200+ claims while every other page, the meta
+    // descriptions and llms-full.txt said 30+. The Mandot Steel facility was
+    // "85,000+ sq ft" on the bengaluru and projects pages and a plain
+    // "85,000 sq ft" on the home page and in the portfolio sections of those
+    // same pages. The `count-claims` corrector aligns the served pages and
+    // llms-full.txt was corrected by hand (build-site.mjs excludes the llms
+    // files from the golden copy, so the build cannot drift them back). The
+    // count-claims corrector has no RESIDUAL tripwire, so this gate is the
+    // enforcement for the whole batch.
+    //
+    // llms.txt and llms-full.txt join the pages as the served corpus. Tags are
+    // replaced by a space before the value scan so a count sitting in one
+    // element next to its label in another (the tumkur trust card, the
+    // bengaluru bng-stat spans) is still read as one "N+ label" claim; comment
+    // stripping is inherited from the page corpus above so a documentation
+    // note that quotes a number is not mistaken for a claim.
+    const llmsFiles = ['llms.txt', 'llms-full.txt'].map((file) => ({
+      file,
+      body: readFileSync(resolve(__dirname, '../../', file), 'utf8'),
+    }))
+    const corpus = [...pages.map((p) => ({ file: p.file, body: p.body })), ...llmsFiles].map((c) => ({
+      file: c.file,
+      body: c.body.replace(/<[^>]+>/g, ' '),
+    }))
+
+    it('scans the served pages and both llms files (non-zero floor)', () => {
+      expect(corpus.length).toBe(PAGES.length + 2)
+    })
+
+    it('states one and only one "N+ projects" figure across the whole corpus', () => {
+      const values = new Set<string>()
+      for (const c of corpus) for (const m of c.body.matchAll(/(\d+)\+\s*(?:completed\s+|infrastructure\s+)?projects?\b/gi)) values.add(m[1])
+      expect(values.size).toBeGreaterThan(0) // positive floor: the claim is present
+      expect(values.size, `corpus disagrees on project count: ${[...values].join(' vs ')}`).toBe(1)
+      expect([...values][0], `project count must be 30+, found: ${[...values].join(' vs ')}`).toBe('30')
+    })
+
+    it('carries no "200+" project claim anywhere', () => {
+      const bad = corpus.filter((c) => /200\+/.test(c.body)).map((c) => c.file)
+      expect(bad, `"200+" survives in: ${bad.join(', ')}`).toEqual([])
+    })
+
+    it('carries no "60+ projects" claim anywhere', () => {
+      const bad = corpus.filter((c) => /60\+\s*projects?/i.test(c.body)).map((c) => c.file)
+      expect(bad, `"60+ projects" survives in: ${bad.join(', ')}`).toEqual([])
+    })
+
+    it('carries no "85,000+" area claim anywhere', () => {
+      const bad = corpus.filter((c) => /85,000\+/.test(c.body)).map((c) => c.file)
+      expect(bad, `"85,000+" survives in: ${bad.join(', ')}`).toEqual([])
+    })
+  })
 })
