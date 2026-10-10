@@ -498,6 +498,130 @@ const CORRECTORS = [
       }
       return out
     }
+  },
+  {
+    key: 'seo-title-meta',
+    // STAGE 2 (pending approval). Sets the owner-approved <title> and meta
+    // description per page and strips the stray extra <title> tags (an empty
+    // one and "Section 5 - Floating Buttons") that the Webflow section
+    // concatenation left behind, so exactly one title survives. og:title,
+    // og:description and, where present, twitter:title/twitter:description are
+    // synced to the new title and meta; absent tags are not added, and only the
+    // first (primary head) occurrence of each is rewritten so empty duplicate
+    // tags in the embedded widget heads are left untouched. Lengths are checked
+    // by the stage-2 gate (title max 60, meta 50 to 155).
+    fn (html, file) {
+      const SEO = {
+        'index.html': ['Construction Company in Nelamangala | Neelachandra', 'Turnkey residential, commercial and industrial construction in Nelamangala and across Bengaluru since 2018. Call +91 7829292929 to discuss your project.'],
+        'construction-services-in-bengaluru.html': ['Construction Services in Bengaluru | Neelachandra', 'Architectural design, structural engineering, approvals and civil construction for residential, commercial and industrial projects in Bengaluru.'],
+        'construction-packages-in-bengaluru.html': ['House Construction Cost in Bengaluru | Neelachandra', 'Silver, Platinum, Gold and Diamond house construction packages in Bengaluru from ₹2,299 per sq ft. All per sq ft rates are GST-inclusive.'],
+        'best-construction-company-in-bengaluru-projects.html': ['Construction Projects in Bengaluru | Neelachandra', 'Residential, commercial and industrial construction projects in Bengaluru and Karnataka, including work for Honda Cars India and Mandot Steel.'],
+        'best-construction-company-in-bengaluru.html': ['Construction Company in Bengaluru | Neelachandra', 'Neelachandra is a turnkey construction company in Bengaluru for homes, commercial buildings and industrial facilities, building since 2018.'],
+        'construction-company-in-tumkur.html': ['Construction Company in Tumkur | Neelachandra', 'Neelachandra builds homes, villas and commercial projects in Tumkur and across Karnataka. Packages from ₹2,299 per sq ft, GST-inclusive.'],
+        'about-us.html': ['About Neelachandra | Construction Company in Bengaluru', 'Founded in 2018 by Chandrashekar T, Neelachandra is a turnkey construction company based in Nelamangala, Bengaluru.'],
+        'contact-us.html': ['Contact Neelachandra Construction | Nelamangala', 'Contact Neelachandra Construction in Nelamangala, Bengaluru. Call +91 7829292929 or send a message to discuss your construction project.'],
+        'terms.html': ['Terms and Conditions | Neelachandra Construction', 'Terms and conditions for using the Neelachandra Construction website and our construction services.'],
+        'privacy-policy.html': ['Privacy Policy | Neelachandra Construction', 'How Neelachandra Construction collects, uses and protects the personal information you share through this website.']
+      }
+      const entry = SEO[file]
+      if (!entry) return html
+      const [title, meta] = entry
+      let out = html
+      // Exactly one <title>: rewrite the first, strip every stray later one.
+      let seenTitle = false
+      out = out.replace(/<title[^>]*>[\s\S]*?<\/title>/gi, () => {
+        if (!seenTitle) { seenTitle = true; return '<title>' + title + '</title>' }
+        return ''
+      })
+      // Rewrite only the first (primary head) occurrence of each meta tag; a
+      // regex that matches nothing (an absent tag) is a no-op, so none is added.
+      const first = (re, repl) => {
+        let done = false
+        out = out.replace(re, (m) => { if (done) return m; done = true; return repl })
+      }
+      first(/<meta name="description" content="[^"]*">/i, '<meta name="description" content="' + meta + '">')
+      first(/<meta property="og:title" content="[^"]*">/i, '<meta property="og:title" content="' + title + '">')
+      first(/<meta property="og:description" content="[^"]*">/i, '<meta property="og:description" content="' + meta + '">')
+      first(/<meta name="twitter:title" content="[^"]*">/i, '<meta name="twitter:title" content="' + title + '">')
+      first(/<meta name="twitter:description" content="[^"]*">/i, '<meta name="twitter:description" content="' + meta + '">')
+      return out
+    }
+  },
+  {
+    key: 'superlative-removal',
+    // STAGE 2 (pending approval). The owner confirmed no ranking or award
+    // exists, so every self-claim that Neelachandra is the best, top, leading,
+    // ranked or recognised company is removed from H1s, H2s, visible body copy,
+    // FAQ answers, JSON-LD and self-ranking image alt text. Factual third-party
+    // descriptors (leading developers, market-leading brands) are left in place.
+    // Each pair is a literal find/replace applied with split/join (so regex
+    // metacharacters in the copy are safe); the fragments match the served form
+    // AFTER the earlier correctors run, since this corrector is last. FAQ answer
+    // fragments are rewritten identically in the JSON-LD and the visible accordion
+    // so the two stay byte-identical, which the stage-2 FAQ-parity gate checks.
+    fn (html, file) {
+      let out = html
+      const R = [
+        // --- H1s (C1): preserve classes and emphasis markup ---
+        [`<h1 class="heading-10 project-banner-title">Best Construction Company in Bengaluru: 30+ Completed Projects for Honda, Mandot Steel &amp; Leading Developers</h1>`, `<h1 class="heading-10 project-banner-title">Construction Projects in Bengaluru: 30+ Completed Projects for Honda, Mandot Steel and Developers</h1>`],
+        [`<h1>Building with Absolute Precision: The <em>Best Construction Company</em> in Bengaluru</h1>`, `<h1><em>Construction Company in Bengaluru</em>: Building with Absolute Precision</h1>`],
+        [`<h1>Best Construction Company in Tumkur for Homes &amp; Commercial Projects</h1>`, `<h1>Construction Company in Tumkur for Homes and Commercial Projects</h1>`],
+        [`<h1 class="heading-10 project-banner-title">The Neelachandra Story: Why We Are Ranked Among the Best Construction Companies in Bengaluru</h1>`, `<h1 class="heading-10 project-banner-title">The Neelachandra Story: A Bengaluru Construction Company That Builds for Keeps</h1>`],
+        // --- Projects hero (C2) ---
+        [`is one of the best construction companies in Bengaluru, with`, `is a construction company in Bengaluru with`],
+        [`Our portfolio is real, verifiable work:`, `Our portfolio includes`],
+        // --- H2 self-claims ---
+        [`<h2 class="heading-27">Our Mission and Vision: Why We Are the Best Construction Company in Bengaluru</h2>`, `<h2 class="heading-27">Our Mission and Vision</h2>`],
+        [`<h2>What Makes Neelachandra the Best Construction Company in Tumkur?</h2>`, `<h2>What Neelachandra Offers as a Construction Company in Tumkur</h2>`],
+        // --- FAQ Q and A (rewritten identically in JSON-LD and the visible accordion) ---
+        [`Why is Neelachandra considered one of the best construction companies in Bengaluru?`, `What construction projects has Neelachandra completed in Bengaluru?`],
+        [`Which is the best construction company in Bengaluru for turnkey builds?`, `What does Neelachandra offer for turnkey builds in Bengaluru?`],
+        [`widely recognized as Bengaluru's leading full-service construction company due to its strict zero cost escalation policy`, `a full-service construction company in Bengaluru with a strict zero cost escalation policy`],
+        [`Which is the best construction company in Bengaluru for independent houses?`, `Does Neelachandra build independent houses in Bengaluru?`],
+        [`is highly rated among the best construction companies in Bengaluru, specializing in`, `specializes in`],
+        [`is highly rated among the <strong>best construction companies in Bengaluru</strong>, specializing in`, `specializes in`],
+        /*SUPERLATIVE_PAIRS_3*/
+        // --- self-ranking image alt text (other alt text is left unchanged) ---
+        [`alt="Neelachandra Construction and Interiors logo — Best Construction Company in Bengaluru"`, `alt="Neelachandra Construction and Interiors logo"`],
+        [`alt="footer logo of the best construction company in bengaluru, neelachandra constructions"`, `alt="Neelachandra Construction and Interiors footer logo"`],
+        [`alt="best construction projects and services, neelachandra constructions"`, `alt="Neelachandra construction projects and services"`],
+        [`alt="30+ completed construction projects — Neelachandra, best construction company in Bengaluru"`, `alt="30+ completed construction projects by Neelachandra"`],
+        [`alt="30+ happy clients rate Neelachandra among the best construction companies in Bengaluru"`, `alt="Neelachandra completed construction projects in Bengaluru"`],
+        [`alt="locations served by the best construction company in bengaluru, neelachandra constructions."`, `alt="locations served by Neelachandra Construction and Interiors in Bengaluru."`],
+        [`alt="Chandrashekar T, Founder of Neelachandra, Best Construction Company in Bengaluru"`, `alt="Chandrashekar T, Founder of Neelachandra Construction and Interiors"`],
+        // --- JSON-LD names, descriptions, and the runtime title override ---
+        [`"name": "Best Construction Company in Bengaluru", "item":`, `"name": "Construction Company in Bengaluru", "item":`],
+        [`document.title = "Best Construction Company in Bengaluru | Neelachandra Construction";`, `document.title = "Construction Company in Bengaluru | Neelachandra";`],
+        [`"name": "About Us | Best Construction Company in Bengaluru | Neelachandra",`, `"name": "About Neelachandra | Construction Company in Bengaluru",`],
+        [`"description": "Learn why Neelachandra is a leading construction company in Bengaluru. 8+ years of excellence in residential, commercial, and industrial projects across Karnataka.",`, `"description": "Neelachandra is a construction company in Bengaluru delivering residential, commercial, and industrial projects across Karnataka since 2018.",`],
+        [`, one of the best construction companies in Bengaluru. Projects span`, `, a construction company in Bengaluru. Projects span`],
+        [`is one of the best construction companies in Bengaluru, offering end-to-end`, `is a construction company in Bengaluru, offering end-to-end`],
+        // --- body self-claims ---
+        [`the responsiveness and local accountability that define the best construction company in Bengaluru`, `the responsiveness and local accountability that come from staying locally rooted`],
+        [`ensuring we remain the best construction company in Bengaluru from the first design drawing to final project handover.`, `applied from the first design drawing to final project handover.`],
+        [`, upholding Neelachandra's standing as the best construction company in Bengaluru.`, `.`],
+        [`maintains its reputation as the best construction company in Bengaluru by delivering consistent quality`, `delivers consistent quality`],
+        [`the high quality results expected from the best construction company in Bengaluru.`, `high quality results on every project.`],
+        [`while maintaining the high standards expected of a leading construction company in Bengaluru.`, `while maintaining high standards across the project lifecycle.`],
+        [`, which is why clients consistently rank Neelachandra among the best construction companies in Bengaluru.`, `.`],
+        [`makes us a leading choice for reliable property maintenance`, `supports reliable property maintenance`],
+      ]
+      for (const [a, b] of R) out = out.split(a).join(b)
+      return out
+    }
+  },
+  {
+    key: 'stars-graphic-removal',
+    // STAGE 2 (pending approval). The home testimonial carried a decorative
+    // five-star graphic (stars.webp, alt "Five-star rating graphic") after batch 2
+    // removed every numeric rating. With no rating cleared for publication the
+    // implicit five-star image is removed too. Its wrapper div also holds the
+    // review-badge image, so the wrapper is kept (it does not become empty).
+    // stars.webp is used only on the home page (verified across all 10 pages).
+    fn (html, file) {
+      if (file !== 'index.html') return html
+      return html.split('\n              <img src="/assets/images/home/stars.webp" width="110" height="22" loading="lazy" alt="Five-star rating graphic" class="image-15">').join('')
+    }
   }
 ]
 
