@@ -793,13 +793,16 @@ const CORRECTORS = [
       // keeping the JSON valid. Nothing else is touched.
       const tainted = (v) => typeof v === 'string' && v.includes('CLIENT TO VERIFY')
       const taintedPV = (x) => x !== null && typeof x === 'object' && !Array.isArray(x) && tainted(x.value)
+      const isEmpty = (x) => (Array.isArray(x) && x.length === 0) || (x !== null && typeof x === 'object' && !Array.isArray(x) && Object.keys(x).length === 0)
       const clean = (n) => {
-        if (Array.isArray(n)) return n.filter((x) => !taintedPV(x)).map(clean)
+        if (Array.isArray(n)) return n.filter((x) => !taintedPV(x)).map(clean).filter((x) => !isEmpty(x))
         if (n !== null && typeof n === 'object') {
           const o = {}
           for (const [k, v] of Object.entries(n)) {
             if (tainted(v) || taintedPV(v)) continue
-            o[k] = clean(v)
+            const cv = clean(v)
+            if (isEmpty(cv)) continue
+            o[k] = cv
           }
           return o
         }

@@ -51,3 +51,31 @@ describe('phase 1c: no malformed closing tags', () => {
     })
   }
 })
+
+describe('phase 1c: no empty array or object in served JSON-LD', () => {
+  function emptiesIn(h: string): string[] {
+    const bad: string[] = []
+    for (const m of h.matchAll(/<script[^>]*application\/ld\+json[^>]*>([\s\S]*?)<\/script>/gi)) {
+      let d: unknown
+      try { d = JSON.parse(m[1]) } catch { continue }
+      const w = (n: unknown) => {
+        if (Array.isArray(n)) { if (n.length === 0) bad.push('empty array'); n.forEach(w) }
+        else if (n !== null && typeof n === 'object') {
+          if (Object.keys(n as object).length === 0) bad.push('empty object')
+          Object.values(n as object).forEach(w)
+        }
+      }
+      w(d)
+    }
+    return bad
+  }
+  it('reads JSON-LD from the pages (floor)', () => {
+    expect(htmlFiles.filter((f) => /application\/ld\+json/.test(read(f))).length).toBeGreaterThan(5)
+  })
+  for (const f of htmlFiles) {
+    it(`${f}: JSON-LD has no empty [] or {} value`, () => {
+      const bad = emptiesIn(read(f))
+      expect(bad, `${f}: ${bad.join(', ')}`).toEqual([])
+    })
+  }
+})
