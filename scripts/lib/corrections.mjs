@@ -617,6 +617,15 @@ const CORRECTORS = [
         [`Industrial Construction Proven by Strict OEM Standards in Bengaluru`, `Industrial Construction to Strict OEM Standards in Bengaluru`],
         [`demonstrate our proven ability to execute construction`, `demonstrate our ability to execute construction`],
         [`8+ years of proven engineering experience`, `8+ years of engineering experience`],
+        // --- PHASE 1A: footer internal links added to all 10 pages (fixes bengaluru orphan + tumkur low inbound) ---
+        [`<a href="/construction-services-in-bengaluru" class="footer-link">Services</a>`, `<a href="/construction-services-in-bengaluru" class="footer-link">Services</a>
+          <a href="/best-construction-company-in-bengaluru" class="footer-link">Construction Company in Bengaluru</a>
+          <a href="/construction-company-in-tumkur" class="footer-link">Construction Company in Tumkur</a>`],
+        // --- PHASE 1A: puffery (superior / world-class) to neutral ---
+        [`track record of superior civil execution`, `track record of civil execution`],
+        [`a world class industrial shop`, `an industrial shop`],
+        [`deliver world-class civil engineering`, `deliver civil engineering`],
+        [`deliver world class construction quality`, `deliver construction quality`],
       ]
       for (const [a, b] of R) out = out.split(a).join(b)
       return out
@@ -633,6 +642,95 @@ const CORRECTORS = [
     fn (html, file) {
       if (file !== 'index.html') return html
       return html.split('\n              <img src="/assets/images/home/stars.webp" width="110" height="22" loading="lazy" alt="Five-star rating graphic" class="image-15">').join('')
+    }
+  },
+  {
+    key: 'og-url',
+    // PHASE 1A. Seven pages (packages, projects, bengaluru, about, contact,
+    // terms, privacy) carry a canonical in the primary head but no filled
+    // og:url there (only an empty one in the embedded widget head). Add a
+    // primary og:url equal to the canonical, inserted right after the canonical
+    // link. Pages that already have a filled og:url (home, services, tumkur) are
+    // skipped so no duplicate is created. The canonical href is read from the
+    // chained output, so the canonical corrector has already filled the empty
+    // golden hrefs by the time this runs.
+    fn (html) {
+      if (/property="og:url" content="https/i.test(html)) return html
+      const m = html.match(/<link rel="canonical" href="(https:\/\/[^"]+)">/i)
+      if (!m) return html
+      return html.split(m[0]).join(m[0] + '\n<meta property="og:url" content="' + m[1] + '">')
+    }
+  },
+  {
+    key: 'internal-contextual-links',
+    // PHASE 1A. One contextual body link per page to the Bengaluru landing page,
+    // wrapping a natural phrase already in a page-unique sentence (no new copy,
+    // no new claim, varied anchor text). Each find string is unique to its page,
+    // so the global split/join only wraps the intended sentence.
+    fn (html) {
+      let out = html
+      const R = [
+        [`and industrial facilities across Bengaluru, the Tumkur Road corridor`, `and <a href="/best-construction-company-in-bengaluru">industrial facilities across Bengaluru</a>, the Tumkur Road corridor`],
+        [`developments across Bengaluru and nearby regions`, `<a href="/best-construction-company-in-bengaluru">developments across Bengaluru</a> and nearby regions`],
+        [`every Neelachandra home in Bengaluru is protected`, `every <a href="/best-construction-company-in-bengaluru">Neelachandra home in Bengaluru</a> is protected`],
+        [`is a construction company in Bengaluru with 30+ completed`, `is a <a href="/best-construction-company-in-bengaluru">construction company in Bengaluru</a> with 30+ completed`],
+        [`construction firm rooted in Bengaluru that builds for keeps`, `<a href="/best-construction-company-in-bengaluru">construction firm rooted in Bengaluru</a> that builds for keeps`],
+        // --- Tumkur links: a short, accurate service-area clause added to one page-unique sentence each (owner approved relaxing "no new words" for these four) ---
+        [`Tumkur Road and Doddaballapura. We deliver tailored landscape`, `Tumkur Road and Doddaballapura, and across <a href="/construction-company-in-tumkur">Tumkur district</a>. We deliver tailored landscape`],
+        [`60+ acres developed across Bengaluru, Nelamangala, Doddaballapura and Karnataka.`, `60+ acres developed across Bengaluru, Nelamangala, Doddaballapura, <a href="/construction-company-in-tumkur">Tumkur</a> and Karnataka.`],
+        [`and the Tumkur Road corridors, we design high-strength`, `and the Tumkur Road corridors, with work extending to <a href="/construction-company-in-tumkur">the Tumkur region</a>, we design high-strength`],
+        [`Janhavi Industrial Estate and local planning requirements.`, `Janhavi Industrial Estate and local planning requirements, and extends the same civil expertise to <a href="/construction-company-in-tumkur">building in Tumkur</a>.`],
+      ]
+      for (const [a, b] of R) out = out.split(a).join(b)
+      return out
+    }
+  },
+  {
+    key: 'faq-parity',
+    // PHASE 1A. The visible accordion is the source of truth for FAQs. For
+    // packages, tumkur and about, rebuild the JSON-LD FAQPage mainEntity from the
+    // visible Q&A (tags stripped, entities and whitespace normalized) so the two
+    // match exactly (packages/tumkur gain the questions that had no JSON-LD;
+    // about's "Bangalore" becomes the visible "Bengaluru"). For projects, drop the
+    // one JSON-LD question that has no visible twin, changing nothing else.
+    fn (html, file) {
+      const dec = (s) => s.replace(/<[^>]+>/g, ' ').replace(/&amp;/g, '&').replace(/&#0?39;/g, "'").replace(/&apos;/g, "'").replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/\s+/g, ' ').trim()
+      const key = (s) => s.toLowerCase().replace(/[^a-z0-9]/g, '')
+      function visiblePairs (h) {
+        const out = []
+        const re1 = /<h3 class="accordion-heading">\s*(?:<strong>)?\s*Q:\s*([\s\S]*?)\s*(?:<\/strong>)?\s*<\/h3>[\s\S]*?<div class="accordion-item-content">([\s\S]*?)<\/div>/gi
+        const re2 = /<details[^>]*class="faq-item"[^>]*>\s*<summary>([\s\S]*?)<\/summary>\s*<div class="faq-answer">([\s\S]*?)<\/div>/gi
+        const re3 = /<details[^>]*class="bng-faq-item"[^>]*>\s*<summary>([\s\S]*?)<\/summary>\s*<p>([\s\S]*?)<\/p>/gi
+        let m
+        while ((m = re1.exec(h))) out.push({ q: dec(m[1]), a: dec(m[2]).replace(/^A:\s*/, '') })
+        while ((m = re2.exec(h))) out.push({ q: dec(m[1]), a: dec(m[2]) })
+        while ((m = re3.exec(h))) out.push({ q: dec(m[1]), a: dec(m[2]) })
+        return out
+      }
+      // Visible is the source of truth for every FAQ page (owner decision): rebuild
+      // the JSON-LD FAQPage from the visible accordion on all of them. Projects loses
+      // its one JSON-only question for free, because that question is not visible.
+      const REBUILD = new Set(['index.html', 'construction-services-in-bengaluru.html', 'construction-packages-in-bengaluru.html', 'best-construction-company-in-bengaluru-projects.html', 'best-construction-company-in-bengaluru.html', 'construction-company-in-tumkur.html', 'about-us.html'])
+      if (!REBUILD.has(file)) return html
+      const ldRe = /(<script[^>]*type="application\/ld\+json"[^>]*>)([\s\S]*?)(<\/script>)/gi
+      return html.replace(ldRe, (full, open, body, close) => {
+        let data
+        try { data = JSON.parse(body) } catch { return full }
+        let changed = false
+        const walk = (n) => {
+          if (Array.isArray(n)) { n.forEach(walk); return }
+          if (n && typeof n === 'object') {
+            if (n['@type'] === 'FAQPage') {
+              n.mainEntity = visiblePairs(html).map((p) => ({ '@type': 'Question', name: p.q, acceptedAnswer: { '@type': 'Answer', text: p.a } }))
+              changed = true
+            }
+            Object.values(n).forEach(walk)
+          }
+        }
+        walk(data)
+        if (!changed) return full
+        return open + JSON.stringify(data) + close
+      })
     }
   }
 ]

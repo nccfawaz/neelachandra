@@ -107,16 +107,16 @@ walk(ASSETS)
 
 // 3. Infrastructure files. Names map back to the URL they are served from.
 // robots.txt and site.webmanifest are written by hand elsewhere in the tree
-// because both needed correcting (CQ-2, CQ-5). llms.txt and llms-full.txt are
-// likewise maintained by hand at the repository root: batch 2b stripped the
-// invented 4.8 rating claims (plus an obsolete landline and an "over a decade"
-// duration) from them, and those corrections must not be written back into the
-// golden audit record, so they are excluded from this verbatim copy exactly as
-// robots.txt is. The golden originals under legacy/golden/infra/ keep the old
-// claims as the record of what the old site served. Everything still listed is
-// copied and --check verified byte-for-byte.
+// because both needed correcting (CQ-2, CQ-5). llms.txt, llms-full.txt and now
+// sitemap.xml are likewise maintained by hand at the repository root: batch 2b
+// stripped the invented 4.8 rating claims (plus an obsolete landline and an
+// "over a decade" duration) from the llms files, and PHASE 1A refreshed the
+// sitemap (current lastmod, the 10 live URLs), and those corrections must not be
+// written back into the golden audit record, so they are excluded from this
+// verbatim copy exactly as robots.txt is. The golden originals under
+// legacy/golden/infra/ keep the old files as the record of what the old site
+// served. Everything still listed is copied and --check verified byte-for-byte.
 const INFRA = [
-  ['sitemap.xml', 'sitemap.xml'],
   ['humans.txt', 'humans.txt'],
   ['097ee841c58a4b25b8eb2c348ca67dce.txt', '097ee841c58a4b25b8eb2c348ca67dce.txt'],
   ['google9706eb5d9d6a7b15.html', 'google9706eb5d9d6a7b15.html'],
