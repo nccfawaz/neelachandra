@@ -676,10 +676,9 @@ const CORRECTORS = [
         [`is a construction company in Bengaluru with 30+ completed`, `is a <a href="/best-construction-company-in-bengaluru">construction company in Bengaluru</a> with 30+ completed`],
         [`construction firm rooted in Bengaluru that builds for keeps`, `<a href="/best-construction-company-in-bengaluru">construction firm rooted in Bengaluru</a> that builds for keeps`],
         // --- Tumkur links: a short, accurate service-area clause added to one page-unique sentence each (owner approved relaxing "no new words" for these four) ---
-        [`Tumkur Road and Doddaballapura. We deliver tailored landscape`, `Tumkur Road and Doddaballapura, and across <a href="/construction-company-in-tumkur">Tumkur district</a>. We deliver tailored landscape`],
-        [`60+ acres developed across Bengaluru, Nelamangala, Doddaballapura and Karnataka.`, `60+ acres developed across Bengaluru, Nelamangala, Doddaballapura, <a href="/construction-company-in-tumkur">Tumkur</a> and Karnataka.`],
-        [`and the Tumkur Road corridors, we design high-strength`, `and the Tumkur Road corridors, with work extending to <a href="/construction-company-in-tumkur">the Tumkur region</a>, we design high-strength`],
-        [`Janhavi Industrial Estate and local planning requirements.`, `Janhavi Industrial Estate and local planning requirements, and extends the same civil expertise to <a href="/construction-company-in-tumkur">building in Tumkur</a>.`],
+        [`Tumkur Road and Doddaballapura. We deliver tailored landscape`, `Tumkur Road and Doddaballapura, and for <a href="/construction-company-in-tumkur">projects in Tumkur</a>. We deliver tailored landscape`],
+        [`durable manufacturing facilities engineered to strict OEM compliance standards.`, `durable manufacturing facilities engineered to strict OEM compliance standards, and we build homes, villas and <a href="/construction-company-in-tumkur">commercial projects in Tumkur</a>.`],
+        [`Janhavi Industrial Estate and local planning requirements.`, `Janhavi Industrial Estate and local planning requirements, and builds homes, villas and <a href="/construction-company-in-tumkur">commercial projects in Tumkur</a>.`],
       ]
       for (const [a, b] of R) out = out.split(a).join(b)
       return out
