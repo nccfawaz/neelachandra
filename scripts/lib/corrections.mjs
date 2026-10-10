@@ -605,6 +605,18 @@ const CORRECTORS = [
         [`while maintaining the high standards expected of a leading construction company in Bengaluru.`, `while maintaining high standards across the project lifecycle.`],
         [`, which is why clients consistently rank Neelachandra among the best construction companies in Bengaluru.`, `.`],
         [`makes us a leading choice for reliable property maintenance`, `supports reliable property maintenance`],
+        // --- residual self-claims: most trusted / premier / proven / verifiable (NCC's own portfolio, projects, results) ---
+        [`<h2 class="heading-4">Speak to Bengaluru's Most Trusted Construction Company Today</h2>`, `<h2 class="heading-4">Speak to Neelachandra Construction Today</h2>`],
+        [`is one of Karnataka's most trusted construction companies, delivering`, `is a construction company delivering`],
+        [`stands as a premier example of our industrial expertise in Bengaluru`, `is an example of our industrial work in Bengaluru`],
+        [`milestone-based delivery proven on OEM-grade industrial projects`, `milestone-based delivery used on OEM-grade industrial projects`],
+        [`highlights a proven track record of superior civil execution`, `highlights a track record of superior civil execution`],
+        [`reputation as a premier construction company in Bengaluru`, `reputation as a construction company in Bengaluru`],
+        [`<strong>1. Verifiable completed projects.</strong>`, `<strong>1. Completed projects.</strong>`],
+        [`to remain a premier construction company in Bengaluru.`, `to remain a full-service construction company in Bengaluru.`],
+        [`Industrial Construction Proven by Strict OEM Standards in Bengaluru`, `Industrial Construction to Strict OEM Standards in Bengaluru`],
+        [`demonstrate our proven ability to execute construction`, `demonstrate our ability to execute construction`],
+        [`8+ years of proven engineering experience`, `8+ years of engineering experience`],
       ]
       for (const [a, b] of R) out = out.split(a).join(b)
       return out

@@ -129,3 +129,35 @@ describe('stage 2 FAQ parity (JSON-LD answer equals the visible answer)', () => 
   }
 })
 
+
+describe('stage 2 no "best construction" claim (visible, alt, JSON-LD; URLs excluded)', () => {
+  // The slug best-construction-company-in-bengaluru uses hyphens, so it never
+  // matches the space phrase; URL-bearing attributes are stripped anyway so a
+  // path can never satisfy the gate. What remains is prose, alt text and JSON-LD
+  // text, where no self-ranking "best construction" claim may appear.
+  function stripUrls(s: string): string {
+    return s
+      .replace(/\s(?:href|src|srcset)="[^"]*"/gi, ' ')
+      .replace(/<link[^>]*rel=["']canonical["'][^>]*>/gi, ' ')
+      .replace(/<meta[^>]*property=["']og:url["'][^>]*>/gi, ' ')
+      .replace(/https?:\/\/[^\s"'<>)]+/gi, ' ')
+      .replace(/\]\([^)]*\)/g, '] ')
+  }
+  const corpus = [
+    ...pages.map((p) => ({ file: p.file, text: stripUrls(p.raw) })),
+    ...['llms.txt', 'llms-full.txt'].map((f) => ({
+      file: f,
+      text: stripUrls(readFileSync(resolve(__dirname, '../../', f), 'utf8')),
+    })),
+  ]
+  const RE = /best\s+construction/i
+
+  it('scans a non-empty corpus (floor)', () => {
+    expect(corpus.length).toBe(pages.length + 2)
+    for (const c of corpus) expect(c.text.length).toBeGreaterThan(200)
+  })
+  it('no page or llms file carries "best construction" outside URLs', () => {
+    const bad = corpus.filter((c) => RE.test(c.text)).map((c) => c.file)
+    expect(bad, `"best construction" survives in: ${bad.join(', ')}`).toEqual([])
+  })
+})
