@@ -569,7 +569,7 @@ const CORRECTORS = [
         [`<h1 class="heading-10 project-banner-title">The Neelachandra Story: Why We Are Ranked Among the Best Construction Companies in Bengaluru</h1>`, `<h1 class="heading-10 project-banner-title">The Neelachandra Story: A Bengaluru Construction Company That Builds for Keeps</h1>`],
         // --- Projects hero (C2) ---
         [`is one of the best construction companies in Bengaluru, with`, `is a construction company in Bengaluru with`],
-        [`Our portfolio is real, verifiable work:`, `Our portfolio includes`],
+        [`Our portfolio is real, verifiable work:`, `Our portfolio ranges`],
         // --- H2 self-claims ---
         [`<h2 class="heading-27">Our Mission and Vision: Why We Are the Best Construction Company in Bengaluru</h2>`, `<h2 class="heading-27">Our Mission and Vision</h2>`],
         [`<h2>What Makes Neelachandra the Best Construction Company in Tumkur?</h2>`, `<h2>What Neelachandra Offers as a Construction Company in Tumkur</h2>`],
@@ -582,10 +582,10 @@ const CORRECTORS = [
         [`is highly rated among the <strong>best construction companies in Bengaluru</strong>, specializing in`, `specializes in`],
         /*SUPERLATIVE_PAIRS_3*/
         // --- self-ranking image alt text (other alt text is left unchanged) ---
-        [`alt="Neelachandra Construction and Interiors logo — Best Construction Company in Bengaluru"`, `alt="Neelachandra Construction and Interiors logo"`],
+        [`alt="Neelachandra Construction and Interiors logo \u2014 Best Construction Company in Bengaluru"`, `alt="Neelachandra Construction and Interiors logo"`],
         [`alt="footer logo of the best construction company in bengaluru, neelachandra constructions"`, `alt="Neelachandra Construction and Interiors footer logo"`],
         [`alt="best construction projects and services, neelachandra constructions"`, `alt="Neelachandra construction projects and services"`],
-        [`alt="30+ completed construction projects — Neelachandra, best construction company in Bengaluru"`, `alt="30+ completed construction projects by Neelachandra"`],
+        [`alt="30+ completed construction projects \u2014 Neelachandra, best construction company in Bengaluru"`, `alt="30+ completed construction projects by Neelachandra"`],
         [`alt="30+ happy clients rate Neelachandra among the best construction companies in Bengaluru"`, `alt="Neelachandra completed construction projects in Bengaluru"`],
         [`alt="locations served by the best construction company in bengaluru, neelachandra constructions."`, `alt="locations served by Neelachandra Construction and Interiors in Bengaluru."`],
         [`alt="Chandrashekar T, Founder of Neelachandra, Best Construction Company in Bengaluru"`, `alt="Chandrashekar T, Founder of Neelachandra Construction and Interiors"`],
@@ -597,8 +597,8 @@ const CORRECTORS = [
         [`, one of the best construction companies in Bengaluru. Projects span`, `, a construction company in Bengaluru. Projects span`],
         [`is one of the best construction companies in Bengaluru, offering end-to-end`, `is a construction company in Bengaluru, offering end-to-end`],
         // --- body self-claims ---
-        [`the responsiveness and local accountability that define the best construction company in Bengaluru`, `the responsiveness and local accountability that come from staying locally rooted`],
-        [`ensuring we remain the best construction company in Bengaluru from the first design drawing to final project handover.`, `applied from the first design drawing to final project handover.`],
+        [`the responsiveness and local accountability that define the best construction company in Bengaluru`, `the responsiveness and local accountability of a locally based team`],
+        [`ensuring we remain the best construction company in Bengaluru from the first design drawing to final project handover.`, `from the first design drawing to final project handover.`],
         [`, upholding Neelachandra's standing as the best construction company in Bengaluru.`, `.`],
         [`maintains its reputation as the best construction company in Bengaluru by delivering consistent quality`, `delivers consistent quality`],
         [`the high quality results expected from the best construction company in Bengaluru.`, `high quality results on every project.`],
