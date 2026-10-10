@@ -646,19 +646,18 @@ const CORRECTORS = [
   },
   {
     key: 'og-url',
-    // PHASE 1A. Seven pages (packages, projects, bengaluru, about, contact,
-    // terms, privacy) carry a canonical in the primary head but no filled
-    // og:url there (only an empty one in the embedded widget head). Add a
-    // primary og:url equal to the canonical, inserted right after the canonical
-    // link. Pages that already have a filled og:url (home, services, tumkur) are
-    // skipped so no duplicate is created. The canonical href is read from the
-    // chained output, so the canonical corrector has already filled the empty
-    // golden hrefs by the time this runs.
+    // PHASE 1A + 1C. Exactly one og:url per page, equal to the canonical. First
+    // drop the empty og:url tags the embedded widget head carries (content=""),
+    // so an empty tag is never left beside a filled one; then, if no filled og:url
+    // remains, add one after the canonical link. Net: one filled og:url == canonical
+    // on every page (the Phase 1A version added a filled tag but left the empty one,
+    // leaving two, which Phase 1C fixes).
     fn (html) {
-      if (/property="og:url" content="https/i.test(html)) return html
-      const m = html.match(/<link rel="canonical" href="(https:\/\/[^"]+)">/i)
-      if (!m) return html
-      return html.split(m[0]).join(m[0] + '\n<meta property="og:url" content="' + m[1] + '">')
+      let out = html.split('<meta property="og:url" content="">').join('')
+      if (/property="og:url" content="https/i.test(out)) return out
+      const m = out.match(/<link rel="canonical" href="(https:\/\/[^"]+)">/i)
+      if (!m) return out
+      return out.split(m[0]).join(m[0] + '\n<meta property="og:url" content="' + m[1] + '">')
     }
   },
   {
@@ -767,6 +766,49 @@ const CORRECTORS = [
         walk(data)
         if (!changed) return full
         return open + JSON.stringify(data) + close
+      })
+    }
+  },
+  {
+    key: 'phase1c-placeholders',
+    // PHASE 1C. All-pages footer collapse plus index-only placeholder fixes.
+    fn (html, file) {
+      let out = html
+      // Footer shows Phone and Mobile with the same number after the phone
+      // corrector normalised the golden Phone row; collapse to one Phone line by
+      // removing the Mobile row (the 10 pages share this footer markup).
+      out = out.split(`<div><h4 class="heading-15">Mobile</h4><p class="paragraph-33">+<a href="tel:+917829292929" class="link-6">91 7829292929</a></p></div>`).join('')
+      if (file !== 'index.html') return out
+      // Malformed ticker close tag.
+      out = out.split('</p[>').join('</p>')
+      // Real map.webp intrinsic size, read from the file.
+      out = out.replace('width="[CLIENT TO VERIFY: intrinsic width in px]" height="[CLIENT TO VERIFY: intrinsic height in px]"', 'width="1536" height="1024"')
+      // Gallery alt placeholders become generic, verifiable alt text (the image
+      // contents are not confirmable here, so no locality, client or type claimed).
+      out = out.split(`alt="[CLIENT TO VERIFY: project type and locality, e.g. Completed independent house at Byraveshwara Nagara, Nelamangala] built by Neelachandra Construction"`).join(`alt="Neelachandra Construction project photo 1"`)
+      out = out.split(`alt="[CLIENT TO VERIFY: project type and locality, e.g. Multi-storey residential building on Tumkur Road] built by Neelachandra Construction"`).join(`alt="Neelachandra Construction project photo 2"`)
+      out = out.split(`alt="[CLIENT TO VERIFY: project type and locality, e.g. Commercial building at Doddaballapura] built by Neelachandra Construction"`).join(`alt="Neelachandra Construction project photo 3"`)
+      // Remove the JSON-LD properties whose value is a CLIENT TO VERIFY placeholder
+      // (legalName, numberOfEmployees, and the GSTIN/RERA PropertyValue entries),
+      // keeping the JSON valid. Nothing else is touched.
+      const tainted = (v) => typeof v === 'string' && v.includes('CLIENT TO VERIFY')
+      const taintedPV = (x) => x !== null && typeof x === 'object' && !Array.isArray(x) && tainted(x.value)
+      const clean = (n) => {
+        if (Array.isArray(n)) return n.filter((x) => !taintedPV(x)).map(clean)
+        if (n !== null && typeof n === 'object') {
+          const o = {}
+          for (const [k, v] of Object.entries(n)) {
+            if (tainted(v) || taintedPV(v)) continue
+            o[k] = clean(v)
+          }
+          return o
+        }
+        return n
+      }
+      return out.replace(/(<script[^>]*application\/ld\+json[^>]*>)([\s\S]*?)(<\/script>)/gi, (full, open, body, close) => {
+        let d
+        try { d = JSON.parse(body) } catch { return full }
+        return open + JSON.stringify(clean(d)) + close
       })
     }
   }
