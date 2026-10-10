@@ -685,6 +685,44 @@ const CORRECTORS = [
     }
   },
   {
+    key: 'faq-lead',
+    // PHASE 1B. Reorder-lead FAQ rewrites. For each target, locate the visible
+    // answer <p> by an ASCII anchor beginning ">A: " (so it matches the accordion,
+    // never the JSON-LD, which carries no "A:" prefix), require the anchor exactly
+    // once (throw otherwise, so the build fails loud if the source drifted), and
+    // replace the whole <p> with the proposed answer. faq-parity (next) regenerates
+    // the JSON-LD from the new visible so the two stay identical.
+    fn (html, file) {
+      const EDITS = {
+        'construction-services-in-bengaluru.html': [
+          [`>A: Internal modifications and minor repairs do not require formal approvals`, `<p>`, `A: Structural extensions, such as adding a first or second floor to an existing building, require revised building plan sanctions from the BBMP, BMRDA, or relevant local panchayat. Internal modifications and minor repairs do not require formal approvals. Our team assists in managing this entire documentation process.`],
+        ],
+        'construction-packages-in-bengaluru.html': [
+          [`>A: A 30`, `<p class="paragraph-26">`, `A: Using our popular Gold package at ₹3,099 per sq ft, the total cost ranges from ₹55 lakhs to ₹62 lakhs for a 30x40 plot (1,200 sq ft) with a G+1 structure, which typically yields 1,800-2,000 sq ft of built-up area, complete with premium finishes and smart home automation.`],
+          [`>A: We state all exclusions upfront`, `<p class="paragraph-26">`, `A: Items outside the base rate include government statutory fees (BBMP/BMRDA), temporary BESCOM/BWSSB meter deposits, borewell drilling, external compound walls, and hard rock-breaking if required during excavation. We state all exclusions upfront in your detailed estimate.`],
+          [`>A: We handle the complete liaison`, `<p class="paragraph-26">`, `A: Statutory fees, taxes, and government deposits are paid directly by the property owner as required by law. We handle the complete liaison, documentation, and architectural drawings required for BBMP, BMRDA, or Gram Panchayat plan sanctions.`],
+          [`>A: We use exclusively Tier-1 materials`, `<p class="paragraph-26">`, `A: For cement we use UltraTech, ACC, or Birla Super (OPC 53 Grade for structural works), and for TMT steel JSW Neo, Tata Tiscon, or Indus (Fe500D or Fe550D), specified per package and stated in your agreement. These are exclusively Tier-1 materials.`],
+        ],
+        'about-us.html': [
+          [`>A: Unlike unorganized local contractors`, `<p class="paragraph-26">`, `A: Neelachandra provides <strong>fixed-price contracts with no cost escalations,</strong> strict milestone-based payment timelines, an in-house team of qualified structural engineers and architects, and a legally binding <strong>10-year structural warranty,</strong> operating as a professional turnkey company rather than an unorganized local contractor.`],
+          [`>A: Structural safety is our highest priority`, `<p class="paragraph-26">`, `A: Our in-house engineering team designs custom foundations based on site-specific soil testing reports, and we strictly adhere to <strong>Indian Standard (IS) codes</strong> for reinforcement detailing, concrete mix designs, and seismic factors to ensure lifelong structural durability. Structural safety is our highest priority.`],
+        ],
+      }
+      const edits = EDITS[file]
+      if (!edits) return html
+      let out = html
+      for (const [anchor, open, proposed] of edits) {
+        const i = out.indexOf(anchor)
+        if (i < 0) throw new Error(`faq-lead: anchor missing in ${file}: ${anchor}`)
+        if (out.indexOf(anchor, i + 1) !== -1) throw new Error(`faq-lead: anchor matched more than once in ${file}: ${anchor}`)
+        const pOpen = out.lastIndexOf('<p', i)
+        const pClose = out.indexOf('</p>', i) + 4
+        out = out.slice(0, pOpen) + open + proposed + '</p>' + out.slice(pClose)
+      }
+      return out
+    }
+  },
+  {
     key: 'faq-parity',
     // PHASE 1A. The visible accordion is the source of truth for FAQs. For
     // packages, tumkur and about, rebuild the JSON-LD FAQPage mainEntity from the
